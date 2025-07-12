@@ -19,3 +19,8 @@ Entitiy | Description | Data source |
 | `Precipitation last 24 hours`| Adjusted quantitative radar precipitation estimate [mm/h] for the last 24 hour | Radolan SF |
 | `Precipitation today`| Adjusted quantitative radar precipitation estimate [mm/h] for today | Radolan SF |
 | `Precipitation yesterday`| Adjusted quantitative radar precipitation estimate [mm/h] for yesterday | Radolan SF |
+
+## Data sources
+
+RADVOR (Radar Real-Time Forecasting): The radar precipitation forecast system (RADVOR) provides real-time quantitative precipitation analyses and forecasts for lead times up to two hours for Germany in high temporal and spatial resolution.
+See: https://www.dwd.de/EN/ourservices/radvor/radvor.html;jsessionid=8CA76D75D79EBFAA7B647D6D0643A174.live11052
