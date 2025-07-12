@@ -20,7 +20,7 @@ Entitiy | Description | Data source |
 | `Precipitation today`| Adjusted quantitative radar precipitation estimate [mm/h] for today | Radolan SF |
 | `Precipitation yesterday`| Adjusted quantitative radar precipitation estimate [mm/h] for yesterday | Radolan SF |
 
-## Data sources
+## Data source
 
 The following products from the DWD are used:
 
