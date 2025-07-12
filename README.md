@@ -9,3 +9,8 @@ Ideal for automations and warnings of severe precipitation events.
 
 ## Entities
 
+Entitiy | Description | Data source |
+| ---- | ---- | ---- |
+| `Precipitation +2 hours`| TBD | Radvor RW |
+
+
