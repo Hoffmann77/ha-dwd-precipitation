@@ -57,11 +57,13 @@ After installation, please restart Home Assistant. To add Power Insight to your 
 
 ## Data source
 
-The data ist derived from the DWD (Deutscher Wetterdienst).
+The data ist derived from the 'Deutscher Wetterdienst'.
 
 RADVOR (Radar Real-Time Forecasting): The radar precipitation forecast system (RADVOR) provides real-time quantitative precipitation analyses and forecasts for lead times up to two hours for Germany in high temporal and spatial resolution.
 See: https://www.dwd.de/EN/ourservices/radvor/radvor.html;jsessionid=8CA76D75D79EBFAA7B647D6D0643A174.live11052
 
 RADOLAN (Radar online aneichung):
-
+<picture>
+  <source media="(max-width:650px)" srcset="https://www.dwd.de/EN/service/legal_notice/dwd-logo-png.png?__blob=publicationFile&v=2">
+</picture>
 ![DWD](https://www.dwd.de/EN/service/legal_notice/dwd-logo-png.png?__blob=publicationFile&v=2)
