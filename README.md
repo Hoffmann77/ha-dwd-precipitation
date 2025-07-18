@@ -63,7 +63,5 @@ RADVOR (Radar Real-Time Forecasting): The radar precipitation forecast system (R
 See: https://www.dwd.de/EN/ourservices/radvor/radvor.html;jsessionid=8CA76D75D79EBFAA7B647D6D0643A174.live11052
 
 RADOLAN (Radar online aneichung):
-<picture>
-  <source media="(max-width:650px)" srcset="https://www.dwd.de/EN/service/legal_notice/dwd-logo-png.png?__blob=publicationFile&v=2">
-</picture>
-![DWD](https://www.dwd.de/EN/service/legal_notice/dwd-logo-png.png?__blob=publicationFile&v=2)
+
+![DWD](https://www.dwd.de/EN/service/legal_notice/dwd-logo-png.png?__blob=publicationFile&v=2){height=420}
