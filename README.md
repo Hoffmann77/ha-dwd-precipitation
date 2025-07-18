@@ -31,6 +31,29 @@ After installation, please restart Home Assistant. To add Power Insight to your 
 <details>
 <summary>Manual configuration steps</summary>
 
+### Semi-Manual Installation with HACS
+1. Go HACS integrations section.
+2. Click on the 3 dots in the top right corner.
+3. Select "Custom repositories"
+4. Add the URL (https://github.com/hoffmann77/ha-dwd-precipitation) to the repository.
+5. Select the integration category.
+6. Click the "ADD" button.
+7. Now you are able to download the integration
+
+## Manual Installation
+1. Access the GitHub repository for this integration.
+2. Download the ZIP file of the repository and extract its contents.
+3. Copy the "dwd_precipitation" folder into the custom_components directory located typically at /config/custom_components/ in your Home Assistant directory.
+
+## Restart Home Assistant
+1. Restart your Home Assistant.
+
+## Add Integration
+1. Navigate to Settings > Devices & Services.
+2. Click Add Integration and search for "DWD Precipitation".
+3. Select the DWD Precipitation integration to initiate setup.
+
+</details>
 
 ## Data source
 
