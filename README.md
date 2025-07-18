@@ -16,6 +16,22 @@ Entitiy | Description | Data source |
 | `Precipitation today`| Adjusted quantitative radar precipitation estimate [mm/h] for today | Radolan SF |
 | `Precipitation yesterday`| Adjusted quantitative radar precipitation estimate [mm/h] for yesterday | Radolan SF |
 
+## Installation
+### Install using HACS (recommended)
+If you do not have HACS installed yet visit https://hacs.xyz for installation instructions.
+
+To add the this repository to HACS in your Home Assistant instance, use this Button:
+
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Hoffmann77&repository=ha-dwd-precipitation&category=Integration)
+
+After installation, please restart Home Assistant. To add Power Insight to your Home Assistant instance, use this Button:
+
+[![Open your Home Assistant instance and start setting up a new integration.](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=dwd_precipitation)
+
+<details>
+<summary>Manual configuration steps</summary>
+
+
 ## Data source
 
 The data ist derived from the DWD (Deutscher Wetterdienst).
