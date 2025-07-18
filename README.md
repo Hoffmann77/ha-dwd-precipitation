@@ -64,4 +64,4 @@ See: https://www.dwd.de/EN/ourservices/radvor/radvor.html;jsessionid=8CA76D75D79
 
 RADOLAN (Radar online aneichung):
 
-![DWD](https://www.dwd.de/EN/service/legal_notice/dwd-logo-png.png?__blob=publicationFile&v=2){height=420}
+![DWD](https://www.dwd.de/EN/service/legal_notice/dwd-logo-png.png?__blob=publicationFile&v=2)
