@@ -39,7 +39,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         RadvorRQ(lat, lon),
         RadolanRW(lat, lon),
         RadolanSF(lat, lon),
-        RadolanSFFirstToday(lat, lon),
         RadolanSFLastYesterday(lat, lon),
     )
 

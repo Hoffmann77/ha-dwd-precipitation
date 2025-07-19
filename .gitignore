@@ -1,3 +1,6 @@
+# Ignore test.py
+custom_components/dwd_precipitation/test.py
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

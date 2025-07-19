@@ -14,7 +14,7 @@ from homeassistant.helpers.update_coordinator import (
 
 _LOGGER = logging.getLogger(__name__)
 
-UPDATE_INTERVAL = timedelta(seconds=120)
+UPDATE_INTERVAL = timedelta(seconds=90)
 
 
 class UpdateCoordinator(DataUpdateCoordinator):

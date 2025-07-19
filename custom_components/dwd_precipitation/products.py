@@ -14,7 +14,7 @@ import numpy as np
 from homeassistant.util import dt as dt_util
 
 from .utils import get_previous_multiple, async_get
-from .parser1 import read_radolan_composite, get_radolan_grid
+from .radar import read_radolan_composite, get_radolan_grid
 from .const import DWD_RADOLAN_URL, DWD_RADVOR_URL
 
 if TYPE_CHECKING:
@@ -203,18 +203,18 @@ class RadolanSF(RadolanProduct):
         )
 
 
-class RadolanSFFirstToday(RadolanSF):
-    """DWD radolan SF 24 hour precipitation analysis."""
+# class RadolanSFFirstToday(RadolanSF):
+#     """DWD radolan SF 24 hour precipitation analysis."""
 
-    PRODUCT_KEY = "sf_0050"
+#     PRODUCT_KEY = "sf_0050"
 
-    RELEASE_INTERVAL = timedelta(hours=24)
+#     RELEASE_INTERVAL = timedelta(hours=24)
 
-    RELEASE_DELAY = timedelta(minutes=28)
+#     RELEASE_DELAY = timedelta(minutes=28)
 
-    RELEASE_OFFSET = timedelta(minutes=50)
+#     RELEASE_OFFSET = timedelta(minutes=50)
 
-    USE_LOCAL_TIME = True
+#     USE_LOCAL_TIME = True
 
 
 class RadolanSFLastYesterday(RadolanSF):

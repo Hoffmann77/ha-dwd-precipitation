@@ -4,21 +4,12 @@ Created on Tue Mar 12 19:50:36 2024
 
 @author: Bobby
 """
-import time
+import gzip
+from io import BytesIO
 from datetime import datetime, timedelta, timezone
 from functools import cached_property
 
-import gzip
-
-#import httpx
-#import numpy as np
-
 from utils import get_previous_multiple, async_get
-
-from io import BytesIO
-
-#from parser1.radolan import read_radolan_composite
-#from parser1.georef import get_radolan_coords, get_radolan_coordinates, get_radolan_grid
 
 
 DWD_RADAR_URL = "https://opendata.dwd.de/weather/radar/"

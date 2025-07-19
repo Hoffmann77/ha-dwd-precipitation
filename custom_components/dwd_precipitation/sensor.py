@@ -62,15 +62,6 @@ RADOLAN_SENSORS = (
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=lambda model: model["sf_2350"],
     ),
-    PrecipitationSensorEntityDescription(
-        key="radolan_sf_today",
-        name="Precipitation today",
-        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
-        device_class=SensorDeviceClass.PRECIPITATION,
-        suggested_display_precision=1,
-        state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda model: model["sf"] - model["sf_0050"],
-    ),
 )
 
 
@@ -111,28 +102,17 @@ async def async_setup_entry(
         async_add_entities: AddEntitiesCallback
 ) -> None:
     """Set up the sensor platform."""
-    #coordinator = hass.data[DOMAIN][entry.entry_id]
-
     coordinator = entry.runtime_data.coordinator
-
-    # async_add_entities(
-    #     PrecipitationSensorEntity(coordinator, description)
-    #     for description in PRECIPTITATION_SENSORS
-    #     if description.exists_fn(entry)
-    # )
 
     async_add_entities(
         PrecipitationSensorEntity(coordinator, description)
         for description in RADVOR_SENSORS
-        #if description.exists_fn(entry)
     )
 
     async_add_entities(
         PrecipitationSensorEntity(coordinator, description)
         for description in RADOLAN_SENSORS
-        #if description.exists_fn(entry)
     )
-
 
 
 class DwdCoordinatorEntity(CoordinatorEntity[UpdateCoordinator]):
@@ -183,17 +163,3 @@ class PrecipitationSensorEntity(DwdCoordinatorEntity, SensorEntity):
         assert precipitation is not None
 
         return self.entity_description.value_fn(precipitation)
-
-
-# class PrecipitationTodaySensorEntity(PrecipitationSensorEntity):
-#     """Implementation of a precipitation sensor."""
-
-#     @property
-#     def native_value(self):
-#         """Return the state of the sensor."""
-#         precipitation = self.coordinator.data
-#         assert precipitation is not None
-
-#         today = precipitation["sf"] -  precipitation["sf_0050"]
-
-#         return today
