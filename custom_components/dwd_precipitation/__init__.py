@@ -13,7 +13,7 @@ from .const import (
 )
 
 from .products import (
-    RadvorRQ, RadolanRW, RadolanSF, RadolanSFFirstToday, RadolanSFLastYesterday
+    RadvorRQ, RadolanRW, RadolanSF, RadolanSFLastYesterday
 )
 
 _LOGGER = logging.getLogger(__name__)
