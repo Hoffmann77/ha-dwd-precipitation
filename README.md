@@ -1,7 +1,10 @@
 # DWD Precipitation
 
 This custom Home Assistant component provides real-time (now) and historical precipitation data (last hour, last 24 hours), as well as short-term forecasts (up to two hours ahead) for Germany. 
-The data is based on high-resolution radar and station-based measurements, derived from the DWD’s (Deutscher Wetterdienst) Radolan and Radvor products. It offers precise, quantitative analyses and predictions with high temporal and spatial resolution, enabling accurate tracking of rain events at your exact location. 
+The data is based on high-resolution radar and station-based measurements, derived from the DWD’s (Deutscher Wetterdienst) Radolan and Radvor products. 
+
+It offers precise, quantitative analyses and predictions with high temporal and spatial resolution, enabling accurate tracking of rain events at your exact location. 
+
 Ideal for automations and early warnings of severe precipitation.
 
 
