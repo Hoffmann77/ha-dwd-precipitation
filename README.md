@@ -60,11 +60,19 @@ After installation, please restart Home Assistant. To add Power Insight to your 
 
 ## Data source
 
-The data ist derived from the 'Deutscher Wetterdienst'.
+All data is derived from the **DWD (Deutscher Wetterdienst)**.
 
-RADVOR (Radar Real-Time Forecasting): The radar precipitation forecast system (RADVOR) provides real-time quantitative precipitation analyses and forecasts for lead times up to two hours for Germany in high temporal and spatial resolution.
-See: https://www.dwd.de/EN/ourservices/radvor/radvor.html;jsessionid=8CA76D75D79EBFAA7B647D6D0643A174.live11052
+**[RADVOR](https://www.dwd.de/EN/ourservices/radvor/radvor.html;jsessionid=8CA76D75D79EBFAA7B647D6D0643A174.live11052) (Radar Real-Time Forecasting):**
+- Real-time quantitative precipitation analyses and forecasts for lead times up to two hours for Germany in high temporal and spatial resolution.
 
-RADOLAN (Radar online aneichung):
+**[RADOLAN](https://www.dwd.de/DE/leistungen/radolan/radolan.html) (Radar online aneichung):**
+- Real-time analysis of precipitation levels based on radar and station-based measurements.
 
-![DWD](https://www.dwd.de/EN/service/legal_notice/dwd-logo-png.png?__blob=publicationFile&v=2)
+## License
+
+This integration is only possible thanks to the great work done by the contributors of the **[wradlib](https://github.com/wradlib/wradlib)** package.
+
+All contents of the `radar` folder are thereby **licensed** under the [Wradlib license](https://github.com/wradlib/wradlib/blob/main/LICENSE.txt).
+
+A copy of the license can be found under `radar/LICENSE.txt`.
+
