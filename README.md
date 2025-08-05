@@ -7,6 +7,10 @@ It offers precise, quantitative analyses and predictions with high temporal and 
 Ideal for automations and early warnings of severe precipitation.
 
 
+> [!NOTE]
+> Please note that the integration only works for locations within Germany and some locations close to the german border.
+
+
 ## Entities
 
 Entitiy | Description | Data source |
