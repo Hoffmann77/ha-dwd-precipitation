@@ -17,9 +17,9 @@ This makes it the ideal data source for automations and early warnings of severe
 
 Entitiy | Description | Data source |
 | ---- | ---- | ---- |
-| `Precipitation +2 hours`| Calibrated precipitation forecast [mm/h] for the timespan from +60 minutes to +120 minutes | Radvor RQ |
-| `Precipitation +1 hours`| Calibrated precipitation forecast [mm/h] for the next 60 minutes | Radvor RQ |
-| `Precipitation now`| Calibrated precipitation analysis [mm/h] | Radvor RQ |
+| `Precipitation +2 hours`| Calibrated precipitation forecast [mm/h] for the timespan from +60 minutes to +120 minutes | Radvor RS |
+| `Precipitation +1 hours`| Calibrated precipitation forecast [mm/h] for the next 60 minutes | Radvor RS |
+| `Precipitation now`| Calibrated precipitation analysis [mm/h] | Radvor RS |
 | `Precipitation last hour`| Adjusted quantitative radar precipitation estimate [mm/h] for the last hour | Radolan RW |
 | `Precipitation last 24 hours`| Adjusted quantitative radar precipitation estimate [mm/h] for the last 24 hour | Radolan SF |
 | `Precipitation today`| Adjusted quantitative radar precipitation estimate [mm/h] for today | Radolan SF |
