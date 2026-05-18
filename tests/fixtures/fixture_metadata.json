@@ -1,0 +1,8 @@
+{
+  "lat": 50.996466699928156,
+  "lon": 10.085443604549722,
+  "expected_mm": 2.5,
+  "grid_row": 600,
+  "grid_col": 550,
+  "note": "Synthetic fixture. lat/lon computed via pyproj from (row, col). Only cell [RAIN_ROW, RAIN_COL] has precipitation; all others are nodata."
+}
