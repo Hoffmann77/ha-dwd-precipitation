@@ -1,6 +1,6 @@
 [project]
 name = "ha-dwd-precipitation"
-version = "2026.5.0b1"
+version = "2026.5.0"
 requires-python = ">=3.13.2"
 
 [tool.uv]
