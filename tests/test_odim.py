@@ -62,7 +62,9 @@ def _make_odim_h5(shape=(5, 5), gain=0.001, offset=-0.001, nodata=4294967295,
 
         raw = np.full(shape, fill_raw, dtype=np.uint32)
         raw[0, 0] = nodata
+        raw[0, 1] = 0  # undetect: radar scanned, no precipitation
         f.create_dataset("dataset1/data1/data", data=raw)
+
     buf.seek(0)
     return buf
 
