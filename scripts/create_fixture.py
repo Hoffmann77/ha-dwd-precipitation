@@ -141,6 +141,15 @@ def make_synthetic_hdf5() -> bytes:
 
     buf = io.BytesIO()
     with h5py.File(buf, "w") as f:
+        # Root what — standard ODIM_H5 file metadata
+        rw = f.create_group("what")
+        rw.attrs["version"] = np.bytes_(b"H5rad 2.3")
+        rw.attrs["date"]    = np.bytes_(b"20260518")
+        rw.attrs["time"]    = np.bytes_(b"160000")
+        rw.attrs["object"]  = np.bytes_(b"COMP")
+        rw.attrs["source"]  = np.bytes_(b"ORG:78,CTY:616,CMT:Deutscher Wetterdienst")
+
+        # where — grid geometry
         w = f.create_group("where")
         w.attrs.create("projdef", data=np.bytes_(PROJDEF))
         w.attrs["xsize"]  = np.int64(XSIZE)
@@ -150,10 +159,21 @@ def make_synthetic_hdf5() -> bytes:
         w.attrs["LL_lat"] = np.float64(LL_LAT)
         w.attrs["LL_lon"] = np.float64(LL_LON)
 
+        # dataset1/what — product metadata
+        d1w = f.create_group("dataset1/what")
+        d1w.attrs["product"]   = np.bytes_(b"MAX")
+        d1w.attrs["prodname"]  = np.bytes_(b"RS_top_view")
+        d1w.attrs["startdate"] = np.bytes_(b"20260518")
+        d1w.attrs["starttime"] = np.bytes_(b"150000")
+        d1w.attrs["enddate"]   = np.bytes_(b"20260518")
+        d1w.attrs["endtime"]   = np.bytes_(b"160000")
+
+        # dataset1/data1/what — moment scaling; nodata is float64 in real files
         dw = f.create_group("dataset1/data1/what")
+        dw.attrs["quantity"] = np.bytes_(b"ACRR")
         dw.attrs["gain"]     = np.float64(GAIN)
         dw.attrs["offset"]   = np.float64(OFFSET)
-        dw.attrs["nodata"]   = np.uint32(NODATA)
+        dw.attrs["nodata"]   = np.float64(NODATA)
         dw.attrs["undetect"] = np.float64(0.0)
 
         f.create_dataset("dataset1/data1/data", data=raw,
