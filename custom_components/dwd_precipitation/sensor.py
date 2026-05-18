@@ -67,39 +67,8 @@ RADOLAN_SENSORS = (
 
 RADVOR_SENSORS = (
     PrecipitationSensorEntityDescription(
-        key="radvor_rq_000",
-        name="Precipitation now",
-        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
-        device_class=SensorDeviceClass.PRECIPITATION,
-        suggested_display_precision=1,
-        state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda model: model["rq"][0],
-    ),
-    PrecipitationSensorEntityDescription(
-        key="radvor_rq_060",
-        name="Precipitation +1 hour",
-        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
-        device_class=SensorDeviceClass.PRECIPITATION,
-        suggested_display_precision=1,
-        state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda model: model["rq"][1],
-    ),
-    PrecipitationSensorEntityDescription(
-        key="radvor_rq_120",
-        name="Precipitation +2 hours",
-        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
-        device_class=SensorDeviceClass.PRECIPITATION,
-        suggested_display_precision=1,
-        state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda model: model["rq"][2],
-    ),
-)
-
-
-RADVOR_RS_SENSORS = (
-    PrecipitationSensorEntityDescription(
         key="radvor_rs_000",
-        name="Precipitation forecast now (RS)",
+        name="Precipitation now",
         native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
@@ -108,7 +77,7 @@ RADVOR_RS_SENSORS = (
     ),
     PrecipitationSensorEntityDescription(
         key="radvor_rs_060",
-        name="Precipitation forecast +1 hour (RS)",
+        name="Precipitation +1 hour",
         native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
@@ -117,7 +86,7 @@ RADVOR_RS_SENSORS = (
     ),
     PrecipitationSensorEntityDescription(
         key="radvor_rs_120",
-        name="Precipitation forecast +2 hours (RS)",
+        name="Precipitation +2 hours",
         native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
@@ -134,11 +103,6 @@ async def async_setup_entry(
 ) -> None:
     """Set up the sensor platform."""
     coordinator = entry.runtime_data.coordinator
-
-    async_add_entities(
-        PrecipitationSensorEntity(coordinator, description)
-        for description in RADVOR_RS_SENSORS
-    )
 
     async_add_entities(
         PrecipitationSensorEntity(coordinator, description)
