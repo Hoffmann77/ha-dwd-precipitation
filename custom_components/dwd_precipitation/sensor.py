@@ -67,31 +67,31 @@ RADOLAN_SENSORS = (
 
 RADVOR_SENSORS = (
     PrecipitationSensorEntityDescription(
-        key="radvor_rq_000",
+        key="radvor_rs_000",
         name="Precipitation now",
         native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
         state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda model: model["rq"][0],
+        value_fn=lambda model: model["rs"][0],
     ),
     PrecipitationSensorEntityDescription(
-        key="radvor_rq_060",
+        key="radvor_rs_060",
         name="Precipitation +1 hour",
         native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
         state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda model: model["rq"][1],
+        value_fn=lambda model: model["rs"][1],
     ),
     PrecipitationSensorEntityDescription(
-        key="radvor_rq_120",
+        key="radvor_rs_120",
         name="Precipitation +2 hours",
         native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
         state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda model: model["rq"][2],
+        value_fn=lambda model: model["rs"][2],
     ),
 )
 

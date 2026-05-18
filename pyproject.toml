@@ -1,0 +1,35 @@
+[project]
+name = "ha-dwd-precipitation"
+version = "2026.5.0b1"
+requires-python = ">=3.13.2"
+
+[tool.uv]
+package = false  # not a distributable Python package; test in-place via pythonpath
+
+[dependency-groups]
+# Installs only HA-compatible packages — validates the component runs in the
+# same environment HA uses (same Python version, same numpy/h5py pins).
+ha-test = [
+    "pytest-homeassistant-custom-component==0.13.316",
+    "h5py",
+]
+# Installs wradlib (+ pyproj, scipy, etc.) for parser comparison tests.
+# Kept separate because wradlib's heavy deps are not part of the HA ecosystem.
+wradlib-comparison = [
+    "wradlib",
+    "pytest",
+    "requests",
+    "h5py",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# "." allows `from custom_components... import` (used in ha-test job, where HA is installed).
+# "custom_components/dwd_precipitation" allows `from radar.odim import` without triggering
+# the HA-importing custom_components/dwd_precipitation/__init__.py (used in wradlib job).
+pythonpath = [".", "custom_components/dwd_precipitation"]
+asyncio_mode = "auto"
+markers = [
+    "integration: requires network access to DWD OpenData",
+    "wradlib: requires wradlib installed",
+]

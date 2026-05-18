@@ -13,7 +13,7 @@ from .const import (
 )
 
 from .products import (
-    RadvorRQ, RadolanRW, RadolanSF, RadolanSFLastYesterday
+    RadvorRQ, RadvorRS, RadolanRW, RadolanSF, RadolanSFLastYesterday
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -36,6 +36,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     lon = entry.data["longitude"]
 
     products = (
+        RadvorRS(lat, lon),
         RadvorRQ(lat, lon),
         RadolanRW(lat, lon),
         RadolanSF(lat, lon),

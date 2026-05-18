@@ -1,0 +1,34 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  # Validates the component in HA's exact environment.
+  # Only pytest-homeassistant-custom-component is installed — no wradlib.
+  ha-environment:
+    name: Unit tests (HA environment)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Install HA test dependencies
+        run: uv sync --only-group ha-test
+      - name: Run unit tests
+        run: uv run pytest -m "not wradlib and not integration" -v
+
+  # Compares our parser against wradlib + pyproj (the reference implementations).
+  # Also downloads a live RS file from DWD to catch format drift.
+  wradlib-comparison:
+    name: wradlib comparison + live DWD
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Install wradlib dependencies
+        run: uv sync --only-group wradlib-comparison
+      - name: Run wradlib comparison tests
+        run: uv run pytest -m "wradlib" -v
+      - name: Run live DWD integration test
+        run: uv run pytest -m "integration" -v
