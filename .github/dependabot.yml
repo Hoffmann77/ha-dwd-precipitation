@@ -4,3 +4,11 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    ignore:
+      # Pinned intentionally — update manually to stay aligned with HA releases.
+      - dependency-name: "pytest-homeassistant-custom-component"

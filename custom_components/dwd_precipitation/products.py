@@ -3,6 +3,7 @@
 import gzip
 import bz2
 import logging
+import tarfile
 from io import BytesIO
 from datetime import datetime, timedelta
 from abc import ABC, abstractmethod
@@ -14,8 +15,8 @@ import numpy as np
 from homeassistant.util import dt as dt_util
 
 from .utils import get_previous_multiple, async_get
-from .radar import read_radolan_composite, get_radolan_grid
-from .const import DWD_RADOLAN_URL, DWD_RADVOR_URL
+from .radar import read_radolan_composite, get_radolan_grid, read_odim_composite, get_rs_grid_index
+from .const import DWD_RADOLAN_URL, DWD_RADVOR_URL, DWD_COMPOSITE_URL
 
 if TYPE_CHECKING:
     import httpx
@@ -132,6 +133,56 @@ class RadvorRQ(Product):
 
             data, metadata = read_radolan_composite(f)
             new_data.append(data[self.index])
+
+        self.current_release = ts
+        self.data = new_data
+
+
+class RadvorRS(Product):
+    """DWD RS precipitation nowcast (RADVOR, ODIM_H5 format)."""
+
+    PRODUCT_KEY = "rs"
+
+    RELEASE_INTERVAL = timedelta(minutes=5)
+
+    RELEASE_DELAY = timedelta(minutes=5)
+
+    RELEASE_OFFSET = timedelta()
+
+    @cached_property
+    def index(self):
+        """Return (row, col) in the RS composite grid."""
+        return get_rs_grid_index(self.lat, self.lon)
+
+    def get_url(self, ts: datetime) -> str:
+        """Return the URL for the tar archive."""
+        return f"{DWD_COMPOSITE_URL}/rs/composite_rs_{ts.strftime('%Y%m%d_%H%M')}.tar"
+
+    async def update(self, async_client) -> None:
+        """Fetch one tar archive and extract 3 lead-time ACRR values."""
+        ts = self.get_latest_release()
+        url = self.get_url(ts)
+        try:
+            response = await async_get(url, async_client)
+        except:
+            return
+
+        tar_bytes = BytesIO(response.content)
+        prefix = f"composite_rs_{ts.strftime('%Y%m%d_%H%M')}"
+        row, col = self.index
+        new_data = []
+        with tarfile.open(fileobj=tar_bytes, mode="r") as tf:
+            for suffix in ("000", "060", "120"):
+                member_name = f"{prefix}_{suffix}-hd5"
+                try:
+                    f = tf.extractfile(member_name)
+                except KeyError:
+                    _LOGGER.warning("RS tar member not found: %s", member_name)
+                    new_data.append(None)
+                    continue
+                data, _ = read_odim_composite(BytesIO(f.read()))
+                val = float(data[row, col])
+                new_data.append(None if np.isnan(val) else val)
 
         self.current_release = ts
         self.data = new_data

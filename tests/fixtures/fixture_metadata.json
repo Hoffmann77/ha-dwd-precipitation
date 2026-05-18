@@ -1,0 +1,10 @@
+{
+  "lat": 52.14789085326039,
+  "lon": 10.200413261023847,
+  "expected_mm": 13.704998970031738,
+  "grid_row": 466,
+  "grid_col": 558,
+  "synthetic": false,
+  "source_ts": "2026-05-18T16:00:00Z",
+  "note": "Real DWD RS file (composite_rs_20260518_1600_000-hd5). lat/lon derived from (row, col) via pyproj."
+}
