@@ -7,9 +7,23 @@ import numpy as np
 import h5py
 
 # RS polar-stereographic projection parameters (constant for all RS files)
-_RS_A = 6378137.0            # WGS84 semi-major axis used as sphere radius
-_RS_LAT_TS = math.radians(60.0)  # standard parallel
-_RS_LON_0 = 10.0             # central meridian (degrees)
+_RS_A     = 6378137.0            # WGS84 semi-major axis (metres)
+_RS_B     = 6356752.3142451802   # WGS84 semi-minor axis (metres)
+_RS_E2    = 1 - (_RS_B / _RS_A) ** 2      # first eccentricity squared
+_RS_E     = math.sqrt(_RS_E2)             # first eccentricity
+_RS_LAT_TS = math.radians(60.0)           # standard parallel
+_RS_LON_0  = 10.0                         # central meridian (degrees)
+
+# Precomputed scale-factor constants at the standard parallel (lat_ts = 60°).
+# m_c / t_c implements Snyder's polar stereographic for the ellipsoid:
+#   ρ = a · m_c · t(φ) / t_c    where t(φ) is the conformal latitude factor.
+_sin_lat_ts = math.sin(_RS_LAT_TS)
+_cos_lat_ts = math.cos(_RS_LAT_TS)
+_RS_M_C = _cos_lat_ts / math.sqrt(1 - _RS_E2 * _sin_lat_ts ** 2)
+_RS_T_C = (
+    math.tan(math.pi / 4 - _RS_LAT_TS / 2)
+    / ((1 - _RS_E * _sin_lat_ts) / (1 + _RS_E * _sin_lat_ts)) ** (_RS_E / 2)
+)
 
 # Fixed RS grid metadata (confirmed from DWD ODIM_H5 files)
 RS_WHERE = {
@@ -38,13 +52,17 @@ def _parse_proj_param(projdef: str, key: str) -> float:
 def _lonlat_to_xy(lon: float, lat: float, x_0: float, y_0: float):
     """Convert (lon, lat) to RS projection (x, y) in metres.
 
-    Spherical polar-stereographic with WGS84 a as sphere radius.
-    Error < 2 km across Germany for the 1km RS grid.
+    Ellipsoidal polar-stereographic (Snyder §21) matching pyproj's
+    +proj=stere +lat_0=90 +lat_ts=60 on WGS84.  Sub-millimetre accuracy.
     """
-    k = (1 + math.sin(_RS_LAT_TS)) / 2
     phi = math.radians(lat)
     lam = math.radians(lon - _RS_LON_0)
-    rho = 2 * _RS_A * k * math.tan(math.pi / 4 - phi / 2)
+    sin_phi = math.sin(phi)
+    t = (
+        math.tan(math.pi / 4 - phi / 2)
+        / ((1 - _RS_E * sin_phi) / (1 + _RS_E * sin_phi)) ** (_RS_E / 2)
+    )
+    rho = _RS_A * _RS_M_C * t / _RS_T_C
     return rho * math.sin(lam) + x_0, -rho * math.cos(lam) + y_0
 
 

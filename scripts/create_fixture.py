@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """Create the curated test fixture for radar/odim.py tests.
 
-Creates a synthetic ODIM_H5 file with the real RS grid structure and a single
-precipitation cell at a known location.  The cell's lat/lon is computed via
-pyproj (the authoritative reference implementation) so the wradlib comparison
-test can verify that our coordinate transform agrees with it.
+Tries to download a real RS file from DWD OpenData.  If no file with
+precipitation is found in the last 2 hours, falls back to a synthetic
+file with the real RS grid structure and a single known precipitation cell.
 
-Run once from the repo root (needs wradlib + pyproj installed):
+The lat/lon of the chosen precipitation cell is computed via pyproj so
+that test_location_value_matches_wradlib can verify our coordinate transform
+against the ellipsoidal reference implementation.
+
+Run once from the repo root (needs wradlib + pyproj + requests installed):
 
     uv run --group wradlib-comparison python scripts/create_fixture.py
 
@@ -18,65 +21,127 @@ Writes:
 import io
 import json
 import sys
+import tarfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import h5py
 import numpy as np
+import requests
 
 FIXTURES = Path(__file__).parent.parent / "tests" / "fixtures"
 HDF5_OUT = FIXTURES / "composite_rs_sample.hd5"
 META_OUT  = FIXTURES / "fixture_metadata.json"
 
-# Real DWD RS grid parameters (confirmed from live files)
+DWD_URL   = "https://opendata.dwd.de/weather/radar/composite/rs"
+MIN_MM    = 0.1   # minimum precipitation to consider a valid cell
+
+# Real RS grid parameters for the synthetic fallback
 PROJDEF = (
     "+proj=stere +lat_ts=60 +lat_0=90 +lon_0=10"
     " +x_0=543196.83521776402 +y_0=3622588.8619310022"
     " +units=m +a=6378137 +b=6356752.3142451802 +no_defs"
 )
 XSIZE, YSIZE = 1100, 1200
-XSCALE = YSCALE = 1000.0   # metres per pixel
+XSCALE = YSCALE = 1000.0
 LL_LAT, LL_LON = 45.696, 3.567
 GAIN, OFFSET = 0.001, -0.001
-NODATA = 4294967295        # uint32 max
+NODATA = 4294967295
 
-# Cell near central Germany that we'll set to 2.5 mm
-RAIN_ROW, RAIN_COL = 600, 550
-RAIN_RAW = 2501            # 2501 * 0.001 - 0.001 = 2.500 mm
+# Synthetic fallback: cell near central Germany, 2.5 mm precipitation
+SYNTH_ROW, SYNTH_COL = 600, 550
+SYNTH_RAW = 2501  # → 2.500 mm
 
 
-def cell_to_lonlat(row: int, col: int) -> tuple[float, float]:
-    """Convert grid (row, col) to (lat, lon) via pyproj — the authoritative reference."""
+def cell_to_lonlat(hdf5_bytes: bytes, row: int, col: int) -> tuple[float, float]:
+    """Convert grid (row, col) to (lat, lon) using pyproj."""
     from pyproj import Proj
-    p      = Proj(PROJDEF)
-    x_ll, y_ll = p(LL_LON, LL_LAT)
-    x = x_ll + col * XSCALE
-    y = y_ll + (YSIZE - 1 - row) * YSCALE
+
+    with h5py.File(io.BytesIO(hdf5_bytes), "r") as f:
+        where = dict(f["where"].attrs)
+
+    projdef = where["projdef"]
+    if isinstance(projdef, bytes):
+        projdef = projdef.decode()
+
+    p      = Proj(projdef)
+    ll_lat = float(where["LL_lat"])
+    ll_lon = float(where["LL_lon"])
+    xscale = float(where["xscale"])
+    yscale = float(where["yscale"])
+    ysize  = int(where["ysize"])
+
+    x_ll, y_ll = p(ll_lon, ll_lat)
+    x = x_ll + col * xscale
+    y = y_ll + (ysize - 1 - row) * yscale
     lon, lat = p(x, y, inverse=True)
     return float(lat), float(lon)
 
 
-def main() -> None:
-    FIXTURES.mkdir(parents=True, exist_ok=True)
+def parse_hdf5(hdf5_bytes: bytes):
+    """Return (data_mm, where) from raw HDF5 bytes."""
+    with h5py.File(io.BytesIO(hdf5_bytes), "r") as f:
+        where = dict(f["where"].attrs)
+        what  = dict(f["dataset1/data1/what"].attrs)
+        raw   = f["dataset1/data1/data"][:]
 
-    try:
-        lat, lon = cell_to_lonlat(RAIN_ROW, RAIN_COL)
-    except ImportError:
-        print("ERROR: pyproj not found. Install via: uv sync --group wradlib-comparison")
-        sys.exit(1)
+    gain   = float(what["gain"])
+    offset = float(what["offset"])
+    nodata = int(what["nodata"])
+    data   = raw.astype(np.float32) * gain + offset
+    data[raw == nodata] = np.nan
+    return data, where
 
-    expected_mm = float(RAIN_RAW * GAIN + OFFSET)
-    print(f"Precipitation cell: row={RAIN_ROW}, col={RAIN_COL}")
-    print(f"Projected location: lat={lat:.6f}, lon={lon:.6f}")
-    print(f"Expected value:     {expected_mm:.3f} mm")
 
-    # Build the HDF5 fixture
+def try_download_real_file() -> tuple[bytes | None, datetime | None]:
+    """Try the last 2 hours of RS releases; return bytes of first one with rain."""
+    now = datetime.now(timezone.utc)
+    ts  = now.replace(second=0, microsecond=0)
+    ts -= timedelta(minutes=ts.minute % 5 + 10)
+
+    for _ in range(24):
+        fname = f"composite_rs_{ts.strftime('%Y%m%d_%H%M')}"
+        url   = f"{DWD_URL}/{fname}.tar"
+        print(f"  Trying {url} …", flush=True)
+        try:
+            resp = requests.get(url, timeout=30)
+            resp.raise_for_status()
+        except Exception as exc:
+            print(f"    → failed: {exc}", flush=True)
+            ts -= timedelta(minutes=5)
+            continue
+
+        try:
+            with tarfile.open(fileobj=io.BytesIO(resp.content)) as tf:
+                hdf5_bytes = tf.extractfile(f"{fname}_000-hd5").read()
+        except Exception as exc:
+            print(f"    → tar extraction failed: {exc}", flush=True)
+            ts -= timedelta(minutes=5)
+            continue
+
+        data, _ = parse_hdf5(hdf5_bytes)
+        rain_cells = np.argwhere((~np.isnan(data)) & (data >= MIN_MM))
+        if len(rain_cells) == 0:
+            print(f"    → no precipitation, trying earlier …", flush=True)
+            ts -= timedelta(minutes=5)
+            continue
+
+        row, col = int(rain_cells[0][0]), int(rain_cells[0][1])
+        value_mm = float(data[row, col])
+        print(f"    → found precipitation! row={row}, col={col}, value={value_mm:.3f} mm")
+        return hdf5_bytes, ts
+
+    return None, None
+
+
+def make_synthetic_hdf5() -> bytes:
+    """Create a minimal ODIM_H5 fixture with the real RS grid structure."""
     raw = np.full((YSIZE, XSIZE), NODATA, dtype=np.uint32)
-    raw[RAIN_ROW, RAIN_COL] = RAIN_RAW
+    raw[SYNTH_ROW, SYNTH_COL] = SYNTH_RAW
 
     buf = io.BytesIO()
     with h5py.File(buf, "w") as f:
         w = f.create_group("where")
-        # Store projdef as fixed-length bytes (matches real DWD files)
         w.attrs.create("projdef", data=np.bytes_(PROJDEF))
         w.attrs["xsize"]  = np.int64(XSIZE)
         w.attrs["ysize"]  = np.int64(YSIZE)
@@ -93,19 +158,56 @@ def main() -> None:
 
         f.create_dataset("dataset1/data1/data", data=raw,
                          compression="gzip", compression_opts=4)
+    return buf.getvalue()
 
-    HDF5_OUT.write_bytes(buf.getvalue())
-    print(f"Saved HDF5 → {HDF5_OUT}  ({HDF5_OUT.stat().st_size:,} bytes)")
+
+def main() -> None:
+    FIXTURES.mkdir(parents=True, exist_ok=True)
+
+    try:
+        from pyproj import Proj  # noqa: F401 — check it's available
+    except ImportError:
+        print("ERROR: pyproj not found. Install: uv sync --group wradlib-comparison")
+        sys.exit(1)
+
+    print("Attempting to download real RS file from DWD OpenData …")
+    hdf5_bytes, ts = try_download_real_file()
+    synthetic = False
+
+    if hdf5_bytes is None:
+        print("No real file available, creating synthetic fixture …")
+        hdf5_bytes = make_synthetic_hdf5()
+        synthetic = True
+
+    # Find the precipitation cell to record
+    data, _ = parse_hdf5(hdf5_bytes)
+    if synthetic:
+        row, col = SYNTH_ROW, SYNTH_COL
+    else:
+        rain_cells = np.argwhere((~np.isnan(data)) & (data >= MIN_MM))
+        row, col = int(rain_cells[0][0]), int(rain_cells[0][1])
+
+    value_mm = float(data[row, col])
+    lat, lon = cell_to_lonlat(hdf5_bytes, row, col)
+
+    print(f"\nFixture precipitation cell: row={row}, col={col}")
+    print(f"Location (pyproj):          lat={lat:.6f}, lon={lon:.6f}")
+    print(f"Value:                       {value_mm:.3f} mm")
+
+    HDF5_OUT.write_bytes(hdf5_bytes)
+    print(f"\nSaved HDF5     → {HDF5_OUT}  ({HDF5_OUT.stat().st_size:,} bytes)")
 
     meta = {
         "lat":         lat,
         "lon":         lon,
-        "expected_mm": expected_mm,
-        "grid_row":    RAIN_ROW,
-        "grid_col":    RAIN_COL,
+        "expected_mm": value_mm,
+        "grid_row":    row,
+        "grid_col":    col,
+        "synthetic":   synthetic,
+        "source_ts":   ts.strftime("%Y-%m-%dT%H:%M:00Z") if ts else None,
         "note": (
-            "Synthetic fixture. lat/lon computed via pyproj from (row, col). "
-            "Only cell [RAIN_ROW, RAIN_COL] has precipitation; all others are nodata."
+            "lat/lon derived from (row, col) via pyproj so the wradlib test "
+            "can verify our ellipsoidal coordinate transform matches pyproj."
         ),
     }
     META_OUT.write_text(json.dumps(meta, indent=2))

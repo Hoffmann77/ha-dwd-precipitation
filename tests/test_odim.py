@@ -238,27 +238,21 @@ def test_location_value_matches_wradlib():
     # --- pyproj reference index ---
     row_ref, col_ref = _pyproj_grid_index(dd, lat, lon)
 
-    # Coordinate transform must agree with pyproj within ±1 pixel.
-    # Our implementation uses a spherical approximation (vs pyproj's ellipsoidal),
-    # so up to 1 pixel of difference is expected across Germany's extent.
-    assert abs(row_ours - row_ref) <= 1, (
-        f"Row mismatch: ours={row_ours}, pyproj={row_ref} (diff={abs(row_ours-row_ref)})"
+    # Our ellipsoidal formula matches pyproj exactly — no pixel tolerance needed.
+    assert row_ours == row_ref, (
+        f"Row mismatch: ours={row_ours}, pyproj={row_ref}"
     )
-    assert abs(col_ours - col_ref) <= 1, (
-        f"Col mismatch: ours={col_ours}, pyproj={col_ref} (diff={abs(col_ours-col_ref)})"
+    assert col_ours == col_ref, (
+        f"Col mismatch: ours={col_ours}, pyproj={col_ref}"
     )
 
-    # Parsed value at the pyproj-computed rain cell must equal wradlib.
-    # Using row_ref/col_ref (the known rain cell) for both parsers validates
-    # that they agree on the actual precipitation value.
-    value_at_rain_cell = float(data_ours[row_ref, col_ref])
-    assert value_at_rain_cell == pytest.approx(float(data_wrl[row_ref, col_ref]))
+    # Parsed value at the rain cell must equal wradlib.
+    value_ours = float(data_ours[row_ours, col_ours])
+    assert value_ours == pytest.approx(float(data_wrl[row_ours, col_ours]))
 
-    # The fixture was chosen to have actual precipitation at the rain cell
-    assert not np.isnan(value_at_rain_cell), "Fixture rain cell should not be NaN"
-    assert value_at_rain_cell > 0.0, (
-        f"Expected precipitation > 0 at ({row_ref},{col_ref}), got {value_at_rain_cell}"
-    )
+    # The fixture was chosen to have actual precipitation at this cell.
+    assert not np.isnan(value_ours), "Fixture rain cell should not be NaN"
+    assert value_ours > 0.0, f"Expected precipitation > 0, got {value_ours}"
 
 
 @pytest.mark.wradlib
