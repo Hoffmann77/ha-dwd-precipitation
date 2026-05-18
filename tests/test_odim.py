@@ -151,6 +151,12 @@ def test_nodata_is_nan(parsed_synthetic):
     assert np.isnan(data[0, 0])
 
 
+def test_undetect_is_zero(parsed_synthetic):
+    # raw=0 with offset=-0.001 would give -0.001 without the undetect fix.
+    data, _ = parsed_synthetic
+    assert data[0, 1] == 0.0
+
+
 def test_shape(parsed_synthetic):
     data, _ = parsed_synthetic
     assert data.shape == (5, 5)
