@@ -145,7 +145,8 @@ def parsed_synthetic():
 def test_scaling(parsed_synthetic):
     data, _ = parsed_synthetic
     non_nan = data[~np.isnan(data)]
-    assert float(non_nan[0]) == pytest.approx(1.0)
+    # data[0,1] is the undetect cell (0.0); first positive value is from fill_raw=1001.
+    assert float(non_nan[non_nan > 0][0]) == pytest.approx(1.0)
 
 
 def test_nodata_is_nan(parsed_synthetic):
