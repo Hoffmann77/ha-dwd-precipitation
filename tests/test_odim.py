@@ -186,12 +186,15 @@ def test_bytes_projdef_roundtrip():
 # ===========================================================================
 
 def _apply_wradlib_scaling(dd):
-    raw    = dd["dataset1/data1/data"]
-    gain   = float(dd["dataset1/data1/what"]["gain"])
-    offset = float(dd["dataset1/data1/what"]["offset"])
-    nodata = int(dd["dataset1/data1/what"]["nodata"])
-    data   = raw.astype(np.float32) * gain + offset
-    data[raw == nodata] = np.nan
+    raw      = dd["dataset1/data1/data"]
+    gain     = float(dd["dataset1/data1/what"]["gain"])
+    offset   = float(dd["dataset1/data1/what"]["offset"])
+    nodata   = int(dd["dataset1/data1/what"]["nodata"])
+    undetect = int(round(float(dd["dataset1/data1/what"].get("undetect", 0))))
+    data     = raw.astype(np.float32) * gain + offset
+    data[raw == nodata]   = np.nan
+    data[raw == undetect] = 0.0
+    
     return data
 
 
