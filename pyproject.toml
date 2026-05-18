@@ -1,7 +1,7 @@
 [project]
 name = "ha-dwd-precipitation"
-version = "0.1.0"
-requires-python = ">=3.13"
+version = "2026.5.0b1"
+requires-python = ">=3.13.2"
 
 [tool.uv]
 package = false  # not a distributable Python package; test in-place via pythonpath
@@ -10,7 +10,7 @@ package = false  # not a distributable Python package; test in-place via pythonp
 # Installs only HA-compatible packages — validates the component runs in the
 # same environment HA uses (same Python version, same numpy/h5py pins).
 ha-test = [
-    "pytest-homeassistant-custom-component",
+    "pytest-homeassistant-custom-component==0.13.316",
     "h5py",
 ]
 # Installs wradlib (+ pyproj, scipy, etc.) for parser comparison tests.
