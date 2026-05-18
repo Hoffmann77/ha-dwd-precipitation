@@ -1,10 +1,10 @@
 {
-  "lat": 50.996466699928156,
-  "lon": 10.085443604549722,
-  "expected_mm": 2.500000238418579,
-  "grid_row": 600,
-  "grid_col": 550,
-  "synthetic": true,
-  "source_ts": null,
-  "note": "lat/lon derived from (row, col) via pyproj so the wradlib test can verify our ellipsoidal coordinate transform matches pyproj."
+  "lat": 52.14789085326039,
+  "lon": 10.200413261023847,
+  "expected_mm": 13.704998970031738,
+  "grid_row": 466,
+  "grid_col": 558,
+  "synthetic": false,
+  "source_ts": "2026-05-18T16:00:00Z",
+  "note": "Real DWD RS file (composite_rs_20260518_1600_000-hd5). lat/lon derived from (row, col) via pyproj."
 }
