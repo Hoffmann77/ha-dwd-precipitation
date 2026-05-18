@@ -78,15 +78,15 @@ def read_odim_composite(fileobj, dataset: str = "dataset1", moment: str = "data1
         what = {k: v for k, v in hf[f"{dataset}/{moment}/what"].attrs.items()}
         raw = hf[f"{dataset}/{moment}/data"][:]
 
-    gain = float(what["gain"])
-    offset = float(what["offset"])
-    nodata = int(what["nodata"])
+    gain     = float(what["gain"])
+    offset   = float(what["offset"])
+    nodata   = int(what["nodata"])
     undetect = int(round(float(what.get("undetect", 0))))
 
     data = raw.astype(np.float32) * gain + offset
     data[raw == nodata]   = np.nan
     data[raw == undetect] = 0.0
-
+    
     return data, where
 
 
