@@ -69,8 +69,9 @@ def _lonlat_to_xy(lon: float, lat: float, x_0: float, y_0: float):
 def read_odim_composite(fileobj, dataset: str = "dataset1", moment: str = "data1"):
     """Read a Cartesian ODIM_H5 composite.
 
-    Returns (data, where) where data is a float32 array (NaN for nodata)
-    and where is a dict of /where attributes.
+    Returns (data, where) where data is a float32 array.
+    nodata cells (outside radar range / masked) → NaN.
+    undetect cells (radar scanned, zero precipitation detected) → 0.0.
     """
     with h5py.File(fileobj, "r") as hf:
         where = {k: v for k, v in hf["where"].attrs.items()}
@@ -80,9 +81,12 @@ def read_odim_composite(fileobj, dataset: str = "dataset1", moment: str = "data1
     gain = float(what["gain"])
     offset = float(what["offset"])
     nodata = int(what["nodata"])
+    undetect = int(round(float(what.get("undetect", 0))))
 
     data = raw.astype(np.float32) * gain + offset
-    data[raw == nodata] = np.nan
+    data[raw == nodata]   = np.nan
+    data[raw == undetect] = 0.0
+
     return data, where
 
 
