@@ -1350,6 +1350,7 @@ ha-test = [
 unit-test = [
     { name = "h5py" },
     { name = "pytest" },
+    { name = "requests" },
 ]
 wradlib-comparison = [
     { name = "h5py" },
@@ -1368,6 +1369,7 @@ ha-test = [
 unit-test = [
     { name = "h5py" },
     { name = "pytest" },
+    { name = "requests" },
 ]
 wradlib-comparison = [
     { name = "h5py" },

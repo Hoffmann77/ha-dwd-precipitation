@@ -180,3 +180,35 @@ def test_bytes_projdef_roundtrip():
     data, where = read_odim_composite(buf)
     assert data.shape == (5, 5)
     assert not np.isnan(data[1, 0])
+
+
+# ===========================================================================
+# Group 5 — live DWD fetch
+# ===========================================================================
+
+@pytest.mark.integration
+def test_live_rs_file():
+    """Download the current RS tar and verify our parser handles a real DWD file."""
+    import tarfile
+    from datetime import datetime, timedelta, timezone
+
+    import requests
+
+    now = datetime.now(timezone.utc) - timedelta(minutes=5)
+    ts  = now.replace(second=0, microsecond=0)
+    ts -= timedelta(minutes=ts.minute % 5)
+    fname = f"composite_rs_{ts.strftime('%Y%m%d_%H%M')}"
+    url   = f"https://opendata.dwd.de/weather/radar/composite/rs/{fname}.tar"
+
+    resp = requests.get(url, timeout=30)
+    resp.raise_for_status()
+
+    with tarfile.open(fileobj=io.BytesIO(resp.content)) as tf:
+        hdf5_bytes = tf.extractfile(f"{fname}_000-hd5").read()
+
+    data, where = read_odim_composite(io.BytesIO(hdf5_bytes))
+
+    assert data.shape == (1200, 1100)
+    assert data.dtype == np.float32
+    assert "xscale" in where
+    assert "yscale" in where

@@ -1,16 +1,13 @@
-"""Integration tests — HA config flow and live DWD data fetch."""
+"""Integration tests — HA config flow."""
 
-import io
 from unittest.mock import patch
 
-import numpy as np
 import pytest
 from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 
 from custom_components.dwd_precipitation.const import CONF_COORDS, DOMAIN
-from radar.odim import read_odim_composite
 
 
 # ---------------------------------------------------------------------------
@@ -133,35 +130,3 @@ async def test_flow_zero_coordinates_creates_entry(hass: HomeAssistant) -> None:
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"]["latitude"] == pytest.approx(0.0)
     assert result["data"]["longitude"] == pytest.approx(0.0)
-
-
-# ===========================================================================
-# Live DWD fetch
-# ===========================================================================
-
-@pytest.mark.integration
-def test_live_rs_file():
-    """Download the current RS tar and verify our parser handles a real DWD file."""
-    import tarfile
-    from datetime import datetime, timedelta, timezone
-
-    import requests
-
-    now = datetime.now(timezone.utc) - timedelta(minutes=5)
-    ts  = now.replace(second=0, microsecond=0)
-    ts -= timedelta(minutes=ts.minute % 5)
-    fname = f"composite_rs_{ts.strftime('%Y%m%d_%H%M')}"
-    url   = f"https://opendata.dwd.de/weather/radar/composite/rs/{fname}.tar"
-
-    resp = requests.get(url, timeout=30)
-    resp.raise_for_status()
-
-    with tarfile.open(fileobj=io.BytesIO(resp.content)) as tf:
-        hdf5_bytes = tf.extractfile(f"{fname}_000-hd5").read()
-
-    data, where = read_odim_composite(io.BytesIO(hdf5_bytes))
-
-    assert data.shape == (1200, 1100)
-    assert data.dtype == np.float32
-    assert "xscale" in where
-    assert "yscale" in where
