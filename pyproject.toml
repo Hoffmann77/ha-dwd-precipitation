@@ -13,13 +13,6 @@ ha-test = [
     "pytest-homeassistant-custom-component==0.13.316",
     "h5py",
 ]
-# Minimal deps for the live DWD integration test — only what our parser needs.
-# No HA framework, no wradlib.
-integration = [
-    "pytest",
-    "requests",
-    "h5py",
-]
 # Installs wradlib (+ pyproj, scipy, etc.) for parser comparison tests.
 # Kept separate because wradlib's heavy deps are not part of the HA ecosystem.
 wradlib-comparison = [
