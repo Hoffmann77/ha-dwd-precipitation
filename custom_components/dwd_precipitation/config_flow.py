@@ -57,9 +57,13 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             vol.Required(
                 CONF_NAME, default=self.hass.config.location_name
             ): str,
-            vol.Optional(CONF_COORDS): selector.LocationSelector(
-                selector.LocationSelectorConfig(),
-            ),
+            vol.Required(
+                CONF_COORDS,
+                default={
+                    "latitude": self.hass.config.latitude,
+                    "longitude": self.hass.config.longitude,
+                },
+            ): selector.LocationSelector(selector.LocationSelectorConfig()),
         }
 
         return vol.Schema(schema)
