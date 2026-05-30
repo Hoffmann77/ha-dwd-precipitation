@@ -4,18 +4,29 @@ on:
   pull_request:
 
 jobs:
-  # Validates the component in HA's exact environment.
-  # Includes the live DWD integration test — requests is available transitively.
+  # Pure parser unit tests — no HA, no wradlib, no network.
   unit-tests:
-    name: Unit tests (HA environment)
+    name: Parser unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+      - name: Install unit-test dependencies
+        run: uv sync --only-group unit-test
+      - name: Run parser unit tests
+        run: uv run pytest tests/test_parser.py -v
+
+  # HA config flow + live DWD fetch — validates the integration end-to-end.
+  integration-tests:
+    name: Integration tests (HA environment)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v7
       - name: Install HA test dependencies
         run: uv sync --only-group ha-test
-      - name: Run tests
-        run: uv run pytest -m "not wradlib" -v
+      - name: Run integration tests
+        run: uv run pytest tests/test_integration.py -v
 
   # Compares our parser against wradlib + pyproj (the reference implementations).
   wradlib-comparison:
@@ -27,4 +38,4 @@ jobs:
       - name: Install wradlib dependencies
         run: uv sync --only-group wradlib-comparison
       - name: Run wradlib comparison tests
-        run: uv run pytest -m "wradlib" -v
+        run: uv run pytest tests/test_wradlib.py -v

@@ -1347,10 +1347,9 @@ ha-test = [
     { name = "h5py" },
     { name = "pytest-homeassistant-custom-component" },
 ]
-integration = [
+unit-test = [
     { name = "h5py" },
     { name = "pytest" },
-    { name = "requests" },
 ]
 wradlib-comparison = [
     { name = "h5py" },
@@ -1366,10 +1365,9 @@ ha-test = [
     { name = "h5py" },
     { name = "pytest-homeassistant-custom-component", specifier = "==0.13.316" },
 ]
-integration = [
+unit-test = [
     { name = "h5py" },
     { name = "pytest" },
-    { name = "requests" },
 ]
 wradlib-comparison = [
     { name = "h5py" },

@@ -13,4 +13,4 @@ try:
 except ImportError:
     # When running without homeassistant (e.g. wradlib-comparison job),
     # skip any test modules that import HA packages.
-    collect_ignore = ["test_config_flow.py"]
+    collect_ignore = ["test_integration.py"]
