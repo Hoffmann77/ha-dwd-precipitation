@@ -314,8 +314,7 @@ def test_full_array_matches_wradlib():
 
 @pytest.mark.integration
 def test_live_rs_file():
-    """Download the current RS tar, parse with both parsers, assert arrays identical."""
-    wrl = pytest.importorskip("wradlib")
+    """Download the current RS tar and verify our parser handles a real DWD file."""
     import tarfile
     from datetime import datetime, timedelta, timezone
 
@@ -333,13 +332,9 @@ def test_live_rs_file():
     with tarfile.open(fileobj=io.BytesIO(resp.content)) as tf:
         hdf5_bytes = tf.extractfile(f"{fname}_000-hd5").read()
 
-    data_ours, _ = read_odim_composite(io.BytesIO(hdf5_bytes))
+    data, where = read_odim_composite(io.BytesIO(hdf5_bytes))
 
-    dd       = wrl.io.read_opera_hdf5(io.BytesIO(hdf5_bytes))
-    data_wrl = _apply_wradlib_scaling(dd)
-
-    assert data_ours.shape == (1200, 1100)
-    assert data_ours.dtype == np.float32
-    np.testing.assert_array_equal(np.isnan(data_ours), np.isnan(data_wrl))
-    mask = ~np.isnan(data_ours)
-    np.testing.assert_array_equal(data_ours[mask], data_wrl[mask])
+    assert data.shape == (1200, 1100)
+    assert data.dtype == np.float32
+    assert "xscale" in where
+    assert "yscale" in where

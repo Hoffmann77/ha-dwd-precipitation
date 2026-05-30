@@ -30,13 +30,14 @@ jobs:
         run: uv run pytest -m "wradlib" -v
 
   # Downloads a live RS file from DWD OpenData to catch format drift.
+  # Only installs what our parser itself depends on — no wradlib.
   integration:
     name: Live DWD integration
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v7
-      - name: Install wradlib dependencies
-        run: uv sync --only-group wradlib-comparison
+      - name: Install integration dependencies
+        run: uv sync --only-group integration
       - name: Run live DWD integration test
         run: uv run pytest -m "integration" -v
