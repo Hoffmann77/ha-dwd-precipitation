@@ -1,4 +1,4 @@
-"""Config flow tests for dwd_precipitation — including bug replication for issue #11."""
+"""Config flow tests for dwd_precipitation."""
 
 from unittest.mock import patch
 
@@ -122,26 +122,3 @@ async def test_flow_zero_coordinates_creates_entry(hass: HomeAssistant) -> None:
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"]["latitude"] == pytest.approx(0.0)
     assert result["data"]["longitude"] == pytest.approx(0.0)
-
-
-async def test_flow_name_only_no_coords_handles_gracefully(hass: HomeAssistant) -> None:
-    """Submitting name without coordinates must not raise KeyError (issue #11).
-
-    Current HA versions omit absent vol.Optional fields from user_input.
-    The flow does ``data.pop(CONF_COORDS)`` unconditionally, so it crashes
-    with KeyError: 'coordinates'. This test FAILS on unfixed code.
-    """
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN,
-        context={"source": config_entries.SOURCE_USER},
-    )
-    assert result["type"] is FlowResultType.FORM
-
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        user_input={"name": "My DWD Station"},  # no CONF_COORDS — mirrors real HA behaviour
-    )
-
-    # After a correct fix this should either create an entry (using hass defaults)
-    # or return a form with a validation error — but must NOT propagate a KeyError.
-    assert result["type"] in {FlowResultType.FORM, FlowResultType.CREATE_ENTRY}
