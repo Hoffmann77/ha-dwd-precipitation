@@ -1,4 +1,4 @@
-"""Config flow tests for dwd_precipitation."""
+"""Integration tests — HA config flow."""
 
 from unittest.mock import patch
 
@@ -10,6 +10,10 @@ from homeassistant.data_entry_flow import FlowResultType
 from custom_components.dwd_precipitation.const import CONF_COORDS, DOMAIN
 
 
+# ---------------------------------------------------------------------------
+# Config flow fixtures
+# ---------------------------------------------------------------------------
+
 @pytest.fixture(autouse=True)
 def mock_setup_entry():
     """Prevent live DWD fetches during config flow tests."""
@@ -19,6 +23,10 @@ def mock_setup_entry():
     ) as mock_entry:
         yield mock_entry
 
+
+# ===========================================================================
+# Config flow
+# ===========================================================================
 
 async def test_flow_init_shows_form(hass: HomeAssistant) -> None:
     """Starting the config flow shows the user step form."""

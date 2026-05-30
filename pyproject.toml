@@ -7,6 +7,12 @@ requires-python = ">=3.13.2"
 package = false  # not a distributable Python package; test in-place via pythonpath
 
 [dependency-groups]
+# Minimal deps for parser unit tests — no HA, no wradlib.
+unit-test = [
+    "pytest",
+    "h5py",
+    "requests",
+]
 # Installs only HA-compatible packages — validates the component runs in the
 # same environment HA uses (same Python version, same numpy/h5py pins).
 ha-test = [
