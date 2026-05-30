@@ -75,6 +75,55 @@ async def test_flow_blank_name_shows_invalid_name_error(hass: HomeAssistant) -> 
     assert result["errors"] == {"base": "invalid_name"}
 
 
+async def test_flow_default_location_values_creates_entry(hass: HomeAssistant) -> None:
+    """Submitting with hass default lat/lon creates an entry with those values."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": config_entries.SOURCE_USER},
+    )
+    assert result["type"] is FlowResultType.FORM
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={
+            "name": hass.config.location_name,
+            CONF_COORDS: {
+                "latitude": hass.config.latitude,
+                "longitude": hass.config.longitude,
+            },
+        },
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"]["latitude"] == pytest.approx(hass.config.latitude)
+    assert result["data"]["longitude"] == pytest.approx(hass.config.longitude)
+
+
+async def test_flow_zero_coordinates_creates_entry(hass: HomeAssistant) -> None:
+    """Submitting lat=0.0, lon=0.0 (Null Island) creates an entry without errors.
+
+    0.0 is falsy in Python; this guards against accidental truthiness checks
+    on the coordinate values silently swallowing the submission.
+    """
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": config_entries.SOURCE_USER},
+    )
+    assert result["type"] is FlowResultType.FORM
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={
+            "name": "Null Island",
+            CONF_COORDS: {"latitude": 0.0, "longitude": 0.0},
+        },
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"]["latitude"] == pytest.approx(0.0)
+    assert result["data"]["longitude"] == pytest.approx(0.0)
+
+
 async def test_flow_name_only_no_coords_handles_gracefully(hass: HomeAssistant) -> None:
     """Submitting name without coordinates must not raise KeyError (issue #11).
 
