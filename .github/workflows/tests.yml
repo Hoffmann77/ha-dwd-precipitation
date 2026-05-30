@@ -10,7 +10,7 @@ jobs:
     name: Unit tests (HA environment)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v7
       - name: Install HA test dependencies
         run: uv sync --only-group ha-test
@@ -23,7 +23,7 @@ jobs:
     name: wradlib comparison + live DWD
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v7
       - name: Install wradlib dependencies
         run: uv sync --only-group wradlib-comparison
