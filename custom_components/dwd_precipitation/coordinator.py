@@ -46,5 +46,6 @@ class UpdateCoordinator(DataUpdateCoordinator):
                 await product.update(self.async_client)
 
             data[product.PRODUCT_KEY] = product.data
+            data[f"{product.PRODUCT_KEY}_metadata"] = getattr(product, "_metadata", {})
 
         return data

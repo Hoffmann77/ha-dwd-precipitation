@@ -44,6 +44,7 @@ class Product(ABC):
         self.data = None
         self.source = None
         self.curr_release = None
+        self._metadata = {}
 
     @cached_property
     def index(self):
@@ -117,6 +118,7 @@ class RadvorRQ(Product):
     async def update(self, async_client) -> None:
         """Update the data."""
         new_data = []
+        metadata_by_lead_time = []
         ts = self.get_latest_release()
 
         for url in self.get_url(ts, "000", "060", "120"):
@@ -132,10 +134,14 @@ class RadvorRQ(Product):
             f = gzip.open(response)
 
             data, metadata = read_radolan_composite(f)
+            metadata = dict(metadata)
+            metadata["lead_time_minutes"] = int(url.rsplit("_", 1)[1][:3])
             new_data.append(data[self.index])
+            metadata_by_lead_time.append(metadata)
 
         self.current_release = ts
         self.data = new_data
+        self._metadata = metadata_by_lead_time
 
 
 class RadvorRS(Product):
@@ -171,6 +177,7 @@ class RadvorRS(Product):
         prefix = f"composite_rs_{ts.strftime('%Y%m%d_%H%M')}"
         row, col = self.index
         new_data = []
+        metadata_by_lead_time = []
         with tarfile.open(fileobj=tar_bytes, mode="r") as tf:
             for suffix in ("000", "060", "120"):
                 member_name = f"{prefix}_{suffix}-hd5"
@@ -179,13 +186,18 @@ class RadvorRS(Product):
                 except KeyError:
                     _LOGGER.warning("RS tar member not found: %s", member_name)
                     new_data.append(None)
+                    metadata_by_lead_time.append({})
                     continue
-                data, _ = read_odim_composite(BytesIO(f.read()))
+                data, metadata = read_odim_composite(BytesIO(f.read()))
+                metadata = dict(metadata)
+                metadata["lead_time_minutes"] = int(suffix)
                 val = float(data[row, col])
                 new_data.append(None if np.isnan(val) else val)
+                metadata_by_lead_time.append(metadata)
 
         self.current_release = ts
         self.data = new_data
+        self._metadata = metadata_by_lead_time
 
 
 class RadolanProduct(Product):
@@ -212,6 +224,7 @@ class RadolanProduct(Product):
 
         self.current_release = ts
         self.data = new_data
+        self._metadata = dict(metadata)
 
 
 class RadolanRW(RadolanProduct):
