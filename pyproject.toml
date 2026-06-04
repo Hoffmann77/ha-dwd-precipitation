@@ -1,7 +1,7 @@
 [project]
 name = "ha-dwd-precipitation"
 version = "2026.5.1"
-requires-python = ">=3.13.2"
+requires-python = ">=3.14.2"
 
 [tool.uv]
 package = false  # not a distributable Python package; test in-place via pythonpath
