@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 from datetime import timedelta
+from dataclasses import dataclass
 
 from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
@@ -15,6 +17,14 @@ from homeassistant.helpers.update_coordinator import (
 _LOGGER = logging.getLogger(__name__)
 
 UPDATE_INTERVAL = timedelta(seconds=90)
+
+
+@dataclass
+class PrecipitationData:
+    """Dataclass storing the precipitation data and metadata."""
+
+    precipitation: Any
+    metadata: dict
 
 
 class UpdateCoordinator(DataUpdateCoordinator):
@@ -45,7 +55,8 @@ class UpdateCoordinator(DataUpdateCoordinator):
             if product.requires_update:
                 await product.update(self.async_client)
 
-            data[product.PRODUCT_KEY] = product.data
-            data[f"{product.PRODUCT_KEY}_metadata"] = getattr(product, "_metadata", {})
+            data[product.PRODUCT_KEY] = PrecipitationData(
+                product.data, product.metadata
+            )
 
         return data

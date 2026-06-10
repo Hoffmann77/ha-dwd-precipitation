@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 
 from homeassistant.core import HomeAssistant
@@ -33,10 +33,7 @@ _LOGGER = logging.getLogger(__name__)
 class PrecipitationSensorEntityDescription(SensorEntityDescription):
     """Provide a description for a precipitation sensor."""
 
-    value_fn: Callable[[dict], float | None]
-    metadata_key: str
-    stale_after: timedelta
-    metadata_index: int | None = None
+    access_fn: Callable[[dict], float | None]
 
 
 RADOLAN_SENSORS = (
@@ -47,9 +44,7 @@ RADOLAN_SENSORS = (
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
         state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda model: model["rw"],
-        metadata_key="rw",
-        stale_after=timedelta(hours=2),
+        access_fn=lambda model: model["rw"],
     ),
     PrecipitationSensorEntityDescription(
         key="radolan_sf",
@@ -58,9 +53,7 @@ RADOLAN_SENSORS = (
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
         state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda model: model["sf"],
-        metadata_key="sf",
-        stale_after=timedelta(hours=30),
+        access_fn=lambda model: model["sf"],
     ),
     PrecipitationSensorEntityDescription(
         key="radolan_sf_yesterday",
@@ -69,9 +62,7 @@ RADOLAN_SENSORS = (
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
         state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda model: model["sf_2350"],
-        metadata_key="sf_2350",
-        stale_after=timedelta(hours=30),
+        access_fn=lambda model: model["sf_2350"],
     ),
 )
 
@@ -84,10 +75,7 @@ RADVOR_SENSORS = (
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
         state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda model: model["rs"][0],
-        metadata_key="rs",
-        stale_after=timedelta(minutes=15),
-        metadata_index=0,
+        access_fn=lambda model: model["rs"][0],
     ),
     PrecipitationSensorEntityDescription(
         key="radvor_rs_060",
@@ -96,10 +84,7 @@ RADVOR_SENSORS = (
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
         state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda model: model["rs"][1],
-        metadata_key="rs",
-        stale_after=timedelta(minutes=15),
-        metadata_index=1,
+        access_fn=lambda model: model["rs"][1],
     ),
     PrecipitationSensorEntityDescription(
         key="radvor_rs_120",
@@ -108,10 +93,7 @@ RADVOR_SENSORS = (
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
         state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda model: model["rs"][2],
-        metadata_key="rs",
-        stale_after=timedelta(minutes=15),
-        metadata_index=2,
+        access_fn=lambda model: model["rs"][2],
     ),
 )
 
@@ -201,35 +183,28 @@ class PrecipitationSensorEntity(DwdCoordinatorEntity, SensorEntity):
     @property
     def native_value(self):
         """Return the state of the sensor."""
-        precipitation = self.coordinator.data
+        precipitation = self.coordinator.data.precipitation
         assert precipitation is not None
 
-        return self.entity_description.value_fn(precipitation)
+        return self.entity_description.access_fn(precipitation)
 
     def _metadata(self) -> dict[str, Any]:
         """Return metadata for this sensor's source product."""
-        precipitation = self.coordinator.data
-        if precipitation is None:
+        data = self.coordinator.data
+        metadata = data.metadata
+        if metadata is None:
             return {}
 
-        metadata = precipitation.get(f"{self.entity_description.metadata_key}_metadata")
-        index = self.entity_description.metadata_index
-        if isinstance(metadata, (list, tuple)) and index is not None:
-            if index < len(metadata) and isinstance(metadata[index], dict):
-                return metadata[index]
-            return {}
-
-        if isinstance(metadata, dict):
-            return metadata
-
-        return {}
+        return self.entity_description.access_fn(metadata)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return diagnostic metadata as attributes."""
-        metadata = self._metadata()
-        if not metadata:
+        metadata = self.coordinator.data.metadata
+        if metadata is None:
             return {}
+
+        metadata = self.entity_description.access_fn(metadata)
 
         source_dt = _metadata_datetime(metadata)
         if source_dt is None:
