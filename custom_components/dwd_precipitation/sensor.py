@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 
 from homeassistant.core import HomeAssistant
@@ -35,7 +35,6 @@ class PrecipitationSensorEntityDescription(SensorEntityDescription):
 
     value_fn: Callable[[dict], float | None]
     metadata_key: str
-    stale_after: timedelta
     metadata_index: int | None = None
 
 
@@ -49,7 +48,6 @@ RADOLAN_SENSORS = (
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=lambda model: model["rw"],
         metadata_key="rw",
-        stale_after=timedelta(hours=2),
     ),
     PrecipitationSensorEntityDescription(
         key="radolan_sf",
@@ -60,7 +58,6 @@ RADOLAN_SENSORS = (
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=lambda model: model["sf"],
         metadata_key="sf",
-        stale_after=timedelta(hours=30),
     ),
     PrecipitationSensorEntityDescription(
         key="radolan_sf_yesterday",
@@ -71,7 +68,6 @@ RADOLAN_SENSORS = (
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=lambda model: model["sf_2350"],
         metadata_key="sf_2350",
-        stale_after=timedelta(hours=30),
     ),
 )
 
@@ -86,7 +82,6 @@ RADVOR_SENSORS = (
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=lambda model: model["rs"][0],
         metadata_key="rs",
-        stale_after=timedelta(minutes=15),
         metadata_index=0,
     ),
     PrecipitationSensorEntityDescription(
@@ -98,7 +93,6 @@ RADVOR_SENSORS = (
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=lambda model: model["rs"][1],
         metadata_key="rs",
-        stale_after=timedelta(minutes=15),
         metadata_index=1,
     ),
     PrecipitationSensorEntityDescription(
@@ -110,7 +104,6 @@ RADVOR_SENSORS = (
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=lambda model: model["rs"][2],
         metadata_key="rs",
-        stale_after=timedelta(minutes=15),
         metadata_index=2,
     ),
 )
@@ -232,21 +225,6 @@ class PrecipitationSensorEntity(DwdCoordinatorEntity, SensorEntity):
             return {}
 
         source_dt = _metadata_datetime(metadata)
-        if source_dt is None:
-            timestamp = None
-            data_age = None
-            status = "unknown_timestamp"
-        else:
-            timestamp = source_dt.isoformat()
-            now = dt_util.utcnow()
-            if now.tzinfo is None:
-                now = now.replace(tzinfo=timezone.utc)
-            data_age = (now - source_dt).total_seconds()
-            status = (
-                "ok"
-                if data_age <= self.entity_description.stale_after.total_seconds()
-                else "stale"
-            )
 
         return {
             "source_product": _plain_value(
@@ -254,9 +232,7 @@ class PrecipitationSensorEntity(DwdCoordinatorEntity, SensorEntity):
                 or metadata.get("producttype")
                 or metadata.get("prodname")
             ),
-            "source_timestamp": timestamp,
-            "data_age_seconds": round(data_age) if data_age is not None else None,
-            "data_status": status,
+            "source_timestamp": source_dt.isoformat() if source_dt else None,
             "lead_time_minutes": _plain_value(
                 metadata.get("lead_time_minutes")
                 if "lead_time_minutes" in metadata
