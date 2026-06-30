@@ -1,5 +1,6 @@
 """ODIM_H5 reader for DWD RS Cartesian precipitation composites."""
 
+from datetime import datetime, timezone
 import re
 import math
 
@@ -66,6 +67,28 @@ def _lonlat_to_xy(lon: float, lat: float, x_0: float, y_0: float):
     return rho * math.sin(lam) + x_0, -rho * math.cos(lam) + y_0
 
 
+def _normalise_attr_value(value):
+    """Return HDF5 attributes as plain Python values."""
+    if hasattr(value, "decode"):
+        return value.decode()
+    if hasattr(value, "item"):
+        return value.item()
+    return value
+
+
+def _odim_datetime(date: str | None, time: str | None):
+    """Return the ODIM source timestamp as UTC datetime if present."""
+    if not date or not time:
+        return None
+
+    try:
+        return datetime.strptime(f"{date}{time}", "%Y%m%d%H%M%S").replace(
+            tzinfo=timezone.utc
+        )
+    except ValueError:
+        return None
+
+
 def read_odim_composite(fileobj, dataset: str = "dataset1", moment: str = "data1"):
     """Read a Cartesian ODIM_H5 composite.
 
@@ -74,8 +97,18 @@ def read_odim_composite(fileobj, dataset: str = "dataset1", moment: str = "data1
     undetect cells (radar scanned, zero precipitation detected) → 0.0.
     """
     with h5py.File(fileobj, "r") as hf:
-        where = {k: v for k, v in hf["where"].attrs.items()}
-        what = {k: v for k, v in hf[f"{dataset}/{moment}/what"].attrs.items()}
+        where = {
+            k: _normalise_attr_value(v)
+            for k, v in hf["where"].attrs.items()
+        }
+        dataset_what = {
+            k: _normalise_attr_value(v)
+            for k, v in hf[f"{dataset}/what"].attrs.items()
+        }
+        what = {
+            k: _normalise_attr_value(v)
+            for k, v in hf[f"{dataset}/{moment}/what"].attrs.items()
+        }
         raw = hf[f"{dataset}/{moment}/data"][:]
 
     gain     = float(what["gain"])
@@ -86,8 +119,19 @@ def read_odim_composite(fileobj, dataset: str = "dataset1", moment: str = "data1
     data = raw.astype(np.float32) * gain + offset
     data[raw == nodata]   = np.nan
     data[raw == undetect] = 0.0
+
+    metadata = dict(where)
+    metadata.update(
+        {
+            "product": dataset_what.get("prodname") or dataset_what.get("product"),
+            "datetime": _odim_datetime(
+                dataset_what.get("enddate"),
+                dataset_what.get("endtime"),
+            ),
+        }
+    )
     
-    return data, where
+    return data, metadata
 
 
 def get_rs_grid_index(lat: float, lon: float, where: dict | None = None):
