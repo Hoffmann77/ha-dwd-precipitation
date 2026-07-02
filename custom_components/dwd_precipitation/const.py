@@ -1,4 +1,4 @@
-"""The enphase_envoy component."""
+"""Constants for the DWD Precipitation integration."""
 
 from homeassistant.const import Platform
 

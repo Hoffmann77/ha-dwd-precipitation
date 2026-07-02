@@ -37,6 +37,7 @@ class OptionalModuleStub:
 
 
 def has_import(module):
+    """Return True if the module was imported (not an optional stub)."""
     return not isinstance(module, OptionalModuleStub)
 
 

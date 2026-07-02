@@ -7,7 +7,7 @@ import logging
 import tarfile
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
-from functools import cached_property
+from functools import cached_property, lru_cache
 from io import BytesIO
 
 import numpy as np
@@ -18,6 +18,15 @@ from .radar import read_radolan_composite, get_radolan_grid, read_odim_composite
 from .const import DWD_RADOLAN_URL, DWD_COMPOSITE_URL
 
 _LOGGER = logging.getLogger(__name__)
+
+
+@lru_cache(maxsize=1)
+def _radolan_wgs84_grid() -> np.ndarray:
+    """Return the cached 900×900 RADOLAN WGS84 lon/lat grid.
+
+    Shared across all RADOLAN products, which use an identical grid.
+    """
+    return get_radolan_grid(wgs84=True)
 
 
 def _utc(dt: datetime | None) -> datetime | None:
@@ -83,6 +92,8 @@ class RadvorRS(BaseProductUpdateCoordinator):
                 try:
                     f = tf.extractfile(member_name)
                 except KeyError:
+                    f = None
+                if f is None:
                     _LOGGER.warning("RS tar member not found: %s", member_name)
                     data.append(None)
                     metadata.append(None)
@@ -109,10 +120,10 @@ class RadolanProduct(BaseProductUpdateCoordinator, ABC):
     """
 
     @cached_property
-    def index(self):
-        """Nearest-cell index in the RADOLAN 900×900 WGS84 grid."""
+    def index(self) -> tuple[int, int]:
+        """Return the nearest-cell (row, col) in the RADOLAN 900×900 WGS84 grid."""
         lat, lon = self.coords
-        grid = get_radolan_grid(wgs84=True)
+        grid = _radolan_wgs84_grid()
         dist_sq = (grid[:, :, 1] - lat) ** 2 + (grid[:, :, 0] - lon) ** 2
 
         return np.unravel_index(np.argmin(dist_sq), dist_sq.shape)

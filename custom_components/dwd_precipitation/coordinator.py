@@ -5,8 +5,8 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 from functools import cached_property
 from itertools import product as cartesian_product
 from math import gcd
@@ -31,7 +31,7 @@ class ProductMetadata:
 
     source_product: str | None
     source_timestamp: datetime | None  # always UTC-aware, or None
-    lead_time_minutes: int | None = field(default=None)
+    lead_time_minutes: int | None = None
 
 
 @dataclass
@@ -98,13 +98,6 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
         )
 
         return dt_util.as_utc(prev)
-
-    # def _requires_update(self, now: datetime) -> bool:
-    #     """Return True if a newer release is available."""
-    #     if self.curr_release is None:
-    #         return True
-
-    #     return self.curr_release < self.get_latest_release(now)
 
     def _data_is_stale(self, now: datetime) -> bool:
         """Return True if cached data has aged beyond the tolerance window."""
@@ -246,8 +239,6 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
             # Data is still fresh enough — retry silently
             self._start_fast_polling()
             return self.data
-        else:
-            self.data = CoordinatorData(data, metadata)
 
         self._stop_fast_polling()
         self.curr_release = latest_release

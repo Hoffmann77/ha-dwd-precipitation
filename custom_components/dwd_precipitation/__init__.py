@@ -26,7 +26,16 @@ class MyData:
     coordinators: dict[str, BaseProductUpdateCoordinator]
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+def _make_refresh_callback(coordinator: BaseProductUpdateCoordinator):
+    """Return a time-change callback that refreshes the given coordinator."""
+
+    async def _callback(_now) -> None:
+        await coordinator.async_refresh()
+
+    return _callback
+
+
+async def async_setup_entry(hass: HomeAssistant, entry: MyConfigEntry) -> bool:
     """Set up DWD Precipitation from a config entry."""
     client = async_get_clientsession(hass)
 
@@ -45,15 +54,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     for coordinator in product_coordinators:
         await coordinator.async_config_entry_first_refresh()
 
-        def make_callback(coord: BaseProductUpdateCoordinator):
-            async def _callback(_now) -> None:
-                await coord.async_refresh()
-            return _callback
-
+        refresh_callback = _make_refresh_callback(coordinator)
         for arg in coordinator.track_time_change_args:
             unsub = async_track_utc_time_change(
                 hass,
-                make_callback(coordinator),
+                refresh_callback,
                 hour=arg["hour"],
                 minute=arg["minute"],
                 second=arg["second"],
@@ -70,11 +75,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
-async def update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
+async def update_listener(hass: HomeAssistant, entry: MyConfigEntry) -> None:
     """Handle config entry updates."""
     await hass.config_entries.async_reload(entry.entry_id)
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_unload_entry(hass: HomeAssistant, entry: MyConfigEntry) -> bool:
     """Unload a config entry."""
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)

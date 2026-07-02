@@ -146,9 +146,6 @@ class DwdCoordinatorEntity(CoordinatorEntity[BaseProductUpdateCoordinator]):
 class PrecipitationSensorEntity(DwdCoordinatorEntity, SensorEntity):
     """Implementation of a precipitation sensor."""
 
-    entity_description: PrecipitationSensorEntityDescription
-    _attr_has_entity_name = True
-
     def __init__(
         self,
         coordinator: BaseProductUpdateCoordinator,
