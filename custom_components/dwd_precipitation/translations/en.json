@@ -1,0 +1,13 @@
+{
+  "options": {
+    "step": {
+      "init": {
+        "title": "DWD Precipitation Options",
+        "data": {
+          "extra_state_attributes": "Enable diagnostic state attributes",
+          "unavailable_when_stale": "Mark sensors unavailable when data is stale"
+        }
+      }
+    }
+  }
+}

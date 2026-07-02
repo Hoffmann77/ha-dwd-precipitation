@@ -1,6 +1,5 @@
 """ODIM_H5 reader for DWD RS Cartesian precipitation composites."""
 
-from datetime import datetime, timezone
 import re
 import math
 
@@ -76,31 +75,15 @@ def _normalise_attr_value(value):
     return value
 
 
-def _odim_datetime(date: str | None, time: str | None):
-    """Return the ODIM source timestamp as UTC datetime if present."""
-    if not date or not time:
-        return None
-
-    try:
-        return datetime.strptime(f"{date}{time}", "%Y%m%d%H%M%S").replace(
-            tzinfo=timezone.utc
-        )
-    except ValueError:
-        return None
-
-
 def read_odim_composite(fileobj, dataset: str = "dataset1", moment: str = "data1"):
     """Read a Cartesian ODIM_H5 composite.
 
-    Returns (data, where) where data is a float32 array.
+    Returns (data, dataset_what) where data is a float32 array and dataset_what
+    is the normalised /dataset/what attribute dict.
     nodata cells (outside radar range / masked) → NaN.
     undetect cells (radar scanned, zero precipitation detected) → 0.0.
     """
     with h5py.File(fileobj, "r") as hf:
-        where = {
-            k: _normalise_attr_value(v)
-            for k, v in hf["where"].attrs.items()
-        }
         dataset_what = {
             k: _normalise_attr_value(v)
             for k, v in hf[f"{dataset}/what"].attrs.items()
@@ -120,18 +103,7 @@ def read_odim_composite(fileobj, dataset: str = "dataset1", moment: str = "data1
     data[raw == nodata]   = np.nan
     data[raw == undetect] = 0.0
 
-    metadata = dict(where)
-    metadata.update(
-        {
-            "product": dataset_what.get("prodname") or dataset_what.get("product"),
-            "datetime": _odim_datetime(
-                dataset_what.get("enddate"),
-                dataset_what.get("endtime"),
-            ),
-        }
-    )
-    
-    return data, metadata
+    return data, dataset_what
 
 
 def get_rs_grid_index(lat: float, lon: float, where: dict | None = None):

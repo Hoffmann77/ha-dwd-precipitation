@@ -1,30 +1,28 @@
-"""Sensor entities for the Heat pump Signal integration."""
+"""Sensor entities for the DWD Precipitation integration."""
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import Any
 
-from homeassistant.core import HomeAssistant
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.util import dt as dt_util
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.components.sensor import SensorEntity
-from homeassistant.const import UnitOfPrecipitationDepth
 from homeassistant.components.sensor import (
     SensorDeviceClass,
+    SensorEntity,
     SensorEntityDescription,
     SensorStateClass,
 )
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import UnitOfPrecipitationDepth
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN
-from .coordinator import UpdateCoordinator
-
+from .const import CONF_EXTRA_ATTRIBUTES, DOMAIN
+from .coordinator import BaseProductUpdateCoordinator, ProductMetadata
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -33,7 +31,8 @@ _LOGGER = logging.getLogger(__name__)
 class PrecipitationSensorEntityDescription(SensorEntityDescription):
     """Provide a description for a precipitation sensor."""
 
-    access_fn: Callable[[dict], float | None]
+    product_key: str
+    access_fn: Callable[[Any], Any]
 
 
 RADOLAN_SENSORS = (
@@ -44,7 +43,8 @@ RADOLAN_SENSORS = (
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
         state_class=SensorStateClass.MEASUREMENT,
-        access_fn=lambda model: model["rw"],
+        product_key="rw",
+        access_fn=lambda d: d,
     ),
     PrecipitationSensorEntityDescription(
         key="radolan_sf",
@@ -53,7 +53,8 @@ RADOLAN_SENSORS = (
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
         state_class=SensorStateClass.MEASUREMENT,
-        access_fn=lambda model: model["sf"],
+        product_key="sf",
+        access_fn=lambda d: d,
     ),
     PrecipitationSensorEntityDescription(
         key="radolan_sf_yesterday",
@@ -62,7 +63,8 @@ RADOLAN_SENSORS = (
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
         state_class=SensorStateClass.MEASUREMENT,
-        access_fn=lambda model: model["sf_2350"],
+        product_key="sf_2350",
+        access_fn=lambda d: d,
     ),
 )
 
@@ -75,7 +77,8 @@ RADVOR_SENSORS = (
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
         state_class=SensorStateClass.MEASUREMENT,
-        access_fn=lambda model: model["rs"][0],
+        product_key="rs",
+        access_fn=lambda _list: _list[0],
     ),
     PrecipitationSensorEntityDescription(
         key="radvor_rs_060",
@@ -84,7 +87,8 @@ RADVOR_SENSORS = (
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
         state_class=SensorStateClass.MEASUREMENT,
-        access_fn=lambda model: model["rs"][1],
+        product_key="rs",
+        access_fn=lambda _list: _list[1],
     ),
     PrecipitationSensorEntityDescription(
         key="radvor_rs_120",
@@ -93,66 +97,44 @@ RADVOR_SENSORS = (
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
         state_class=SensorStateClass.MEASUREMENT,
-        access_fn=lambda model: model["rs"][2],
+        product_key="rs",
+        access_fn=lambda _list: _list[2],
     ),
 )
 
 
-def _plain_value(value: Any) -> Any:
-    """Return values suitable for Home Assistant state attributes."""
-    if isinstance(value, datetime):
-        return value.isoformat()
-    if hasattr(value, "decode"):
-        return value.decode()
-    if hasattr(value, "item"):
-        return value.item()
-    return value
-
-
-def _metadata_datetime(metadata: dict[str, Any]) -> datetime | None:
-    """Extract a UTC source timestamp from product metadata."""
-    value = metadata.get("datetime")
-    if isinstance(value, datetime):
-        if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return dt_util.as_utc(value)
-
-    return None
-
-
 async def async_setup_entry(
-        hass: HomeAssistant,
-        entry: ConfigEntry,
-        async_add_entities: AddEntitiesCallback
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the sensor platform."""
-    coordinator = entry.runtime_data.coordinator
+    coordinators = entry.runtime_data.coordinators
+
+    entity_descriptions = RADVOR_SENSORS + RADOLAN_SENSORS
 
     async_add_entities(
-        PrecipitationSensorEntity(coordinator, description)
-        for description in RADVOR_SENSORS
+        PrecipitationSensorEntity(
+            coordinators[entity_description.product_key],
+            entity_description,
+        )
+        for entity_description in entity_descriptions
     )
 
-    async_add_entities(
-        PrecipitationSensorEntity(coordinator, description)
-        for description in RADOLAN_SENSORS
-    )
 
-
-class DwdCoordinatorEntity(CoordinatorEntity[UpdateCoordinator]):
-    """Coordinator entity."""
+class DwdCoordinatorEntity(CoordinatorEntity[BaseProductUpdateCoordinator]):
+    """Base coordinator entity."""
 
     entity_description: PrecipitationSensorEntityDescription
     _attr_has_entity_name = True
 
     def __init__(
-            self,
-            coordinator: UpdateCoordinator,
-            description: PrecipitationSensorEntityDescription,
+        self,
+        coordinator: BaseProductUpdateCoordinator,
+        description: PrecipitationSensorEntityDescription,
     ) -> None:
         """Initialize the entity."""
         super().__init__(coordinator)
-
         self.entity_description = description
         self._attr_device_info = DeviceInfo(
             entry_type=DeviceEntryType.SERVICE,
@@ -168,77 +150,46 @@ class PrecipitationSensorEntity(DwdCoordinatorEntity, SensorEntity):
     _attr_has_entity_name = True
 
     def __init__(
-            self,
-            coordinator: UpdateCoordinator,
-            description: PrecipitationSensorEntityDescription,
+        self,
+        coordinator: BaseProductUpdateCoordinator,
+        description: PrecipitationSensorEntityDescription,
     ) -> None:
         """Initialize the sensor entity."""
         super().__init__(coordinator, description)
-
         self._attr_unique_id = (
-            f"{self.coordinator.config_entry.entry_id}"
-            + f"_{self.entity_description.key}"
+            f"{coordinator.config_entry.entry_id}_{description.key}"
         )
 
     @property
-    def native_value(self):
+    def native_value(self) -> float | None:
         """Return the state of the sensor."""
-        precipitation = self.coordinator.data.precipitation
-        assert precipitation is not None
+        if self.coordinator.data is None:
+            return None
 
-        return self.entity_description.access_fn(precipitation)
+        if (data := self.coordinator.data.data) is None:
+            return None
 
-    def _metadata(self) -> dict[str, Any]:
-        """Return metadata for this sensor's source product."""
-        data = self.coordinator.data
-        metadata = data.metadata
-        if metadata is None:
-            return {}
-
-        return self.entity_description.access_fn(metadata)
+        return self.entity_description.access_fn(data)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return diagnostic metadata as attributes."""
-        metadata = self.coordinator.data.metadata
+        """Return diagnostic metadata as state attributes."""
+        if not self.coordinator.config_entry.options.get(CONF_EXTRA_ATTRIBUTES, False):
+            return {}
+
+        if self.coordinator.data is None:
+            return {}
+
+        metadata: ProductMetadata = self.entity_description.access_fn(
+            self.coordinator.data.metadata
+        )
         if metadata is None:
             return {}
 
-        metadata = self.entity_description.access_fn(metadata)
-
-        source_dt = _metadata_datetime(metadata)
-        if source_dt is None:
-            timestamp = None
-            data_age = None
-            status = "unknown_timestamp"
-        else:
-            timestamp = source_dt.isoformat()
-            now = dt_util.utcnow()
-            if now.tzinfo is None:
-                now = now.replace(tzinfo=timezone.utc)
-            data_age = (now - source_dt).total_seconds()
-            status = (
-                "ok"
-                if data_age <= self.entity_description.stale_after.total_seconds()
-                else "stale"
-            )
+        ts = metadata.source_timestamp
 
         return {
-            "source_product": _plain_value(
-                metadata.get("product")
-                or metadata.get("producttype")
-                or metadata.get("prodname")
-            ),
-            "source_timestamp": timestamp,
-            "data_age_seconds": round(data_age) if data_age is not None else None,
-            "data_status": status,
-            "lead_time_minutes": _plain_value(
-                metadata.get("lead_time_minutes")
-                if "lead_time_minutes" in metadata
-                else (
-                    metadata.get("predictiontime")
-                    if "predictiontime" in metadata
-                    else metadata.get("VV")
-                )
-            ),
+            "source_product": metadata.source_product,
+            "source_timestamp": ts.isoformat() if ts else None,
+            "lead_time_minutes": metadata.lead_time_minutes,
         }

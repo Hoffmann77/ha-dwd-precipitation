@@ -9,6 +9,10 @@ PLATFORMS = [Platform.SENSOR]
 
 CONF_COORDS = "coordinates"
 
+CONF_EXTRA_ATTRIBUTES = "extra_state_attributes"
+
+CONF_UNAVAILABLE_WHEN_STALE = "unavailable_when_stale"
+
 DWD_OPENDATA_URL = "https://opendata.dwd.de"
 
 DWD_RADOLAN_URL = f"{DWD_OPENDATA_URL}/weather/radar/radolan"

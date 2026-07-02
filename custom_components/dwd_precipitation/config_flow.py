@@ -11,10 +11,33 @@ from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import selector
 from homeassistant.const import CONF_NAME
 
-from .const import DOMAIN, CONF_COORDS
+from .const import DOMAIN, CONF_COORDS, CONF_EXTRA_ATTRIBUTES, CONF_UNAVAILABLE_WHEN_STALE
 
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class OptionsFlowHandler(config_entries.OptionsFlow):
+    """Handle options flow for DWD Precipitation."""
+
+    async def async_step_init(self, user_input=None) -> FlowResult:
+        """Manage the options."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        schema = vol.Schema(
+            {
+                vol.Optional(
+                    CONF_EXTRA_ATTRIBUTES,
+                    default=self.config_entry.options.get(CONF_EXTRA_ATTRIBUTES, False),
+                ): selector.BooleanSelector(),
+                vol.Optional(
+                    CONF_UNAVAILABLE_WHEN_STALE,
+                    default=self.config_entry.options.get(CONF_UNAVAILABLE_WHEN_STALE, True),
+                ): selector.BooleanSelector(),
+            }
+        )
+        return self.async_show_form(step_id="init", data_schema=schema)
 
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -23,6 +46,12 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
     MINOR_VERSION = 1
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry) -> OptionsFlowHandler:
+        """Return the options flow handler."""
+        return OptionsFlowHandler()
 
     async def async_step_user(self, user_input=None) -> FlowResult:
         """Handle the user step."""
