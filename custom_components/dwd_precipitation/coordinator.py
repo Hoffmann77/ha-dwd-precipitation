@@ -30,8 +30,10 @@ class ProductMetadata:
     """Parsed per-product metadata, ready for HA state attributes."""
 
     source_product: str | None
-    source_timestamp: datetime | None  # always UTC-aware, or None
+    source_timestamp: datetime | None  # always UTC-aware, or None (product reference time)
     lead_time_minutes: int | None = None
+    data_start: datetime | None = None  # accumulation/validity window start (UTC), or None
+    data_end: datetime | None = None    # accumulation/validity window end (UTC), or None
 
 
 @dataclass

@@ -39,9 +39,8 @@ def _utc(dt: datetime | None) -> datetime | None:
     return dt.astimezone(timezone.utc)
 
 
-def _parse_odim_ts(raw: dict) -> datetime | None:
-    """Parse ODIM enddate/endtime fields into a UTC datetime."""
-    date, time = raw.get("enddate"), raw.get("endtime")
+def _parse_odim_ts(date: str | None, time: str | None) -> datetime | None:
+    """Parse ODIM date/time strings (YYYYMMDD / HHMMSS) into a UTC datetime."""
     if not date or not time:
         return None
     try:
@@ -102,10 +101,17 @@ class RadvorRS(BaseProductUpdateCoordinator):
                 _data, _what = read_odim_composite(BytesIO(f.read()))
                 val = float(_data[row, col])
                 data.append(None if np.isnan(val) else val)
+
+                lead = int(suffix)
+                data_start = _parse_odim_ts(_what.get("startdate"), _what.get("starttime"))
+                data_end = _parse_odim_ts(_what.get("enddate"), _what.get("endtime"))
+                source_ts = data_end - timedelta(minutes=lead) if data_end else None
                 metadata.append(ProductMetadata(
                     source_product=_what.get("prodname") or _what.get("product"),
-                    source_timestamp=_parse_odim_ts(_what),
-                    lead_time_minutes=int(suffix),
+                    source_timestamp=source_ts,
+                    lead_time_minutes=lead,
+                    data_start=data_start,
+                    data_end=data_end,
                 ))
 
         return data, metadata
@@ -138,9 +144,15 @@ class RadolanProduct(BaseProductUpdateCoordinator, ABC):
         f = bz2.open(BytesIO(response.content))
         data, raw = read_radolan_composite(f)
 
+        dt_end = _utc(raw.get("datetime"))
+        interval = raw.get("intervalseconds")
+        data_start = dt_end - timedelta(seconds=interval) if (dt_end and interval) else None
+
         return float(data[self.index]), ProductMetadata(
             source_product=raw.get("producttype"),
-            source_timestamp=_utc(raw.get("datetime")),
+            source_timestamp=dt_end,
+            data_start=data_start,
+            data_end=dt_end,
         )
 
 

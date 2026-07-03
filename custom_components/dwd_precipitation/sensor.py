@@ -171,7 +171,10 @@ class PrecipitationSensorEntity(DwdCoordinatorEntity, SensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return diagnostic metadata as state attributes."""
-        if not self.coordinator.config_entry.options.get(CONF_EXTRA_ATTRIBUTES, False):
+        extra_state_attributes = self.coordinator.config_entry.options.get(
+            CONF_EXTRA_ATTRIBUTES, False
+        )
+        if not extra_state_attributes:
             return {}
 
         if self.coordinator.data is None:
@@ -183,10 +186,18 @@ class PrecipitationSensorEntity(DwdCoordinatorEntity, SensorEntity):
         if metadata is None:
             return {}
 
-        ts = metadata.source_timestamp
-
-        return {
+        attrs: dict[str, Any] = {
             "source_product": metadata.source_product,
-            "source_timestamp": ts.isoformat() if ts else None,
+            "source_timestamp": (
+                metadata.source_timestamp.isoformat()
+                if metadata.source_timestamp
+                else None
+            ),
             "lead_time_minutes": metadata.lead_time_minutes,
         }
+        if metadata.data_start is not None:
+            attrs["data_start"] = metadata.data_start.isoformat()
+        if metadata.data_end is not None:
+            attrs["data_end"] = metadata.data_end.isoformat()
+
+        return attrs
