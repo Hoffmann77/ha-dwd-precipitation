@@ -103,6 +103,28 @@ RADVOR_SENSORS = (
 )
 
 
+def _plain_value(value: Any) -> Any:
+    """Return values suitable for Home Assistant state attributes."""
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if hasattr(value, "decode"):
+        return value.decode()
+    if hasattr(value, "item"):
+        return value.item()
+    return value
+
+
+def _metadata_datetime(metadata: dict[str, Any]) -> datetime | None:
+    """Extract a UTC source timestamp from product metadata."""
+    value = metadata.get("datetime")
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return dt_util.as_utc(value)
+
+    return None
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,

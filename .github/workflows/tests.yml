@@ -9,7 +9,7 @@ jobs:
     name: Parser unit tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
       - name: Install unit-test dependencies
         run: uv sync --only-group unit-test
@@ -21,7 +21,7 @@ jobs:
     name: Integration tests (HA environment)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
       - name: Install HA test dependencies
         run: uv sync --only-group ha-test
@@ -33,7 +33,7 @@ jobs:
     name: wradlib reference comparison
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
       - name: Install wradlib dependencies
         run: uv sync --only-group wradlib-comparison

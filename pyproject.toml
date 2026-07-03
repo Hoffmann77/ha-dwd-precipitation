@@ -19,7 +19,7 @@ unit-test = [
 # Installs only HA-compatible packages — validates the component runs in the
 # same environment HA uses (same Python version, same numpy/h5py pins).
 ha-test = [
-    "pytest-homeassistant-custom-component==0.13.336",
+    "pytest-homeassistant-custom-component==0.13.340",
     "h5py",
 ]
 # Installs wradlib (+ pyproj, scipy, etc.) for parser comparison tests.
