@@ -1,0 +1,32 @@
+{
+  "rw": {
+    "producttype": "RW",
+    "datetime": "2026-07-03T06:50:00Z",
+    "grid_shape": [
+      900,
+      900
+    ],
+    "intervalseconds": 3600,
+    "precision": 0.1,
+    "lat": 47.19575053753533,
+    "lon": 9.47778040019683,
+    "grid_row": 0,
+    "grid_col": 481,
+    "expected_mm": 0.1
+  },
+  "sf": {
+    "producttype": "SF",
+    "datetime": "2026-07-03T06:50:00Z",
+    "grid_shape": [
+      900,
+      900
+    ],
+    "intervalseconds": 86400,
+    "precision": 0.1,
+    "lat": 47.19316407608526,
+    "lon": 9.158057523258265,
+    "grid_row": 0,
+    "grid_col": 455,
+    "expected_mm": 0.1
+  }
+}

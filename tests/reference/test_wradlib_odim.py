@@ -1,4 +1,4 @@
-"""wradlib comparison tests — verify our parser output matches the reference implementation."""
+"""wradlib comparison tests (RS / ODIM_H5) — verify our parser matches the reference."""
 
 import io
 import json
@@ -9,8 +9,8 @@ import pytest
 
 from radar.odim import get_rs_grid_index, read_odim_composite
 
-FIXTURE_HDF5 = Path(__file__).parent / "fixtures" / "composite_rs_sample.hd5"
-FIXTURE_META = Path(__file__).parent / "fixtures" / "fixture_metadata.json"
+FIXTURE_HDF5 = Path(__file__).parent.parent / "fixtures" / "composite_rs_sample.hd5"
+FIXTURE_META = Path(__file__).parent.parent / "fixtures" / "fixture_metadata.json"
 
 
 def _apply_wradlib_scaling(dd):
@@ -62,8 +62,10 @@ def test_location_value_matches_wradlib():
     lat, lon   = meta["lat"], meta["lon"]
     hdf5_bytes = FIXTURE_HDF5.read_bytes()
 
-    data_ours, where = read_odim_composite(io.BytesIO(hdf5_bytes))
-    row_ours, col_ours = get_rs_grid_index(lat, lon, where)
+    data_ours, _dataset_what = read_odim_composite(io.BytesIO(hdf5_bytes))
+    # read_odim_composite no longer returns the /where grid dict; the RS grid is
+    # fixed, so get_rs_grid_index uses its built-in RS_WHERE by default.
+    row_ours, col_ours = get_rs_grid_index(lat, lon)
     value_ours = float(data_ours[row_ours, col_ours])
 
     dd       = wrl.io.read_opera_hdf5(io.BytesIO(hdf5_bytes))

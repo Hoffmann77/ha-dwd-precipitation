@@ -5,7 +5,7 @@ Requires the ha-test dependency group (Linux only):
   imports fcntl, a POSIX-only module not available on Windows.
 
 Run with:
-  uv run --group ha-test pytest tests/test_e2e.py -v
+  uv run --group ha-test pytest tests/integration -v
 """
 
 from __future__ import annotations

@@ -11,6 +11,7 @@ try:
     def auto_enable_custom_integrations(enable_custom_integrations: None) -> None:
         """Enable custom integrations for every test that uses the hass fixture."""
 except ImportError:
-    # When running without homeassistant (e.g. wradlib-comparison job),
-    # skip any test modules that import HA packages.
-    collect_ignore = ["test_integration.py"]
+    # When running without homeassistant (e.g. the parser/reference/live jobs),
+    # skip the integration tier, which imports HA packages. parser/, reference/
+    # and live/ are HA-free and collect fine.
+    collect_ignore_glob = ["integration/*"]
