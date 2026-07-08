@@ -8,10 +8,12 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from functools import cached_property
+from http import HTTPStatus
 from itertools import product as cartesian_product
 from math import gcd
 from typing import Any, ClassVar
 
+import aiohttp
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_NAME
 from homeassistant.core import HomeAssistant, callback
@@ -23,6 +25,36 @@ from .const import CONF_UNAVAILABLE_WHEN_STALE
 from .utils import get_previous_multiple
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _describe_fetch_error(err: Exception, release: datetime) -> str:
+    """Return a human-readable explanation of a failed product update.
+
+    Home Assistant logs this as ``Error fetching <name> data: <message>``,
+    where ``<name>`` already identifies the location and product (e.g.
+    "Zuhause rs"), so this message only needs to explain *why* the update
+    failed — without repeating the product key or dumping a raw exception.
+    """
+    release_str = release.strftime("%Y-%m-%d %H:%M UTC")
+
+    if isinstance(err, aiohttp.ClientResponseError):
+        if err.status == HTTPStatus.NOT_FOUND:
+            return (
+                f"DWD has not published the {release_str} release yet "
+                "(HTTP 404). This is normal near release time; it will be "
+                "retried automatically."
+            )
+        return (
+            f"DWD OpenData returned HTTP {err.status} ({err.message}) for the "
+            f"{release_str} release."
+        )
+
+    if isinstance(err, aiohttp.ClientConnectionError):
+        return (
+            f"Could not reach DWD OpenData for the {release_str} release: {err}"
+        )
+
+    return f"Could not process the {release_str} release: {err}"
 
 
 @dataclass
@@ -236,7 +268,7 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
             )
             if self.data is None or (unavailable_when_stale and self._data_is_stale(now)):
                 self._stop_fast_polling()
-                raise UpdateFailed(f"{self.PRODUCT_KEY}: {err}") from err
+                raise UpdateFailed(_describe_fetch_error(err, latest_release)) from err
 
             # Data is still fresh enough — retry silently
             self._start_fast_polling()
