@@ -22,9 +22,10 @@ Real-time location based precipitation analysis, forecasts, and historical accum
 
 ## Screenshots
 
-<img src="docs/assets/screenshot_config_flow.png" alt="Setup dialog — name field and location selector map." width="600"/>
+<img src="docs/assets/screenshot_config_flow.png" alt="Setup dialog — name field and location selector map." height="400"/>
+  
+<img src="docs/assets/screenshot_entities.png" alt="Device page — the six precipitation sensors and their current values." height="400"/>
 
-<img src="docs/assets/screenshot_entities.png" alt="Device page — the six precipitation sensors and their current values." width="600"/>
 
 ## Limitations
 
