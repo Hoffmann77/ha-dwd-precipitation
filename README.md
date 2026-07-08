@@ -19,6 +19,8 @@ Real-time location based precipitation analysis, forecasts, and historical accum
 - Yesterday's 24-hour total updated once daily — ideal for irrigation or energy automations
 - Per-location extraction: the nearest radar grid cell to your exact latitude/longitude
 - Staleness guard: sensors can report `unavailable` when DWD data is stale, preventing automations from acting on outdated values
+- Precise, quantitative analyses and predictions with high temporal and spatial resolution, enabling accurate tracking of rain events at your exact location.
+- Ideal data source for automations and early warnings of severe precipitation.
 
 ## Screenshots
 
