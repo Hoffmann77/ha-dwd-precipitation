@@ -14,8 +14,15 @@ Run once from the repo root (needs wradlib + pyproj + requests installed):
     uv run --group wradlib-comparison python scripts/create_fixture.py
 
 Writes:
-    tests/fixtures/composite_rs_sample.hd5
-    tests/fixtures/fixture_metadata.json
+    tests/fixtures/composite_rs_sample.hd5       (RS / ODIM_H5)
+    tests/fixtures/fixture_metadata.json         (RS expected values)
+    tests/fixtures/radolan_rw_sample.bin.bz2     (RADOLAN RW, real .bz2)
+    tests/fixtures/radolan_sf_sample.bin.bz2     (RADOLAN SF, real .bz2)
+    tests/fixtures/radolan_metadata.json         (RADOLAN expected values)
+
+The RADOLAN section is best-effort: if wradlib or the DWD files are unavailable
+it warns and leaves the RS fixture in place (the RADOLAN tests skip when the
+fixtures are absent).
 """
 
 import io
@@ -34,6 +41,12 @@ HDF5_OUT = FIXTURES / "composite_rs_sample.hd5"
 META_OUT  = FIXTURES / "fixture_metadata.json"
 
 DWD_URL   = "https://opendata.dwd.de/weather/radar/composite/rs"
+DWD_RADOLAN_URL = "https://opendata.dwd.de/weather/radar/radolan"
+RADOLAN_OUT = {
+    "rw": FIXTURES / "radolan_rw_sample.bin.bz2",
+    "sf": FIXTURES / "radolan_sf_sample.bin.bz2",
+}
+RADOLAN_META_OUT = FIXTURES / "radolan_metadata.json"
 MIN_MM    = 0.1   # minimum precipitation to consider a valid cell
 
 # Real RS grid parameters for the synthetic fallback
@@ -181,6 +194,92 @@ def make_synthetic_hdf5() -> bytes:
     return buf.getvalue()
 
 
+def try_download_radolan(product: str) -> tuple[bytes | None, datetime | None]:
+    """Try the last ~8 hourly RADOLAN releases (HH:50); return first that downloads."""
+    now = datetime.now(timezone.utc)
+    ts  = now.replace(minute=50, second=0, microsecond=0)
+    if ts > now - timedelta(minutes=40):
+        ts -= timedelta(hours=1)
+
+    for _ in range(8):
+        fname = f"raa01-{product}_10000-{ts.strftime('%y%m%d%H%M')}-dwd---bin.bz2"
+        url   = f"{DWD_RADOLAN_URL}/{product}/{fname}"
+        print(f"  Trying {url} …", flush=True)
+        try:
+            resp = requests.get(url, timeout=30)
+            resp.raise_for_status()
+            return resp.content, ts
+        except Exception as exc:
+            print(f"    → failed: {exc}", flush=True)
+            ts -= timedelta(hours=1)
+
+    return None, None
+
+
+def radolan_cell_meta(bz2_bytes: bytes) -> dict:
+    """Parse a RADOLAN .bz2 with wradlib (authoritative) and record a rain cell.
+
+    lat/lon come from wradlib's WGS84 grid so the parser test can verify our
+    vendored georef puts that cell at the same (row, col).
+    """
+    import bz2 as _bz2
+
+    import wradlib as wrl
+
+    data, attrs = wrl.io.read_radolan_composite(_bz2.open(io.BytesIO(bz2_bytes)))
+    arr = np.asarray(data, dtype=float)
+
+    rain = np.argwhere(np.isfinite(arr) & (arr >= MIN_MM))
+    if len(rain):
+        row, col = int(rain[0][0]), int(rain[0][1])
+    else:
+        row, col = arr.shape[0] // 2, arr.shape[1] // 2
+
+    grid = wrl.georef.get_radolan_grid(*arr.shape, wgs84=True)
+    lon, lat = float(grid[row, col, 0]), float(grid[row, col, 1])
+
+    return {
+        "producttype":     str(attrs["producttype"]),
+        "datetime":        attrs["datetime"].strftime("%Y-%m-%dT%H:%M:00Z"),
+        "grid_shape":      list(arr.shape),
+        "intervalseconds": int(attrs["intervalseconds"]),
+        "precision":       float(attrs.get("precision", 0.0)),
+        "lat":             lat,
+        "lon":             lon,
+        "grid_row":        row,
+        "grid_col":        col,
+        "expected_mm":     float(arr[row, col]),
+    }
+
+
+def generate_radolan_fixtures() -> None:
+    """Best-effort: download + record RW and SF RADOLAN fixtures."""
+    try:
+        import wradlib  # noqa: F401
+    except ImportError:
+        print("\nSkipping RADOLAN fixtures: wradlib not installed.")
+        return
+
+    meta: dict = {}
+    for product in ("rw", "sf"):
+        print(f"\nAttempting to download real RADOLAN {product.upper()} file …")
+        content, ts = try_download_radolan(product)
+        if content is None:
+            print(f"  No {product.upper()} file available — skipping.")
+            continue
+        RADOLAN_OUT[product].write_bytes(content)
+        print(f"  Saved {product.upper()} → {RADOLAN_OUT[product]} "
+              f"({RADOLAN_OUT[product].stat().st_size:,} bytes)")
+        meta[product] = radolan_cell_meta(content)
+        m = meta[product]
+        print(f"  {product.upper()} cell row={m['grid_row']}, col={m['grid_col']}, "
+              f"value={m['expected_mm']:.3f} mm @ lat={m['lat']:.4f}, lon={m['lon']:.4f}")
+
+    if meta:
+        RADOLAN_META_OUT.write_text(json.dumps(meta, indent=2))
+        print(f"\nSaved RADOLAN metadata → {RADOLAN_META_OUT}")
+
+
 def main() -> None:
     FIXTURES.mkdir(parents=True, exist_ok=True)
 
@@ -232,6 +331,8 @@ def main() -> None:
     }
     META_OUT.write_text(json.dumps(meta, indent=2))
     print(f"Saved metadata → {META_OUT}")
+
+    generate_radolan_fixtures()
 
 
 if __name__ == "__main__":

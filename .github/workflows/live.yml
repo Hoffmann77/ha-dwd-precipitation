@@ -1,0 +1,39 @@
+name: Live DWD source check
+
+# Source-drift monitor: downloads & parses real DWD OpenData files for every
+# product. Scheduled (never gates PRs); opens/updates a tracking issue on failure.
+on:
+  schedule:
+    - cron: "0 6 * * *"   # daily 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  live:
+    name: Download & parse (live)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+      - name: Install unit-test dependencies
+        run: uv sync --only-group unit-test
+      - name: Live download & parse all products
+        run: uv run pytest tests/live -m live -v
+
+      - name: Open / update tracking issue on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          TITLE="Live DWD source check failing"
+          BODY="The scheduled live download/parse check failed — a DWD file may be unavailable or its URL/archive/binary format changed. Run: $RUN_URL"
+          num=$(gh issue list --state open --search "$TITLE in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$num" ]; then
+            gh issue comment "$num" --body "$BODY"
+          else
+            gh issue create --title "$TITLE" --body "$BODY"
+          fi

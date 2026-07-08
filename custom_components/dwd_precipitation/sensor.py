@@ -1,30 +1,28 @@
-"""Sensor entities for the Heat pump Signal integration."""
+"""Sensor entities for the DWD Precipitation integration."""
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import Any
 
-from homeassistant.core import HomeAssistant
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.util import dt as dt_util
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.components.sensor import SensorEntity
-from homeassistant.const import UnitOfPrecipitationDepth
 from homeassistant.components.sensor import (
     SensorDeviceClass,
+    SensorEntity,
     SensorEntityDescription,
     SensorStateClass,
 )
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import UnitOfPrecipitationDepth
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN
-from .coordinator import UpdateCoordinator
-
+from .const import CONF_EXTRA_ATTRIBUTES, DOMAIN
+from .coordinator import BaseProductUpdateCoordinator, ProductMetadata
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -33,9 +31,8 @@ _LOGGER = logging.getLogger(__name__)
 class PrecipitationSensorEntityDescription(SensorEntityDescription):
     """Provide a description for a precipitation sensor."""
 
-    value_fn: Callable[[dict], float | None]
-    metadata_key: str
-    metadata_index: int | None = None
+    product_key: str
+    access_fn: Callable[[Any], Any]
 
 
 RADOLAN_SENSORS = (
@@ -46,8 +43,8 @@ RADOLAN_SENSORS = (
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
         state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda model: model["rw"],
-        metadata_key="rw",
+        product_key="rw",
+        access_fn=lambda d: d,
     ),
     PrecipitationSensorEntityDescription(
         key="radolan_sf",
@@ -56,8 +53,8 @@ RADOLAN_SENSORS = (
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
         state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda model: model["sf"],
-        metadata_key="sf",
+        product_key="sf",
+        access_fn=lambda d: d,
     ),
     PrecipitationSensorEntityDescription(
         key="radolan_sf_yesterday",
@@ -66,8 +63,8 @@ RADOLAN_SENSORS = (
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
         state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda model: model["sf_2350"],
-        metadata_key="sf_2350",
+        product_key="sf_2350",
+        access_fn=lambda d: d,
     ),
 )
 
@@ -80,9 +77,8 @@ RADVOR_SENSORS = (
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
         state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda model: model["rs"][0],
-        metadata_key="rs",
-        metadata_index=0,
+        product_key="rs",
+        access_fn=lambda _list: _list[0],
     ),
     PrecipitationSensorEntityDescription(
         key="radvor_rs_060",
@@ -91,9 +87,8 @@ RADVOR_SENSORS = (
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
         state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda model: model["rs"][1],
-        metadata_key="rs",
-        metadata_index=1,
+        product_key="rs",
+        access_fn=lambda _list: _list[1],
     ),
     PrecipitationSensorEntityDescription(
         key="radvor_rs_120",
@@ -102,9 +97,8 @@ RADVOR_SENSORS = (
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
         state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda model: model["rs"][2],
-        metadata_key="rs",
-        metadata_index=2,
+        product_key="rs",
+        access_fn=lambda _list: _list[2],
     ),
 )
 
@@ -132,38 +126,37 @@ def _metadata_datetime(metadata: dict[str, Any]) -> datetime | None:
 
 
 async def async_setup_entry(
-        hass: HomeAssistant,
-        entry: ConfigEntry,
-        async_add_entities: AddEntitiesCallback
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the sensor platform."""
-    coordinator = entry.runtime_data.coordinator
+    coordinators = entry.runtime_data.coordinators
+
+    entity_descriptions = RADVOR_SENSORS + RADOLAN_SENSORS
 
     async_add_entities(
-        PrecipitationSensorEntity(coordinator, description)
-        for description in RADVOR_SENSORS
+        PrecipitationSensorEntity(
+            coordinators[entity_description.product_key],
+            entity_description,
+        )
+        for entity_description in entity_descriptions
     )
 
-    async_add_entities(
-        PrecipitationSensorEntity(coordinator, description)
-        for description in RADOLAN_SENSORS
-    )
 
-
-class DwdCoordinatorEntity(CoordinatorEntity[UpdateCoordinator]):
-    """Coordinator entity."""
+class DwdCoordinatorEntity(CoordinatorEntity[BaseProductUpdateCoordinator]):
+    """Base coordinator entity."""
 
     entity_description: PrecipitationSensorEntityDescription
     _attr_has_entity_name = True
 
     def __init__(
-            self,
-            coordinator: UpdateCoordinator,
-            description: PrecipitationSensorEntityDescription,
+        self,
+        coordinator: BaseProductUpdateCoordinator,
+        description: PrecipitationSensorEntityDescription,
     ) -> None:
         """Initialize the entity."""
         super().__init__(coordinator)
-
         self.entity_description = description
         self._attr_device_info = DeviceInfo(
             entry_type=DeviceEntryType.SERVICE,
@@ -175,71 +168,58 @@ class DwdCoordinatorEntity(CoordinatorEntity[UpdateCoordinator]):
 class PrecipitationSensorEntity(DwdCoordinatorEntity, SensorEntity):
     """Implementation of a precipitation sensor."""
 
-    entity_description: PrecipitationSensorEntityDescription
-    _attr_has_entity_name = True
-
     def __init__(
-            self,
-            coordinator: UpdateCoordinator,
-            description: PrecipitationSensorEntityDescription,
+        self,
+        coordinator: BaseProductUpdateCoordinator,
+        description: PrecipitationSensorEntityDescription,
     ) -> None:
         """Initialize the sensor entity."""
         super().__init__(coordinator, description)
-
         self._attr_unique_id = (
-            f"{self.coordinator.config_entry.entry_id}"
-            + f"_{self.entity_description.key}"
+            f"{coordinator.config_entry.entry_id}_{description.key}"
         )
 
     @property
-    def native_value(self):
+    def native_value(self) -> float | None:
         """Return the state of the sensor."""
-        precipitation = self.coordinator.data
-        assert precipitation is not None
+        if self.coordinator.data is None:
+            return None
 
-        return self.entity_description.value_fn(precipitation)
+        if (data := self.coordinator.data.data) is None:
+            return None
 
-    def _metadata(self) -> dict[str, Any]:
-        """Return metadata for this sensor's source product."""
-        precipitation = self.coordinator.data
-        if precipitation is None:
-            return {}
-
-        metadata = precipitation.get(f"{self.entity_description.metadata_key}_metadata")
-        index = self.entity_description.metadata_index
-        if isinstance(metadata, (list, tuple)) and index is not None:
-            if index < len(metadata) and isinstance(metadata[index], dict):
-                return metadata[index]
-            return {}
-
-        if isinstance(metadata, dict):
-            return metadata
-
-        return {}
+        return self.entity_description.access_fn(data)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return diagnostic metadata as attributes."""
-        metadata = self._metadata()
-        if not metadata:
+        """Return diagnostic metadata as state attributes."""
+        extra_state_attributes = self.coordinator.config_entry.options.get(
+            CONF_EXTRA_ATTRIBUTES, False
+        )
+        if not extra_state_attributes:
             return {}
 
-        source_dt = _metadata_datetime(metadata)
+        if self.coordinator.data is None:
+            return {}
 
-        return {
-            "source_product": _plain_value(
-                metadata.get("product")
-                or metadata.get("producttype")
-                or metadata.get("prodname")
+        metadata: ProductMetadata = self.entity_description.access_fn(
+            self.coordinator.data.metadata
+        )
+        if metadata is None:
+            return {}
+
+        attrs: dict[str, Any] = {
+            "source_product": metadata.source_product,
+            "source_timestamp": (
+                metadata.source_timestamp.isoformat()
+                if metadata.source_timestamp
+                else None
             ),
-            "source_timestamp": source_dt.isoformat() if source_dt else None,
-            "lead_time_minutes": _plain_value(
-                metadata.get("lead_time_minutes")
-                if "lead_time_minutes" in metadata
-                else (
-                    metadata.get("predictiontime")
-                    if "predictiontime" in metadata
-                    else metadata.get("VV")
-                )
-            ),
+            "lead_time_minutes": metadata.lead_time_minutes,
         }
+        if metadata.data_start is not None:
+            attrs["data_start"] = metadata.data_start.isoformat()
+        if metadata.data_end is not None:
+            attrs["data_end"] = metadata.data_end.isoformat()
+
+        return attrs

@@ -1,8 +1,5 @@
 """Parser unit tests for radar/odim.py — no HA, no wradlib, no network."""
 
-import io
-
-import h5py
 import numpy as np
 import pytest
 
@@ -14,59 +11,11 @@ from radar.odim import (
     read_odim_composite,
 )
 
+from tests.factories.odim import make_odim_h5
+
 _PROJDEF = RS_WHERE["projdef"]
 _X_0 = 543196.83521776402
 _Y_0 = 3622588.8619310022
-
-
-def _make_odim_h5(shape=(5, 5), gain=0.001, offset=-0.001, nodata=4294967295,
-                  projdef_as_bytes=False, fill_raw=1001):
-    """Build a minimal ODIM_H5 file in memory matching the real DWD RS format.
-
-    fill_raw=1001 → physical value 1001*0.001 + (-0.001) = 1.0 mm.
-    Cell [0, 0] is always set to nodata.
-    """
-    buf = io.BytesIO()
-    with h5py.File(buf, "w") as f:
-        rw = f.create_group("what")
-        rw.attrs["version"] = np.bytes_(b"H5rad 2.3")
-        rw.attrs["date"]    = np.bytes_(b"20260518")
-        rw.attrs["time"]    = np.bytes_(b"160000")
-        rw.attrs["object"]  = np.bytes_(b"COMP")
-        rw.attrs["source"]  = np.bytes_(b"ORG:78,CTY:616")
-
-        w = f.create_group("where")
-        projdef = np.bytes_(_PROJDEF) if projdef_as_bytes else _PROJDEF
-        w.attrs.create("projdef", data=projdef)
-        w.attrs["xsize"]  = np.int64(shape[1])
-        w.attrs["ysize"]  = np.int64(shape[0])
-        w.attrs["xscale"] = np.float64(1000.0)
-        w.attrs["yscale"] = np.float64(1000.0)
-        w.attrs["LL_lat"] = np.float64(RS_WHERE["LL_lat"])
-        w.attrs["LL_lon"] = np.float64(RS_WHERE["LL_lon"])
-
-        d1w = f.create_group("dataset1/what")
-        d1w.attrs["product"]   = np.bytes_(b"MAX")
-        d1w.attrs["prodname"]  = np.bytes_(b"RS_top_view")
-        d1w.attrs["startdate"] = np.bytes_(b"20260518")
-        d1w.attrs["starttime"] = np.bytes_(b"150000")
-        d1w.attrs["enddate"]   = np.bytes_(b"20260518")
-        d1w.attrs["endtime"]   = np.bytes_(b"160000")
-
-        dw = f.create_group("dataset1/data1/what")
-        dw.attrs["quantity"] = np.bytes_(b"ACRR")
-        dw.attrs["gain"]     = np.float64(gain)
-        dw.attrs["offset"]   = np.float64(offset)
-        dw.attrs["nodata"]   = np.float64(nodata)
-        dw.attrs["undetect"] = np.float64(0.0)
-
-        raw = np.full(shape, fill_raw, dtype=np.uint32)
-        raw[0, 0] = nodata
-        raw[0, 1] = 0  # undetect: radar scanned, no precipitation
-        f.create_dataset("dataset1/data1/data", data=raw)
-
-    buf.seek(0)
-    return buf
 
 
 # ===========================================================================
@@ -137,7 +86,7 @@ def test_bytes_projdef_same_result():
 
 @pytest.fixture(scope="module")
 def parsed_synthetic():
-    buf = _make_odim_h5()
+    buf = make_odim_h5()
     return read_odim_composite(buf)
 
 
@@ -168,47 +117,21 @@ def test_dtype_float32(parsed_synthetic):
     assert data.dtype == np.float32
 
 
-def test_where_keys(parsed_synthetic):
-    _, where = parsed_synthetic
-    assert "xscale" in where
-    assert "yscale" in where
+def test_dataset_what_keys(parsed_synthetic):
+    """read_odim_composite returns the /dataset/what group — the timestamp/product
+    metadata the products layer consumes for source_timestamp and the data window.
+    """
+    _, dataset_what = parsed_synthetic
+    assert "startdate" in dataset_what
+    assert "starttime" in dataset_what
+    assert "enddate" in dataset_what
+    assert "endtime" in dataset_what
+    assert dataset_what.get("prodname") or dataset_what.get("product")
 
 
 def test_bytes_projdef_roundtrip():
     """projdef stored as bytes in the HDF5 must parse without error."""
-    buf = _make_odim_h5(projdef_as_bytes=True)
-    data, where = read_odim_composite(buf)
+    buf = make_odim_h5(projdef_as_bytes=True)
+    data, _dataset_what = read_odim_composite(buf)
     assert data.shape == (5, 5)
     assert not np.isnan(data[1, 0])
-
-
-# ===========================================================================
-# Group 5 — live DWD fetch
-# ===========================================================================
-
-@pytest.mark.integration
-def test_live_rs_file():
-    """Download the current RS tar and verify our parser handles a real DWD file."""
-    import tarfile
-    from datetime import datetime, timedelta, timezone
-
-    import requests
-
-    now = datetime.now(timezone.utc) - timedelta(minutes=5)
-    ts  = now.replace(second=0, microsecond=0)
-    ts -= timedelta(minutes=ts.minute % 5)
-    fname = f"composite_rs_{ts.strftime('%Y%m%d_%H%M')}"
-    url   = f"https://opendata.dwd.de/weather/radar/composite/rs/{fname}.tar"
-
-    resp = requests.get(url, timeout=30)
-    resp.raise_for_status()
-
-    with tarfile.open(fileobj=io.BytesIO(resp.content)) as tf:
-        hdf5_bytes = tf.extractfile(f"{fname}_000-hd5").read()
-
-    data, where = read_odim_composite(io.BytesIO(hdf5_bytes))
-
-    assert data.shape == (1200, 1100)
-    assert data.dtype == np.float32
-    assert "xscale" in where
-    assert "yscale" in where

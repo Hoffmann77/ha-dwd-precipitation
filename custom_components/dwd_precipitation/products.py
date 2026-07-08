@@ -1,234 +1,163 @@
 """DWD radar products."""
 
-import gzip
+from __future__ import annotations
+
 import bz2
 import logging
 import tarfile
-from io import BytesIO
-from datetime import datetime, timedelta
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
-from functools import cached_property
-# from collections import namedtuple
+from datetime import datetime, timedelta, timezone
+from functools import cached_property, lru_cache
+from io import BytesIO
 
 import numpy as np
-from homeassistant.util import dt as dt_util
 
-from .utils import get_previous_multiple, async_get
+from .coordinator import BaseProductUpdateCoordinator, ProductMetadata
+from .utils import async_get
 from .radar import read_radolan_composite, get_radolan_grid, read_odim_composite, get_rs_grid_index
-from .const import DWD_RADOLAN_URL, DWD_RADVOR_URL, DWD_COMPOSITE_URL
-
-if TYPE_CHECKING:
-    import httpx
+from .const import DWD_RADOLAN_URL, DWD_COMPOSITE_URL
 
 _LOGGER = logging.getLogger(__name__)
 
 
-class Product(ABC):
-    """Base DWD radar product."""
+@lru_cache(maxsize=1)
+def _radolan_wgs84_grid() -> np.ndarray:
+    """Return the cached 900×900 RADOLAN WGS84 lon/lat grid.
 
-    PRODUCT_KEY = "rq"
-
-    RELEASE_INTERVAL = timedelta(minutes=15)
-
-    RELEASE_DELAY = timedelta(minutes=5)
-
-    RELEASE_OFFSET = timedelta()
-
-    USE_LOCAL_TIME = False
-
-    def __init__(self, lat: float, lon: float) -> None:
-        """Initialize Product."""
-        self.lat = lat
-        self.lon = lon
-        self.data = None
-        self.source = None
-        self.curr_release = None
-        self._metadata = {}
-
-    @cached_property
-    def index(self):
-        """Return the index for the parsed radolan data."""
-        grid = get_radolan_grid(wgs84=True)
-        lon_grid = grid[:,:,0]
-        lat_grid = grid[:,:,1]
-
-        # Compute the squared Euclidean distances
-        dist_sq = (lat_grid - self.lat)**2 + (lon_grid - self.lon)**2
-
-        # Find index with minimum distance
-        return np.unravel_index(np.argmin(dist_sq), dist_sq.shape)
-
-    @property
-    def requires_update(self) -> bool:
-        """Return if the product needs to be updated."""
-        if self.curr_release is None:
-            return True
-
-        if self.curr_release < self.get_latest_release():
-            return True
-
-        return False
-
-    def get_latest_release(self) -> datetime:
-        """Return the latest release timestamp."""
-        now = dt_util.now() if self.USE_LOCAL_TIME else dt_util.utcnow()
-
-        prev_multiple = get_previous_multiple(
-            now - self.RELEASE_DELAY,
-            self.RELEASE_INTERVAL,
-            self.RELEASE_OFFSET,
-        )
-
-        return dt_util.as_utc(prev_multiple)
-
-    @abstractmethod
-    def get_url(self, ts: datetime, *args, **kwargs) -> str | list[str]:
-        """Return the url."""
-        pass
-
-    @abstractmethod
-    def update(self, async_client) -> None:
-        """Update the data."""
-        pass
+    Shared across all RADOLAN products, which use an identical grid.
+    """
+    return get_radolan_grid(wgs84=True)
 
 
-class RadvorRQ(Product):
-    """DWD RQ precipitation forecast."""
+def _utc(dt: datetime | None) -> datetime | None:
+    """Ensure a datetime is UTC-aware; returns None for None."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
 
-    PRODUCT_KEY = "rq"
-
-    RELEASE_INTERVAL = timedelta(minutes=15)
-
-    RELEASE_DELAY = timedelta(minutes=5)
-
-    RELEASE_OFFSET = timedelta()
-
-    def get_url(self, ts: datetime, *suffixes: str) -> list[str]:
-        """Return the urls."""
-        ts = ts.strftime("%y%m%d%H%M")
-        urls = []
-        for suffix in suffixes:
-            urls.append(
-                f"{DWD_RADVOR_URL}/rq/RQ{ts}_{suffix}.gz"
-            )
-
-        return urls
-
-    async def update(self, async_client) -> None:
-        """Update the data."""
-        new_data = []
-        metadata_by_lead_time = []
-        ts = self.get_latest_release()
-
-        for url in self.get_url(ts, "000", "060", "120"):
-            try:
-                response = await async_get(url, async_client)
-                # 404 if not available
-            except:# httpx.TransportError:
-                return
+    return dt.astimezone(timezone.utc)
 
 
-            response = BytesIO(response.content)
-
-            f = gzip.open(response)
-
-            data, metadata = read_radolan_composite(f)
-            metadata = dict(metadata)
-            metadata["lead_time_minutes"] = int(url.rsplit("_", 1)[1][:3])
-            new_data.append(data[self.index])
-            metadata_by_lead_time.append(metadata)
-
-        self.current_release = ts
-        self.data = new_data
-        self._metadata = metadata_by_lead_time
+def _parse_odim_ts(date: str | None, time: str | None) -> datetime | None:
+    """Parse ODIM date/time strings (YYYYMMDD / HHMMSS) into a UTC datetime."""
+    if not date or not time:
+        return None
+    try:
+        return datetime.strptime(f"{date}{time}", "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
 
 
-class RadvorRS(Product):
-    """DWD RS precipitation nowcast (RADVOR, ODIM_H5 format)."""
+class RadvorRS(BaseProductUpdateCoordinator):
+    """DWD RS precipitation nowcast (RADVOR, ODIM_H5 format).
+
+    Returns three lead times (0 / 60 / 120 min) from a single tar archive.
+    precipitation → list[float | None], metadata → list[ProductMetadata]
+    """
 
     PRODUCT_KEY = "rs"
 
     RELEASE_INTERVAL = timedelta(minutes=5)
 
-    RELEASE_DELAY = timedelta(minutes=5)
+    RELEASE_DELAY = timedelta(minutes=4, seconds=10)
 
     RELEASE_OFFSET = timedelta()
 
     @cached_property
-    def index(self):
+    def index(self) -> tuple[int, int]:
         """Return (row, col) in the RS composite grid."""
-        return get_rs_grid_index(self.lat, self.lon)
+        return get_rs_grid_index(*self.coords)
 
-    def get_url(self, ts: datetime) -> str:
+    def _get_url(self, ts: datetime) -> str:
         """Return the URL for the tar archive."""
-        return f"{DWD_COMPOSITE_URL}/rs/composite_rs_{ts.strftime('%Y%m%d_%H%M')}.tar"
+        return (
+            f"{DWD_COMPOSITE_URL}/rs/composite_rs_{ts.strftime('%Y%m%d_%H%M')}.tar"
+        )
 
-    async def update(self, async_client) -> None:
+    async def _fetch_and_parse(self, ts: datetime) -> tuple[list, list]:
         """Fetch one tar archive and extract 3 lead-time ACRR values."""
-        ts = self.get_latest_release()
-        url = self.get_url(ts)
-        try:
-            response = await async_get(url, async_client)
-        except:
-            return
+        response = await async_get(self._get_url(ts), self.async_client)
 
         tar_bytes = BytesIO(response.content)
         prefix = f"composite_rs_{ts.strftime('%Y%m%d_%H%M')}"
         row, col = self.index
-        new_data = []
-        metadata_by_lead_time = []
+        data: list = []
+        metadata: list = []
+
         with tarfile.open(fileobj=tar_bytes, mode="r") as tf:
             for suffix in ("000", "060", "120"):
                 member_name = f"{prefix}_{suffix}-hd5"
                 try:
                     f = tf.extractfile(member_name)
                 except KeyError:
+                    f = None
+                if f is None:
                     _LOGGER.warning("RS tar member not found: %s", member_name)
-                    new_data.append(None)
-                    metadata_by_lead_time.append({})
+                    data.append(None)
+                    metadata.append(None)
                     continue
-                data, metadata = read_odim_composite(BytesIO(f.read()))
-                metadata = dict(metadata)
-                metadata["lead_time_minutes"] = int(suffix)
-                val = float(data[row, col])
-                new_data.append(None if np.isnan(val) else val)
-                metadata_by_lead_time.append(metadata)
 
-        self.current_release = ts
-        self.data = new_data
-        self._metadata = metadata_by_lead_time
+                _data, _what = read_odim_composite(BytesIO(f.read()))
+                val = float(_data[row, col])
+                data.append(None if np.isnan(val) else val)
+
+                lead = int(suffix)
+                data_start = _parse_odim_ts(_what.get("startdate"), _what.get("starttime"))
+                data_end = _parse_odim_ts(_what.get("enddate"), _what.get("endtime"))
+                source_ts = data_end - timedelta(minutes=lead) if data_end else None
+                metadata.append(ProductMetadata(
+                    source_product=_what.get("prodname") or _what.get("product"),
+                    source_timestamp=source_ts,
+                    lead_time_minutes=lead,
+                    data_start=data_start,
+                    data_end=data_end,
+                ))
+
+        return data, metadata
 
 
-class RadolanProduct(Product):
-    """DWD radolan product."""
+class RadolanProduct(BaseProductUpdateCoordinator, ABC):
+    """Abstract coordinator for bz2-compressed RADOLAN binary products.
 
-    async def update(self, async_client):
-        """Update the data."""
-        ts = self.get_latest_release()
-        url = self.get_url(ts)
-        try:
-            response = await async_get(url, async_client)
-        except:
-            return
+    Concrete subclasses provide PRODUCT_KEY, timing constants, and get_url().
+    precipitation → float, metadata → ProductMetadata
 
-        # 404 if not available
+    """
 
-        response = BytesIO(response.content)
+    @cached_property
+    def index(self) -> tuple[int, int]:
+        """Return the nearest-cell (row, col) in the RADOLAN 900×900 WGS84 grid."""
+        lat, lon = self.coords
+        grid = _radolan_wgs84_grid()
+        dist_sq = (grid[:, :, 1] - lat) ** 2 + (grid[:, :, 0] - lon) ** 2
 
-        f = bz2.open(response)
+        return np.unravel_index(np.argmin(dist_sq), dist_sq.shape)
 
-        data, metadata = read_radolan_composite(f)
+    @abstractmethod
+    def _get_url(self, ts: datetime) -> str:
+        """Return the bz2 file URL for the given release timestamp."""
 
-        new_data = data[self.index]
+    async def _fetch_and_parse(self, ts: datetime) -> tuple[float, ProductMetadata]:
+        """Fetch one bz2 RADOLAN file and return (scalar_value, ProductMetadata)."""
+        response = await async_get(self._get_url(ts), self.async_client)
+        f = bz2.open(BytesIO(response.content))
+        data, raw = read_radolan_composite(f)
 
-        self.current_release = ts
-        self.data = new_data
-        self._metadata = dict(metadata)
+        dt_end = _utc(raw.get("datetime"))
+        interval = raw.get("intervalseconds")
+        data_start = dt_end - timedelta(seconds=interval) if (dt_end and interval) else None
+
+        return float(data[self.index]), ProductMetadata(
+            source_product=raw.get("producttype"),
+            source_timestamp=dt_end,
+            data_start=data_start,
+            data_end=dt_end,
+        )
 
 
 class RadolanRW(RadolanProduct):
-    """DWD radolan RW 1 hour precipitation analysis."""
+    """DWD RADOLAN RW: 1-hour precipitation analysis."""
 
     PRODUCT_KEY = "rw"
 
@@ -238,51 +167,35 @@ class RadolanRW(RadolanProduct):
 
     RELEASE_OFFSET = timedelta(minutes=50)
 
-    def get_url(self, ts: datetime) -> list[str]:
-        """Return the urls."""
-        ts = ts.strftime("%y%m%d%H%M")
-
+    def _get_url(self, ts: datetime) -> str:
+        """Return the bz2 URL."""
         return (
-            f"{DWD_RADOLAN_URL}/rw/raa01-rw_10000-{ts}-dwd---bin.bz2"
+            f"{DWD_RADOLAN_URL}/rw/raa01-rw_10000-"
+            f"{ts.strftime('%y%m%d%H%M')}-dwd---bin.bz2"
         )
 
 
 class RadolanSF(RadolanProduct):
-    """DWD radolan SF 24 hour precipitation analysis."""
+    """DWD RADOLAN SF: 24-hour precipitation analysis."""
 
     PRODUCT_KEY = "sf"
 
-    RELEASE_INTERVAL = timedelta(minutes=60)
+    RELEASE_INTERVAL = timedelta(hours=1)
 
     RELEASE_DELAY = timedelta(minutes=28)
 
     RELEASE_OFFSET = timedelta(minutes=50)
 
-    def get_url(self, ts: datetime) -> list[str]:
-        """Return the urls."""
-        ts = ts.strftime("%y%m%d%H%M")
-
+    def _get_url(self, ts: datetime) -> str:
+        """Return the bz2 URL."""
         return (
-            f"{DWD_RADOLAN_URL}/sf/raa01-sf_10000-{ts}-dwd---bin.bz2"
+            f"{DWD_RADOLAN_URL}/sf/raa01-sf_10000-"
+            f"{ts.strftime('%y%m%d%H%M')}-dwd---bin.bz2"
         )
 
 
-# class RadolanSFFirstToday(RadolanSF):
-#     """DWD radolan SF 24 hour precipitation analysis."""
-
-#     PRODUCT_KEY = "sf_0050"
-
-#     RELEASE_INTERVAL = timedelta(hours=24)
-
-#     RELEASE_DELAY = timedelta(minutes=28)
-
-#     RELEASE_OFFSET = timedelta(minutes=50)
-
-#     USE_LOCAL_TIME = True
-
-
 class RadolanSFLastYesterday(RadolanSF):
-    """DWD radolan SF 24 hour precipitation analysis."""
+    """DWD RADOLAN SF: yesterday's 24-hour total (daily, local time)."""
 
     PRODUCT_KEY = "sf_2350"
 

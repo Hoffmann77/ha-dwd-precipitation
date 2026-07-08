@@ -1,6 +1,6 @@
 version = 1
 revision = 3
-requires-python = ">=3.13.2"
+requires-python = ">=3.14.2"
 resolution-markers = [
     "platform_machine == 'ARM64' and sys_platform == 'win32'",
     "platform_machine != 'ARM64' or sys_platform != 'win32'",
@@ -1174,7 +1174,9 @@ ha-test = [
     { name = "pytest-homeassistant-custom-component" },
 ]
 unit-test = [
+    { name = "aiohttp" },
     { name = "h5py" },
+    { name = "numpy" },
     { name = "pytest" },
     { name = "requests" },
 ]
@@ -1190,10 +1192,12 @@ wradlib-comparison = [
 [package.metadata.requires-dev]
 ha-test = [
     { name = "h5py" },
-    { name = "pytest-homeassistant-custom-component", specifier = "==0.13.340" },
+    { name = "pytest-homeassistant-custom-component", specifier = "==0.13.336" },
 ]
 unit-test = [
+    { name = "aiohttp" },
     { name = "h5py" },
+    { name = "numpy" },
     { name = "pytest" },
     { name = "requests" },
 ]
@@ -1283,7 +1287,7 @@ wheels = [
 
 [[package]]
 name = "homeassistant"
-version = "2026.6.4"
+version = "2026.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiodns" },
@@ -1337,9 +1341,9 @@ dependencies = [
     { name = "yarl" },
     { name = "zeroconf" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d1/20/6b487b2e7a3a65eff77273f32687293c08ba1613ec651e94ee9df298a7a8/homeassistant-2026.6.4.tar.gz", hash = "sha256:ed8dbabcdd28b242418228ed9bd45972f1f0ff10441f722c23c85ece0b0e56bd", size = 34579979, upload-time = "2026-06-19T21:15:52.226Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/4c/7a/4c2ebb0ce7e8c34ee336412752c159ed83da849a91cbd22f45d5227a04bc/homeassistant-2026.6.0.tar.gz", hash = "sha256:12ee6850604a0ab219932c8b7e64c96c7c4e0bb4c3f501e38cda63b1c80f2bf2", size = 33671289, upload-time = "2026-06-03T18:16:27.497Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/4d/10/286176549ae19e908d7ffa3c225e8c87afbe8d55272e6ec75e0e149b2aa9/homeassistant-2026.6.4-py3-none-any.whl", hash = "sha256:4e8d1fdf20beac16bea6131d097774d31549fe7e18775618ac71506ddf6e4721", size = 56561537, upload-time = "2026-06-19T21:15:43.531Z" },
+    { url = "https://files.pythonhosted.org/packages/a0/30/01882a7479b51cd4733772d6509c6cab92b2f7aaca288f6c779443849106/homeassistant-2026.6.0-py3-none-any.whl", hash = "sha256:e6bf4721bb6db5d69998096c824da76cae23cd0ef3617982516d1e466ff33421", size = 55394864, upload-time = "2026-06-03T18:16:19.63Z" },
 ]
 
 [[package]]
@@ -2317,7 +2321,7 @@ wheels = [
 
 [[package]]
 name = "pytest-homeassistant-custom-component"
-version = "0.13.340"
+version = "0.13.336"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohasupervisor" },
@@ -2350,9 +2354,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "unidiff" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d9/87/b869aab88fee73beb355836a1ef7d196a75ed05c67c0f8d1a9a77f19123f/pytest_homeassistant_custom_component-0.13.340.tar.gz", hash = "sha256:33d8a7c19cd15b41311f78cc5bb354b6ae62cd5da58cd9492f84ff457ed1c57c", size = 78620, upload-time = "2026-06-20T06:32:07.45Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/40/76/66486b2abad43f8e96c8671df1a6cdba902b0864b887bdcaf4c9be5fca3d/pytest_homeassistant_custom_component-0.13.336.tar.gz", hash = "sha256:db6c9b55f0d3dd64be8c44ddfd951254427c0da3b84cc59f8e3c6f4fc14700a2", size = 78589, upload-time = "2026-06-04T06:34:29.151Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ce/1d/fa39da2fd30f29e5cf916e67f5fcd2af236b84847f9bc68d4c45337cd82d/pytest_homeassistant_custom_component-0.13.340-py3-none-any.whl", hash = "sha256:849060b30802b3b6b5fcbc22f0cd4713c1db0a1622338f1a220e2976a4913e6d", size = 84536, upload-time = "2026-06-20T06:32:06.149Z" },
+    { url = "https://files.pythonhosted.org/packages/35/b5/adeef64c1ce73190f52597d60b07fef2ab08a1317b56080e5253eab484ac/pytest_homeassistant_custom_component-0.13.336-py3-none-any.whl", hash = "sha256:5708e0132e08d5dc038dba42a698b0555cdf77fa2b2c525e9e93f5cf1b9097de", size = 84537, upload-time = "2026-06-04T06:34:27.867Z" },
 ]
 
 [[package]]

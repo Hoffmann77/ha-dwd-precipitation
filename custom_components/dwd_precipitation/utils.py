@@ -3,9 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-import httpx
+import aiohttp
+
+
+@dataclass
+class AsyncResponse:
+    """Minimal HTTP response wrapper returned by async_get."""
+
+    content: bytes
 
 
 class mydatetime(datetime):
@@ -72,39 +80,23 @@ def get_previous_multiple(
 
 async def async_get(
     url: str,
-    client: httpx.AsyncClient,
+    session: aiohttp.ClientSession,
     attempts: int = 2,
-    **kwargs,
-) -> httpx.Response:
-    """Send a HTTP GET request using the httpx client.
+) -> AsyncResponse:
+    """Send a HTTP GET request using an aiohttp session.
 
-    Parameters
-    ----------
-    url : str
-        URL.
-    client : httpx.AsyncClient
-        Instance of httpx.AsyncClient.
-    attempts : int, optional
-        Number of attempts to send the request if TransportErrors occur.
-        The default is 2.
-    **kwargs : dict
-        Optional keyword arguments for httpx.AsyncClient.request.
-
-    Returns
-    -------
-    response : httpx.Response
-        The response from the server.
-
+    Retries on connection errors up to `attempts` times. Raises immediately
+    on 4xx/5xx responses without retrying.
     """
     for attempt in range(attempts):
         try:
-            response = await client.get(url, **kwargs)
-            response.raise_for_status()
-        except httpx.TransportError as err:
-            if attempt < attempts:
+            async with session.get(url) as response:
+                response.raise_for_status()
+                return AsyncResponse(content=await response.read())
+        except aiohttp.ClientResponseError:
+            raise
+        except aiohttp.ClientConnectionError as err:
+            if attempt < attempts - 1:
                 await asyncio.sleep((attempt + 1) * 0.1)
                 continue
-            else:
-                raise err
-        else:
-            return response
+            raise err
