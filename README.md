@@ -1,6 +1,4 @@
-<p align="center">
-  <img src="assets/dwd-logo.png" alt="DWD Precipitation" width="200"/>
-</p>
+
 
 # DWD Precipitation
 
@@ -21,7 +19,6 @@ Real-time location based precipitation analysis, forecasts, and historical accum
 - Yesterday's 24-hour total updated once daily — ideal for irrigation or energy automations
 - Per-location extraction: the nearest radar grid cell to your exact latitude/longitude
 - Staleness guard: sensors can report `unavailable` when DWD data is stale, preventing automations from acting on outdated values
-- Lightweight: only `numpy` and `h5py` required — no wradlib or heavy GIS dependencies
 
 ## Screenshots
 
@@ -31,33 +28,49 @@ Real-time location based precipitation analysis, forecasts, and historical accum
 <!-- TODO: add screenshot at docs/screenshots/entities.png -->
 *Device page — the six precipitation sensors and their current values.*
 
-## Prerequisites
+## Limitations
 
 > [!IMPORTANT]
 > This integration only works for locations **within Germany** and areas immediately adjacent to the German border. The DWD radar composites do not cover other countries.
 
-- Home Assistant 2024.1 or later
-- No API key or DWD account required
-- Internet access from your HA instance to [opendata.dwd.de](https://opendata.dwd.de)
-
 ## Installation
+### Install using HACS (recommended)
+If you do not have HACS installed yet visit https://hacs.xyz for installation instructions.
 
-### HACS (recommended)
-
-[HACS](https://hacs.xyz) must be installed in your Home Assistant instance. Then click the button below to add this repository as a custom integration:
+To add the this repository to HACS in your Home Assistant instance, use this Button:
 
 [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Hoffmann77&repository=ha-dwd-precipitation&category=Integration)
 
-After the download completes, restart Home Assistant. Then click the button below to set up the integration:
+After installation, please restart Home Assistant. To add Power Insight to your Home Assistant instance, use this Button:
 
 [![Open your Home Assistant instance and start setting up a new integration.](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=dwd_precipitation)
 
-### Manual Installation
+<details>
+<summary>Manual configuration steps</summary>
 
-1. Download the [latest release](https://github.com/Hoffmann77/ha-dwd-precipitation/releases/latest) ZIP and extract it.
-2. Copy the `dwd_precipitation` folder into `config/custom_components/` in your Home Assistant directory.
-3. Restart Home Assistant.
-4. Navigate to **Settings > Devices & Services > Add Integration** and search for "DWD Precipitation".
+### Semi-Manual Installation with HACS
+1. Go HACS integrations section.
+2. Click on the 3 dots in the top right corner.
+3. Select "Custom repositories"
+4. Add the URL (https://github.com/hoffmann77/ha-dwd-precipitation) to the repository.
+5. Select the integration category.
+6. Click the "ADD" button.
+7. Now you are able to download the integration
+
+### Manual Installation
+1. Access the GitHub repository for this integration.
+2. Download the ZIP file of the repository and extract its contents.
+3. Copy the "dwd_precipitation" folder into the custom_components directory located typically at /config/custom_components/ in your Home Assistant directory.
+
+### Restart Home Assistant
+1. Restart your Home Assistant.
+
+### Add Integration
+1. Navigate to Settings > Devices & Services.
+2. Click Add Integration and search for "DWD Precipitation".
+3. Select the DWD Precipitation integration to initiate setup.
+
+</details>
 
 ## Configuration
 
@@ -102,11 +115,6 @@ All sensors belong to a single **DWD Precipitation** device per configured locat
 | `Precipitation last 24 hours` | RADOLAN SF | mm | 1 h | Radar + station-blended total for the rolling past 24 hours |
 | `Precipitation yesterday` | RADOLAN SF | mm | Daily (~00:18 UTC+1) | Previous calendar day's 24-hour accumulated total |
 
-All data is served from [DWD OpenData](https://opendata.dwd.de) (no account required):
-
-- **[RADVOR RS](https://www.dwd.de/EN/ourservices/radvor/radvor.html)** — Real-time radar nowcast with 0 / 60 / 120-minute lead times, updated every 5 minutes.
-- **[RADOLAN RW/SF](https://www.dwd.de/DE/leistungen/radolan/radolan.html)** — Hourly and 24-hour precipitation analyses blending radar and surface station data.
-
 ## Troubleshooting
 
 **Sensors show `unavailable` immediately after setup** — the integration fetches data on startup; if DWD OpenData is temporarily unreachable the first refresh fails. Check your HA logs for HTTP errors and verify that `opendata.dwd.de` is reachable from your network.
@@ -117,12 +125,17 @@ All data is served from [DWD OpenData](https://opendata.dwd.de) (no account requ
 
 **Old values persist after a DWD outage** — if *Mark sensors unavailable when data is stale* is disabled, the last cached value is kept indefinitely. Enable the option so that sensors go `unavailable` once the staleness window expires.
 
-## Contributing & Support
+## Data source
 
-Bug reports and feature requests go to the [GitHub issue tracker](https://github.com/Hoffmann77/ha-dwd-precipitation/issues). Please include your HA version, integration version, and relevant log output.
+All data is derived from the **DWD (Deutscher Wetterdienst)**:
 
-Pull requests are welcome. Please open an issue first to discuss the change. When adding a new DWD product, follow the pattern documented in [`CLAUDE.md`](CLAUDE.md).
+<img src="assets/dwd-logo.png" alt="Deutscher Wetterdienst Logo" width="200"/>
+
 
 ## License
 
-This integration is made possible by the radar parsing code extracted from **[wradlib](https://github.com/wradlib/wradlib)**. All files in `custom_components/dwd_precipitation/radar/` are licensed under the [wradlib license](custom_components/dwd_precipitation/radar/LICENSE.txt) (MIT).
+This integration is only possible thanks to the great work done by the contributors of the **[wradlib](https://github.com/wradlib/wradlib)** package.
+
+All files in `custom_components/dwd_precipitation/radar/` are licensed under the [wradlib license](custom_components/dwd_precipitation/radar/LICENSE.txt) (MIT).
+
+A copy of the license can be found under `radar/LICENSE.txt`.
