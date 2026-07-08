@@ -34,7 +34,7 @@ jobs:
             ha_dev: true
             experimental: true
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
       - name: Install HA test dependencies
         run: uv sync --only-group ha-test
