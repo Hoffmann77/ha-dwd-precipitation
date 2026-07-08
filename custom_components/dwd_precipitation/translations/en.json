@@ -1,5 +1,13 @@
 {
   "config": {
+    "step": {
+      "user": {
+        "data": {
+          "name": "Name",
+          "coordinates": "Location"
+        }
+      }
+    },
     "error": {
       "invalid_name": "Please enter a name.",
       "coordinates_out_of_range": "This integration only provides data for Germany. The selected location is outside the covered area."

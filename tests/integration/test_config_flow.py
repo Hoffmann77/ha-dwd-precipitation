@@ -85,6 +85,10 @@ async def test_flow_blank_name_shows_invalid_name_error(hass: HomeAssistant) -> 
 
 async def test_flow_default_location_values_creates_entry(hass: HomeAssistant) -> None:
     """Submitting with hass default lat/lon creates an entry with those values."""
+    # The HA test harness defaults to a non-German location; point it at
+    # Germany so the default coordinates fall within the covered grid.
+    await hass.config.async_update(latitude=51.5, longitude=9.9)
+
     result = await hass.config_entries.flow.async_init(
         DOMAIN,
         context={"source": config_entries.SOURCE_USER},
