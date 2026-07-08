@@ -127,7 +127,7 @@ All sensors belong to a single **DWD Precipitation** device per configured locat
 
 All data is derived from the **DWD (Deutscher Wetterdienst)**:
 
-<img src="assets/dwd-logo.png" alt="Deutscher Wetterdienst Logo" width="200"/>
+<img src="docs/assets/dwd-logo.png" alt="Deutscher Wetterdienst Logo" width="200"/>
 
 
 ## License
