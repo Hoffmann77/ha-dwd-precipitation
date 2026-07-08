@@ -133,3 +133,11 @@ def get_rs_grid_index(lat: float, lon: float, where: dict | None = None):
     # Row 0 is the top (highest y); y_ll is the southernmost (lowest y)
     row = int(ysize - 1 - round((y_pt - y_ll) / yscale))
     return row, col
+
+
+def rs_grid_contains(lat: float, lon: float, where: dict | None = None) -> bool:
+    """Return True if (lat, lon) falls within the RS composite grid extent."""
+    if where is None:
+        where = RS_WHERE
+    row, col = get_rs_grid_index(lat, lon, where)
+    return 0 <= row < int(where["ysize"]) and 0 <= col < int(where["xsize"])

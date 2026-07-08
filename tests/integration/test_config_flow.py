@@ -85,6 +85,10 @@ async def test_flow_blank_name_shows_invalid_name_error(hass: HomeAssistant) -> 
 
 async def test_flow_default_location_values_creates_entry(hass: HomeAssistant) -> None:
     """Submitting with hass default lat/lon creates an entry with those values."""
+    # The HA test harness defaults to a non-German location; point it at
+    # Germany so the default coordinates fall within the covered grid.
+    await hass.config.async_update(latitude=51.5, longitude=9.9)
+
     result = await hass.config_entries.flow.async_init(
         DOMAIN,
         context={"source": config_entries.SOURCE_USER},
@@ -107,11 +111,33 @@ async def test_flow_default_location_values_creates_entry(hass: HomeAssistant) -
     assert result["data"]["longitude"] == pytest.approx(hass.config.longitude)
 
 
-async def test_flow_zero_coordinates_creates_entry(hass: HomeAssistant) -> None:
-    """Submitting lat=0.0, lon=0.0 (Null Island) creates an entry without errors.
+async def test_flow_out_of_range_coordinates_shows_error(hass: HomeAssistant) -> None:
+    """Submitting coordinates outside the German grid returns an error."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": config_entries.SOURCE_USER},
+    )
+    assert result["type"] is FlowResultType.FORM
 
-    0.0 is falsy in Python; this guards against accidental truthiness checks
-    on the coordinate values silently swallowing the submission.
+    # New York City — far outside the DWD RS composite grid.
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={
+            "name": "New York",
+            CONF_COORDS: {"latitude": 40.7128, "longitude": -74.0060},
+        },
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "coordinates_out_of_range"}
+
+
+async def test_flow_zero_coordinates_shows_error(hass: HomeAssistant) -> None:
+    """Submitting lat=0.0, lon=0.0 (Null Island) returns the out-of-range error.
+
+    Null Island is far outside the German grid, so it must be rejected. 0.0 is
+    falsy in Python; this also guards against accidental truthiness checks on the
+    coordinate values silently swallowing the submission before validation runs.
     """
     result = await hass.config_entries.flow.async_init(
         DOMAIN,
@@ -127,6 +153,5 @@ async def test_flow_zero_coordinates_creates_entry(hass: HomeAssistant) -> None:
         },
     )
 
-    assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert result["data"]["latitude"] == pytest.approx(0.0)
-    assert result["data"]["longitude"] == pytest.approx(0.0)
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "coordinates_out_of_range"}
