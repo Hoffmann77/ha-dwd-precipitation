@@ -10,7 +10,9 @@
 [![Tests](https://github.com/Hoffmann77/ha-dwd-precipitation/actions/workflows/tests.yml/badge.svg)](https://github.com/Hoffmann77/ha-dwd-precipitation/actions/workflows/tests.yml)
 [![HACS Validate](https://github.com/Hoffmann77/ha-dwd-precipitation/actions/workflows/validate.yaml/badge.svg)](https://github.com/Hoffmann77/ha-dwd-precipitation/actions/workflows/validate.yaml)
 
-Radar-based precipitation data from the German Weather Service (DWD) — real-time analysis, short-term forecasts, and historical accumulations — directly in Home Assistant. No API key required.
+Radar-based precipitation forecasts and data from the German Weather Service (DWD).
+
+Real-time location based precipitation analysis, forecasts, and historical accumulations — directly in Home Assistant.
 
 ## Features
 
@@ -18,7 +20,6 @@ Radar-based precipitation data from the German Weather Service (DWD) — real-ti
 - Hourly and 24-hour precipitation accumulations from **RADOLAN RW/SF** (radar + weather station blend)
 - Yesterday's 24-hour total updated once daily — ideal for irrigation or energy automations
 - Per-location extraction: the nearest radar grid cell to your exact latitude/longitude
-- No API key — all data is served from [DWD OpenData](https://opendata.dwd.de) (public, free)
 - Staleness guard: sensors can report `unavailable` when DWD data is stale, preventing automations from acting on outdated values
 - Lightweight: only `numpy` and `h5py` required — no wradlib or heavy GIS dependencies
 
