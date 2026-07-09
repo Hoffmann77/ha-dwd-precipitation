@@ -64,6 +64,13 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if not data[CONF_NAME].lstrip(" "):
                 errors["base"] = "invalid_name"
 
+            existing_names = {
+                entry.title
+                for entry in self.hass.config_entries.async_entries(DOMAIN)
+            }
+            if data[CONF_NAME] in existing_names:
+                errors["base"] = "name_already_exists"
+
             coords = data.pop(CONF_COORDS)
             data["latitude"] = coords["latitude"]
             data["longitude"] = coords["longitude"]

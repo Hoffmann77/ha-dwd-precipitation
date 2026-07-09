@@ -10,6 +10,7 @@
     },
     "error": {
       "invalid_name": "Please enter a name.",
+      "name_already_exists": "An entry with this name already exists. Please choose a different name.",
       "coordinates_out_of_range": "This integration only provides data for Germany. The selected location is outside the covered area."
     }
   },
