@@ -12,6 +12,7 @@ from homeassistant.helpers import selector
 from homeassistant.const import CONF_NAME
 
 from .const import DOMAIN, CONF_COORDS, CONF_EXTRA_ATTRIBUTES, CONF_UNAVAILABLE_WHEN_STALE
+from .radar import rs_grid_contains
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -66,6 +67,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             coords = data.pop(CONF_COORDS)
             data["latitude"] = coords["latitude"]
             data["longitude"] = coords["longitude"]
+
+            if not rs_grid_contains(data["latitude"], data["longitude"]):
+                errors["base"] = "coordinates_out_of_range"
 
             if not errors:
                 return self.async_create_entry(
