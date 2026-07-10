@@ -9,5 +9,5 @@
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/Hoffmann77/dwd_precipitation/issues",
   "requirements": ["numpy", "h5py"],
-  "version": "2026.7.0-rc.1"
+  "version": "2026.7.0"
 }
