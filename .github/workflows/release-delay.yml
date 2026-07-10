@@ -1,0 +1,45 @@
+name: DWD release-delay drift check
+
+# Measures how long after each product's nominal time its file actually appears
+# on DWD OpenData and compares that against the integration's configured
+# RELEASE_DELAY constants. Scheduled (never gates PRs); opens/updates a tracking
+# issue when the observed delay drifts too far from what the integration assumes.
+#
+# The :12-past schedule lets the run poll across the ~HH:18 RADOLAN appearance
+# (nominal :50 + 28 min) so it can capture an exact delay, not just a window.
+on:
+  schedule:
+    - cron: "12 6 * * *"    # daily 06:12 UTC
+    - cron: "12 18 * * *"   # daily 18:12 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  release-delay:
+    name: Check observed vs configured release delay
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+      - name: Install unit-test dependencies
+        run: uv sync --only-group unit-test
+      - name: Check release delay against DWD OpenData
+        run: uv run python scripts/check_release_delay.py
+
+      - name: Open / update tracking issue on drift
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          TITLE="DWD release-delay drift detected"
+          BODY="The scheduled release-delay check reported a product whose observed availability delay drifts too far from the configured RELEASE_DELAY (or a product could not be measured). Review the run and, if DWD's publication lag has changed, update the product's RELEASE_DELAY. Run: $RUN_URL"
+          num=$(gh issue list --state open --search "$TITLE in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$num" ]; then
+            gh issue comment "$num" --body "$BODY"
+          else
+            gh issue create --title "$TITLE" --body "$BODY"
+          fi

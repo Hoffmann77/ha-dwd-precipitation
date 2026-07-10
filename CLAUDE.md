@@ -61,6 +61,12 @@ latest = floor((now - RELEASE_DELAY) / RELEASE_INTERVAL) * RELEASE_INTERVAL + RE
 `RELEASE_DELAY` = how long after the nominal product time it's available on OpenData.
 `RELEASE_OFFSET` = minute/second alignment of nominal product times within the interval.
 
+`scripts/check_release_delay.py` (run by `.github/workflows/release-delay.yml`,
+scheduled) measures the *observed* availability delay against DWD OpenData and
+flags any product whose real publication lag drifts too far from its configured
+`RELEASE_DELAY`. It reads the constants straight from the source with `ast` (no
+HA import), so the configured value is the single source of truth.
+
 ## Grid lookup
 
 ### RADOLAN (RQ, RW, SF)
