@@ -3009,7 +3009,7 @@ wheels = [
 
 [[package]]
 name = "wradlib"
-version = "2.9.4"
+version = "2.9.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "deprecation" },
@@ -3021,9 +3021,9 @@ dependencies = [
     { name = "xarray" },
     { name = "xradar" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/7b/69/aa96f4cac717068b94d9fa57f0fa4ee3ea472e3760130009c220558b9eca/wradlib-2.9.4.tar.gz", hash = "sha256:f454cc1f3033de9d01de624b80839f88c3d9612058dd5f58fe685f146fb70e27", size = 593560, upload-time = "2026-07-01T19:33:25.719Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/31/85/ccf27dc1b44de73c43b65e0184496ce73dfc43019be2f2562454841d9f2b/wradlib-2.9.5.tar.gz", hash = "sha256:1df56626ee5445932c51c83723c71ea37216e151e46dafde40c42493fb531e11", size = 593858, upload-time = "2026-07-15T07:04:24.882Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/fb/d2/79715be8a0ea40789e73d454963f32ef1826044c66b302aa9770bc1efefd/wradlib-2.9.4-py3-none-any.whl", hash = "sha256:3df27a3b3c6aba229d4474f65015e2ebaf6bb7f5696d96dbf68c30eb83bfdbb2", size = 273117, upload-time = "2026-07-01T19:33:24.276Z" },
+    { url = "https://files.pythonhosted.org/packages/93/84/059f1226d9f8c9539c301cbd90f15c4652357d42fcd018389ac34a15c6c4/wradlib-2.9.5-py3-none-any.whl", hash = "sha256:821d7a76f9cddef15ac0400cc5500ff3482d865c3ce1497df21edb9d4c0fea27", size = 273384, upload-time = "2026-07-15T07:04:23.313Z" },
 ]
 
 [[package]]
