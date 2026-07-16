@@ -20,7 +20,11 @@
         "title": "DWD Precipitation Options",
         "data": {
           "extra_state_attributes": "Enable diagnostic state attributes",
-          "unavailable_when_stale": "Mark sensors unavailable when data is stale"
+          "unavailable_when_stale": "Mark sensors unavailable when data is stale",
+          "rain_threshold": "Rain detection threshold (mm per 5 min)"
+        },
+        "data_description": {
+          "rain_threshold": "A 5-minute forecast above this value counts as precipitation for the RV start/end sensors. 0 means any DWD-detected rain."
         }
       }
     }

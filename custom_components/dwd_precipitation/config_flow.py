@@ -11,7 +11,14 @@ from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import selector
 from homeassistant.const import CONF_NAME
 
-from .const import DOMAIN, CONF_COORDS, CONF_EXTRA_ATTRIBUTES, CONF_UNAVAILABLE_WHEN_STALE
+from .const import (
+    DOMAIN,
+    CONF_COORDS,
+    CONF_EXTRA_ATTRIBUTES,
+    CONF_UNAVAILABLE_WHEN_STALE,
+    CONF_RAIN_THRESHOLD,
+    DEFAULT_RAIN_THRESHOLD,
+)
 from .radar import rs_grid_contains
 
 
@@ -36,6 +43,19 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     CONF_UNAVAILABLE_WHEN_STALE,
                     default=self.config_entry.options.get(CONF_UNAVAILABLE_WHEN_STALE, True),
                 ): selector.BooleanSelector(),
+                vol.Optional(
+                    CONF_RAIN_THRESHOLD,
+                    default=self.config_entry.options.get(
+                        CONF_RAIN_THRESHOLD, DEFAULT_RAIN_THRESHOLD
+                    ),
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=0,
+                        step=0.1,
+                        unit_of_measurement="mm",
+                        mode=selector.NumberSelectorMode.BOX,
+                    )
+                ),
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)

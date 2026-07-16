@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -14,7 +15,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import UnitOfPrecipitationDepth
+from homeassistant.const import UnitOfPrecipitationDepth, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -103,6 +104,62 @@ RADVOR_SENSORS = (
 )
 
 
+RADVOR_RV_SENSORS = (
+    PrecipitationSensorEntityDescription(
+        key="radvor_rv_060",
+        name="Precipitation +1 hour (RV)",
+        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
+        device_class=SensorDeviceClass.PRECIPITATION,
+        suggested_display_precision=1,
+        state_class=SensorStateClass.MEASUREMENT,
+        product_key="rv",
+        access_fn=lambda d: d["rv_060"],
+    ),
+    PrecipitationSensorEntityDescription(
+        key="radvor_rv_120",
+        name="Precipitation +2 hours (RV)",
+        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
+        device_class=SensorDeviceClass.PRECIPITATION,
+        suggested_display_precision=1,
+        state_class=SensorStateClass.MEASUREMENT,
+        product_key="rv",
+        access_fn=lambda d: d["rv_120"],
+    ),
+    PrecipitationSensorEntityDescription(
+        key="rv_precipitation_start_in",
+        name="Precipitation start in",
+        native_unit_of_measurement=UnitOfTime.MINUTES,
+        device_class=SensorDeviceClass.DURATION,
+        state_class=SensorStateClass.MEASUREMENT,
+        product_key="rv",
+        access_fn=lambda d: d["start_in"],
+    ),
+    PrecipitationSensorEntityDescription(
+        key="rv_precipitation_start_at",
+        name="Precipitation start at",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        product_key="rv",
+        access_fn=lambda d: d["start_at"],
+    ),
+    PrecipitationSensorEntityDescription(
+        key="rv_precipitation_end_in",
+        name="Precipitation end in",
+        native_unit_of_measurement=UnitOfTime.MINUTES,
+        device_class=SensorDeviceClass.DURATION,
+        state_class=SensorStateClass.MEASUREMENT,
+        product_key="rv",
+        access_fn=lambda d: d["end_in"],
+    ),
+    PrecipitationSensorEntityDescription(
+        key="rv_precipitation_end_at",
+        name="Precipitation end at",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        product_key="rv",
+        access_fn=lambda d: d["end_at"],
+    ),
+)
+
+
 def _plain_value(value: Any) -> Any:
     """Return values suitable for Home Assistant state attributes."""
     if isinstance(value, datetime):
@@ -133,7 +190,7 @@ async def async_setup_entry(
     """Set up the sensor platform."""
     coordinators = entry.runtime_data.coordinators
 
-    entity_descriptions = RADVOR_SENSORS + RADOLAN_SENSORS
+    entity_descriptions = RADVOR_SENSORS + RADVOR_RV_SENSORS + RADOLAN_SENSORS
 
     async_add_entities(
         PrecipitationSensorEntity(
@@ -168,6 +225,9 @@ class DwdCoordinatorEntity(CoordinatorEntity[BaseProductUpdateCoordinator]):
 class PrecipitationSensorEntity(DwdCoordinatorEntity, SensorEntity):
     """Implementation of a precipitation sensor."""
 
+    # The 5-minute constituent points would bloat the recorder history.
+    _unrecorded_attributes = frozenset({"forecast_5min"})
+
     def __init__(
         self,
         coordinator: BaseProductUpdateCoordinator,
@@ -180,7 +240,7 @@ class PrecipitationSensorEntity(DwdCoordinatorEntity, SensorEntity):
         )
 
     @property
-    def native_value(self) -> float | None:
+    def native_value(self) -> float | datetime | None:
         """Return the state of the sensor."""
         if self.coordinator.data is None:
             return None
@@ -221,5 +281,7 @@ class PrecipitationSensorEntity(DwdCoordinatorEntity, SensorEntity):
             attrs["data_start"] = metadata.data_start.isoformat()
         if metadata.data_end is not None:
             attrs["data_end"] = metadata.data_end.isoformat()
+        if getattr(metadata, "samples", None):
+            attrs["forecast_5min"] = metadata.samples
 
         return attrs

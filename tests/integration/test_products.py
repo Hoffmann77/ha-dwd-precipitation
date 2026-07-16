@@ -6,17 +6,19 @@ Needs the ha-test dependency group installed (products.py imports HA transitivel
 from __future__ import annotations
 
 import bz2
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
 import numpy as np
 import pytest
 
+from types import SimpleNamespace
+
 from custom_components.dwd_precipitation import products
-from custom_components.dwd_precipitation.products import RadolanRW, RadvorRS
+from custom_components.dwd_precipitation.products import RadolanRW, RadvorRS, RadvorRV
 from custom_components.dwd_precipitation.utils import AsyncResponse
 
-from tests.factories.odim import make_rs_tar
+from tests.factories.odim import make_rs_tar, make_rv_tar
 
 
 @pytest.mark.asyncio
@@ -60,6 +62,100 @@ async def test_rs_fetch_derives_base_source_timestamp_and_window() -> None:
     assert meta[0].data_end == base
     assert meta[2].data_start == datetime(2026, 5, 18, 17, 0, tzinfo=timezone.utc)
     assert meta[2].data_end == datetime(2026, 5, 18, 18, 0, tzinfo=timezone.utc)
+
+
+def _rv_what(base: datetime, lead: int) -> dict:
+    """ODIM /dataset/what for an RV member: 5-min window [T+lead-5, T+lead]."""
+    end = base + timedelta(minutes=lead)
+    start = end - timedelta(minutes=5)
+    return {
+        "prodname": "RV_top_view",
+        "startdate": start.strftime("%Y%m%d"), "starttime": start.strftime("%H%M%S"),
+        "enddate": end.strftime("%Y%m%d"), "endtime": end.strftime("%H%M%S"),
+    }
+
+
+@pytest.mark.asyncio
+async def test_rv_fetch_derives_buckets_and_timing() -> None:
+    """RV: hourly buckets, start/end detection, and per-bucket 5-min samples."""
+    ts = datetime(2026, 7, 16, 20, 30, tzinfo=timezone.utc)
+    # Scenario: dry now, rain at leads 30..60 (1.0 mm each), dry afterwards.
+    leads = list(range(0, 121, 5))
+    values = {lead: (1.0 if 30 <= lead <= 60 else 0.0) for lead in leads}
+    reads = iter([
+        (np.full((1200, 1100), values[lead], dtype=np.float32), _rv_what(ts, lead))
+        for lead in leads
+    ])
+
+    coord = RadvorRV.__new__(RadvorRV)
+    coord.async_client = object()
+    coord.coords = (51.05, 13.73)
+    coord.config_entry = SimpleNamespace(options={})
+
+    with (
+        patch.object(
+            products,
+            "async_get",
+            new=AsyncMock(return_value=AsyncResponse(content=make_rv_tar(ts))),
+        ),
+        patch.object(products, "read_odim_composite", side_effect=lambda _f: next(reads)),
+    ):
+        data, meta = await coord._fetch_and_parse(ts)
+
+    # 7 raining members (leads 30..60) fall in the first hour bucket.
+    assert data["rv_060"] == pytest.approx(7.0)
+    assert data["rv_120"] == pytest.approx(0.0)
+    # Dry now → rain starts at lead 30 (25 min out); ends at lead 65 boundary (60 min out).
+    assert data["start_in"] == 25
+    assert data["start_at"] == datetime(2026, 7, 16, 20, 55, tzinfo=timezone.utc)
+    assert data["end_in"] == 60
+    assert data["end_at"] == datetime(2026, 7, 16, 21, 30, tzinfo=timezone.utc)
+
+    # Base run time and bucket metadata.
+    assert meta["rv_060"].source_timestamp == ts
+    assert meta["rv_060"].lead_time_minutes == 60
+    assert meta["rv_060"].data_start == datetime(2026, 7, 16, 20, 30, tzinfo=timezone.utc)
+    assert meta["rv_060"].data_end == datetime(2026, 7, 16, 21, 30, tzinfo=timezone.utc)
+
+    # Per-bucket 5-min samples: 12 points, last one is lead 60.
+    samples = meta["rv_060"].samples
+    assert len(samples) == 12
+    assert samples[-1]["lead"] == 60
+    assert samples[-1]["value"] == pytest.approx(1.0)
+    assert samples[0]["lead"] == 5
+    assert samples[0]["value"] == pytest.approx(0.0)
+
+
+@pytest.mark.asyncio
+async def test_rv_threshold_from_options_suppresses_light_rain() -> None:
+    """RV: light rain below the configured threshold does not trigger start/end."""
+    ts = datetime(2026, 7, 16, 20, 30, tzinfo=timezone.utc)
+    leads = list(range(0, 121, 5))
+    values = {lead: (0.2 if lead >= 30 else 0.0) for lead in leads}  # 0.2 mm/5min
+    reads = iter([
+        (np.full((1200, 1100), values[lead], dtype=np.float32), _rv_what(ts, lead))
+        for lead in leads
+    ])
+
+    coord = RadvorRV.__new__(RadvorRV)
+    coord.async_client = object()
+    coord.coords = (51.05, 13.73)
+    coord.config_entry = SimpleNamespace(options={"rain_threshold": 0.3})
+
+    with (
+        patch.object(
+            products,
+            "async_get",
+            new=AsyncMock(return_value=AsyncResponse(content=make_rv_tar(ts))),
+        ),
+        patch.object(products, "read_odim_composite", side_effect=lambda _f: next(reads)),
+    ):
+        data, _meta = await coord._fetch_and_parse(ts)
+
+    # 0.2 mm never exceeds the 0.3 threshold → no precipitation detected.
+    assert data["start_in"] is None
+    assert data["start_at"] is None
+    assert data["end_in"] is None
 
 
 @pytest.mark.asyncio

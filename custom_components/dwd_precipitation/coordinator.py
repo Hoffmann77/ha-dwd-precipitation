@@ -66,14 +66,21 @@ class ProductMetadata:
     lead_time_minutes: int | None = None
     data_start: datetime | None = None  # accumulation/validity window start (UTC), or None
     data_end: datetime | None = None    # accumulation/validity window end (UTC), or None
+    # Optional constituent 5-minute points (RV hourly buckets), each a dict of
+    # {"lead", "start", "end", "value"} — surfaced as an entity state attribute.
+    samples: list[dict[str, Any]] | None = None
 
 
 @dataclass
 class CoordinatorData:
-    """Single-product coordinator payload."""
+    """Single-product coordinator payload.
 
-    data: float | list[float | None]
-    metadata: ProductMetadata | list[ProductMetadata]
+    ``data``/``metadata`` are a scalar+``ProductMetadata`` for RADOLAN products,
+    parallel lists for RS, or parallel dicts keyed by entity sub-key for RV.
+    """
+
+    data: float | list[float | None] | dict[str, Any]
+    metadata: ProductMetadata | list[ProductMetadata] | dict[str, ProductMetadata]
 
 
 class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
