@@ -92,6 +92,7 @@ After setup, open the integration's **Configure** dialog (**Settings > Devices &
 |--------|---------|-------------|
 | Enable diagnostic state attributes | Off | Adds per-sensor metadata attributes (see below) |
 | Mark sensors unavailable when data is stale | On | Sensors become `unavailable` once cached data exceeds the product's release interval; prevents automations from acting on stale values |
+| Rain reset threshold (mm) | 1.0 | `Precipitation now` at or above this value resets the `Days without rain` counter |
 
 When diagnostic state attributes are enabled, each sensor exposes:
 
@@ -115,6 +116,7 @@ All sensors belong to a single **DWD Precipitation** device per configured locat
 | `Precipitation last hour` | RADOLAN RW | mm | 1 h | Radar + station-blended analysis for the past hour |
 | `Precipitation last 24 hours` | RADOLAN SF | mm | 1 h | Radar + station-blended total for the rolling past 24 hours |
 | `Precipitation yesterday` | RADOLAN SF | mm | Daily (~00:18 UTC+1) | Previous calendar day's 24-hour accumulated total |
+| `Days without rain` | RADVOR RS | days | 5 min | Time since `Precipitation now` last reached the rain reset threshold; exposes `hours_without_rain` and `dry_since` attributes. Persists across restarts and is corrected on startup against the RW/SF totals for rain during downtime |
 
 ## Troubleshooting
 

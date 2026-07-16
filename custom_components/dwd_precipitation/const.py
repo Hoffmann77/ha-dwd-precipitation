@@ -13,6 +13,10 @@ CONF_EXTRA_ATTRIBUTES = "extra_state_attributes"
 
 CONF_UNAVAILABLE_WHEN_STALE = "unavailable_when_stale"
 
+CONF_RAIN_THRESHOLD = "rain_threshold"
+
+DEFAULT_RAIN_THRESHOLD = 1.0  # mm; "Precipitation now" at/above this resets the dry streak
+
 DWD_OPENDATA_URL = "https://opendata.dwd.de"
 
 DWD_RADOLAN_URL = f"{DWD_OPENDATA_URL}/weather/radar/radolan"
