@@ -19,7 +19,7 @@ from homeassistant.const import UnitOfPrecipitationDepth, UnitOfTime
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.restore_state import ExtraStoredData, RestoreEntity
+from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
@@ -30,6 +30,12 @@ from .const import (
     DOMAIN,
 )
 from .coordinator import BaseProductUpdateCoordinator, ProductMetadata
+from .dry_streak import (
+    DryStreakExtraData,
+    downtime_correction,
+    fresh_anchor,
+    scalar_reading,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -235,92 +241,6 @@ class PrecipitationSensorEntity(DwdCoordinatorEntity, SensorEntity):
         return attrs
 
 
-@dataclass
-class DryStreakExtraData(ExtraStoredData):
-    """Persisted anchor for the days-without-rain sensor."""
-
-    dry_since: datetime | None
-
-    def as_dict(self) -> dict[str, Any]:
-        """Serialize the anchor for restore_state."""
-        return {
-            "dry_since": self.dry_since.isoformat() if self.dry_since else None
-        }
-
-    @classmethod
-    def from_dict(cls, restored: dict[str, Any]) -> "DryStreakExtraData":
-        """Rebuild the anchor from a restored dict, forcing UTC-awareness."""
-        raw = restored.get("dry_since")
-        ts = dt_util.parse_datetime(raw) if raw else None
-        if ts is not None and ts.tzinfo is None:
-            ts = dt_util.as_utc(ts)
-
-        return cls(dry_since=ts)
-
-
-def _scalar_reading(
-    coordinator: BaseProductUpdateCoordinator | None,
-) -> tuple[float | None, datetime | None, datetime | None]:
-    """Return (value, data_start, data_end) from a scalar RADOLAN coordinator.
-
-    Yields (None, None, None) when the coordinator or its data is missing.
-    """
-    cdata = getattr(coordinator, "data", None) if coordinator else None
-    if cdata is None or cdata.data is None:
-        return (None, None, None)
-
-    meta = cdata.metadata
-
-    return (
-        float(cdata.data),
-        getattr(meta, "data_start", None),
-        getattr(meta, "data_end", None),
-    )
-
-
-def _downtime_correction(
-    threshold: float,
-    rw: tuple[float | None, datetime | None, datetime | None],
-    sf: tuple[float | None, datetime | None, datetime | None],
-    now: datetime,
-) -> datetime | None:
-    """Newest time we have positive rain evidence, to clamp a stale anchor forward.
-
-    Used only at startup to catch rain that fell while HA was down. Returns a UTC
-    datetime to clamp the anchor forward to, or None when there is no evidence.
-    """
-    rw_value, _, rw_end = rw
-    if rw_value is not None and rw_value >= threshold:
-        # Rain within the last hour -> the streak is effectively zero.
-        return rw_end or now
-
-    sf_value, sf_start, _ = sf
-    if sf_value is not None and sf_value >= threshold:
-        # Rain within the last 24h (but not the last hour). We cannot pin the exact
-        # time, so cap the streak at the start of the SF window (~24h ago).
-        return sf_start or now
-
-    return None
-
-
-def _fresh_anchor(
-    threshold: float,
-    rw: tuple[float | None, datetime | None, datetime | None],
-    sf: tuple[float | None, datetime | None, datetime | None],
-    now: datetime,
-) -> datetime:
-    """Anchor for a fresh install: the oldest time we can prove it has been dry."""
-    sf_value, sf_start, _ = sf
-    if sf_value is not None and sf_value < threshold and sf_start:
-        return sf_start  # dry for at least the 24h SF window
-
-    rw_value, rw_start, _ = rw
-    if rw_value is not None and rw_value < threshold and rw_start:
-        return rw_start  # dry for at least the last hour
-
-    return now
-
-
 class DaysWithoutRainSensor(
     CoordinatorEntity[BaseProductUpdateCoordinator], RestoreEntity, SensorEntity
 ):
@@ -409,23 +329,23 @@ class DaysWithoutRainSensor(
 
         now = dt_util.utcnow()
         siblings = self.coordinator.config_entry.runtime_data.coordinators
-        rw = _scalar_reading(siblings.get("rw"))
-        sf = _scalar_reading(siblings.get("sf"))
+        rw = scalar_reading(siblings.get("rw"))
+        sf = scalar_reading(siblings.get("sf"))
 
         if self._dry_since is not None:
             # Clamp a stale restored anchor forward if RW/SF show recent rain.
-            correction = _downtime_correction(self._threshold, rw, sf, now)
+            correction = downtime_correction(self._threshold, rw, sf, now)
             if correction is not None and correction > self._dry_since:
                 self._dry_since = correction
         else:
             # Fresh install: establish the oldest provable dry time.
-            self._dry_since = _fresh_anchor(self._threshold, rw, sf, now)
+            self._dry_since = fresh_anchor(self._threshold, rw, sf, now)
 
         # coordinator.data is already populated by the first refresh; catch up once.
         self._process()
 
     @property
-    def extra_restore_state_data(self) -> ExtraStoredData:
+    def extra_restore_state_data(self) -> DryStreakExtraData:
         """Return the anchor to persist across restarts."""
         return DryStreakExtraData(dry_since=self._dry_since)
 

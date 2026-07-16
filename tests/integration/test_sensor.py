@@ -20,14 +20,16 @@ from custom_components.dwd_precipitation.coordinator import (
     CoordinatorData,
     ProductMetadata,
 )
+from custom_components.dwd_precipitation.dry_streak import (
+    DryStreakExtraData,
+    downtime_correction,
+    fresh_anchor,
+    scalar_reading,
+)
 from custom_components.dwd_precipitation.sensor import (
     DaysWithoutRainSensor,
-    DryStreakExtraData,
     PrecipitationSensorEntity,
     PrecipitationSensorEntityDescription,
-    _downtime_correction,
-    _fresh_anchor,
-    _scalar_reading,
 )
 
 UTC = timezone.utc
@@ -164,8 +166,8 @@ def test_process_ignores_missing_and_nan_reading():
 
 
 def test_scalar_reading_handles_missing_coordinator():
-    assert _scalar_reading(None) == (None, None, None)
-    assert _scalar_reading(SimpleNamespace(data=None)) == (None, None, None)
+    assert scalar_reading(None) == (None, None, None)
+    assert scalar_reading(SimpleNamespace(data=None)) == (None, None, None)
 
 
 def test_downtime_correction_rw_rain_resets():
@@ -173,7 +175,7 @@ def test_downtime_correction_rw_rain_resets():
     rw_end = datetime(2026, 7, 3, 11, 50, tzinfo=UTC)
     rw = (2.0, datetime(2026, 7, 3, 10, 50, tzinfo=UTC), rw_end)
     sf = (5.0, datetime(2026, 7, 2, 11, 50, tzinfo=UTC), rw_end)
-    assert _downtime_correction(1.0, rw, sf, now) == rw_end
+    assert downtime_correction(1.0, rw, sf, now) == rw_end
 
 
 def test_downtime_correction_sf_only_caps_at_window_start():
@@ -181,14 +183,14 @@ def test_downtime_correction_sf_only_caps_at_window_start():
     sf_start = datetime(2026, 7, 2, 11, 50, tzinfo=UTC)
     rw = (0.0, datetime(2026, 7, 3, 10, 50, tzinfo=UTC), now)
     sf = (5.0, sf_start, now)
-    assert _downtime_correction(1.0, rw, sf, now) == sf_start
+    assert downtime_correction(1.0, rw, sf, now) == sf_start
 
 
 def test_downtime_correction_no_rain_returns_none():
     now = datetime(2026, 7, 3, 12, 0, tzinfo=UTC)
     rw = (0.0, now, now)
     sf = (0.1, now, now)
-    assert _downtime_correction(1.0, rw, sf, now) is None
+    assert downtime_correction(1.0, rw, sf, now) is None
 
 
 def test_fresh_anchor_prefers_sf_dry_window():
@@ -197,14 +199,14 @@ def test_fresh_anchor_prefers_sf_dry_window():
     rw_start = datetime(2026, 7, 3, 10, 50, tzinfo=UTC)
     rw = (0.0, rw_start, now)
     sf = (0.0, sf_start, now)
-    assert _fresh_anchor(1.0, rw, sf, now) == sf_start
+    assert fresh_anchor(1.0, rw, sf, now) == sf_start
 
 
 def test_fresh_anchor_falls_back_to_now_when_recently_wet():
     now = datetime(2026, 7, 3, 12, 0, tzinfo=UTC)
     rw = (5.0, datetime(2026, 7, 3, 10, 50, tzinfo=UTC), now)
     sf = (5.0, datetime(2026, 7, 2, 11, 50, tzinfo=UTC), now)
-    assert _fresh_anchor(1.0, rw, sf, now) == now
+    assert fresh_anchor(1.0, rw, sf, now) == now
 
 
 def test_dry_streak_extra_data_roundtrip():
