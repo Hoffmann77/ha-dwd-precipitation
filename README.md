@@ -15,6 +15,7 @@ Real-time location based precipitation analysis, forecasts, and historical accum
 ## Features
 
 - 5-minute precipitation nowcast and 1-hour / 2-hour radar forecasts from **RADVOR RS**
+- High-resolution **RADVOR RV** nowcast: 1-hour / 2-hour totals (to compare against RS) plus *precipitation starts/ends in* timing sensors derived from the 5-minute forecast series
 - Hourly and 24-hour precipitation accumulations from **RADOLAN RW/SF** (radar + weather station blend)
 - Yesterday's 24-hour total updated once daily — ideal for irrigation or energy automations
 - Per-location extraction: the nearest radar grid cell to your exact latitude/longitude
@@ -92,6 +93,7 @@ After setup, open the integration's **Configure** dialog (**Settings > Devices &
 |--------|---------|-------------|
 | Enable diagnostic state attributes | Off | Adds per-sensor metadata attributes (see below) |
 | Mark sensors unavailable when data is stale | On | Sensors become `unavailable` once cached data exceeds the product's release interval; prevents automations from acting on stale values |
+| Rain detection threshold (mm per 5 min) | 0.0 | A 5-minute RV forecast above this value counts as precipitation for the `start`/`end` sensors. `0.0` means any DWD-detected rain; raise it to ignore drizzle/noise |
 
 When diagnostic state attributes are enabled, each sensor exposes:
 
@@ -102,6 +104,7 @@ When diagnostic state attributes are enabled, each sensor exposes:
 | `lead_time_minutes` | Forecast lead time in minutes (`0` for the nowcast, `60` or `120` for RADVOR forecasts, `null` for RADOLAN products which have no lead time) |
 | `data_start` | ISO-8601 UTC start of the accumulation window (e.g. T−60 min for "last hour"); `null` for products without an accumulation window |
 | `data_end` | ISO-8601 UTC end of the accumulation window; for RADOLAN products this equals `source_timestamp` |
+| `forecast_5min` | RV hourly-bucket sensors only: the 12 constituent 5-minute forecast points (`lead`, `start`, `end`, `value`) making up the total. Excluded from recorder history |
 
 ## Entities
 
@@ -112,6 +115,12 @@ All sensors belong to a single **DWD Precipitation** device per configured locat
 | `Precipitation now` | RADVOR RS | mm | 5 min | Calibrated radar analysis for the current 5-minute window |
 | `Precipitation +1 hour` | RADVOR RS | mm | 5 min | Calibrated radar forecast for the next 0–60 minutes |
 | `Precipitation +2 hours` | RADVOR RS | mm | 5 min | Calibrated radar forecast for the 60–120 minute window |
+| `Precipitation +1 hour (RV)` | RADVOR RV | mm | 5 min | RV nowcast total for the next 0–60 minutes (sum of the 5-minute forecasts); provided to compare against the RS `+1 hour` sensor |
+| `Precipitation +2 hours (RV)` | RADVOR RV | mm | 5 min | RV nowcast total for the 60–120 minute window; compare against the RS `+2 hours` sensor |
+| `Precipitation start in` | RADVOR RV | min | 5 min | Minutes until precipitation begins at the location (`0` if already raining, `unknown` if none within 2 h) |
+| `Precipitation start at` | RADVOR RV | timestamp | 5 min | Timestamp when precipitation is forecast to begin |
+| `Precipitation end in` | RADVOR RV | min | 5 min | Minutes until the current/next precipitation episode ends (`unknown` if it continues beyond the 2 h horizon) |
+| `Precipitation end at` | RADVOR RV | timestamp | 5 min | Timestamp when precipitation is forecast to end |
 | `Precipitation last hour` | RADOLAN RW | mm | 1 h | Radar + station-blended analysis for the past hour |
 | `Precipitation last 24 hours` | RADOLAN SF | mm | 1 h | Radar + station-blended total for the rolling past 24 hours |
 | `Precipitation yesterday` | RADOLAN SF | mm | Daily (~00:18 UTC+1) | Previous calendar day's 24-hour accumulated total |
