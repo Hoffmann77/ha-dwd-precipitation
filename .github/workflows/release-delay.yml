@@ -1,16 +1,15 @@
 name: DWD release-delay drift check
 
-# Measures how long after each product's nominal time its file actually appears
-# on DWD OpenData and compares that against the integration's configured
-# RELEASE_DELAY constants. Scheduled (never gates PRs); opens/updates a tracking
-# issue when the observed delay drifts too far from what the integration assumes.
-#
-# The :12-past schedule lets the run poll across the ~HH:18 RADOLAN appearance
-# (nominal :50 + 28 min) so it can capture an exact delay, not just a window.
+# Averages how long after each product's nominal time its file actually appeared
+# on DWD OpenData (from each recent file's Last-Modified header) and compares
+# that against the integration's configured RELEASE_DELAY constants. Scheduled
+# (never gates PRs); opens/updates a tracking issue when the observed delay
+# drifts too far from what the integration assumes. The averaging reads a rolling
+# window of already-published files, so the schedule time does not matter.
 on:
   schedule:
-    - cron: "12 6 * * *"    # daily 06:12 UTC
-    - cron: "12 18 * * *"   # daily 18:12 UTC
+    - cron: "0 6 * * *"    # daily 06:00 UTC
+    - cron: "0 18 * * *"   # daily 18:00 UTC
   workflow_dispatch:
 
 permissions:

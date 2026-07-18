@@ -17,30 +17,28 @@ DWD is probed with ``requests``.
 How the delay is measured
 -------------------------
 For a product with interval ``I`` and offset ``O`` the releases occur at
-timestamps ``k*I + O``. We probe OpenData to find the *frontier* — the newest
-release ``F`` whose file exists while ``F + I`` does not. That alone bounds the
-true delay ``D`` to the window ``(now - F - I, now - F]`` (width ``I``).
+nominal timestamps ``k*I + O`` — the timestamp encoded in each filename. For
+each of the most recent files we read its ``Last-Modified`` response header,
+which is the moment DWD actually published the file (RFC 7231 mandates GMT, so
+there is no timezone ambiguity). The observed delay of one file is
 
-When the *next* release is due to appear within ``--max-poll-wait``, we poll
-until it shows up and record the exact delay ``appearance - timestamp``. That
-removes the interval-sized uncertainty and, for the fast 5-minute RS cadence,
-lets us average several consecutive appearances — the "average timedelta" the
-check is built around. Otherwise we fall back to the window midpoint with an
-uncertainty of ``I/2``.
+    Last-Modified − nominal_timestamp
 
-A product is flagged when ``|configured - observed| > uncertainty + grace``.
-The ``uncertainty`` term makes coarse (window-only) estimates unable to raise a
-false alarm from the measurement window alone; exact samples get the tight
-``grace`` tolerance.
+and we average that over the last ``--samples`` published files — DWD keeps a
+rolling window of them, so this is a stable central estimate rather than a
+single noisy probe. No polling or waiting: every sample is an exact, already
+published fact.
+
+A product is flagged when ``|configured − mean(observed)| > grace``.
 
 Exit status: ``0`` all products within tolerance, ``1`` at least one drifted,
-``2`` a product could not be measured (nothing downloadable / network error).
+``2`` a product could not be measured (too few files / network error).
 
 Usage::
 
     uv run --group unit-test python scripts/check_release_delay.py
     uv run --group unit-test python scripts/check_release_delay.py --products rs
-    uv run --group unit-test python scripts/check_release_delay.py --no-poll
+    uv run --group unit-test python scripts/check_release_delay.py --samples 36
 """
 
 from __future__ import annotations
@@ -48,7 +46,7 @@ from __future__ import annotations
 import argparse
 import ast
 import os
-import sys
+import statistics
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -63,6 +61,11 @@ _INTEGRATION = _REPO_ROOT / "custom_components" / "dwd_precipitation"
 _OPENDATA = "https://opendata.dwd.de/weather/radar"
 
 RELEASE_KEYS = ("RELEASE_INTERVAL", "RELEASE_DELAY", "RELEASE_OFFSET")
+
+# Stop scanning back once this many consecutive nominal slots are missing —
+# either we are above the frontier (newest not published yet) with a wildly
+# wrong delay, or we fell off the folder's retention window.
+_MISS_CAP = 8
 
 
 # ---------------------------------------------------------------------------
@@ -219,21 +222,33 @@ PRODUCTS: dict[str, ProductSpec] = {
 }
 
 
-def http_available(url: str, timeout: float = 60.0, attempts: int = 3) -> bool:
-    """Return True if ``url`` responds 2xx. Body is never downloaded."""
+def http_last_modified(url: str, timeout: float = 60.0, attempts: int = 3) -> datetime | None:
+    """Return the file's ``Last-Modified`` time (UTC), or None if it is absent.
+
+    Uses HEAD (no body) and falls back to a streamed GET if HEAD is rejected.
+    Raises on network errors after retries so a flaky run is not read as "no
+    drift".
+    """
     import requests  # imported lazily so the module loads without the dep
+    from email.utils import parsedate_to_datetime
 
     last_err: Exception | None = None
     for attempt in range(attempts):
         try:
-            resp = requests.get(url, stream=True, timeout=timeout)
-            try:
-                if resp.status_code == 404:
-                    return False
-                resp.raise_for_status()
-                return True
-            finally:
+            resp = requests.head(url, timeout=timeout, allow_redirects=True)
+            if resp.status_code == 405:  # some servers disallow HEAD
+                resp = requests.get(url, stream=True, timeout=timeout)
                 resp.close()
+            if resp.status_code == 404:
+                return None
+            resp.raise_for_status()
+            raw = resp.headers.get("Last-Modified")
+            if not raw:
+                return None
+            dt = parsedate_to_datetime(raw)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=UTC)
+            return dt.astimezone(UTC)
         except requests.HTTPError:
             raise
         except requests.RequestException as err:
@@ -254,12 +269,27 @@ class Measurement:
     class_name: str
     configured: timedelta
     interval: timedelta
-    observed: timedelta | None = None
-    uncertainty: timedelta = timedelta()
-    window: tuple[timedelta, timedelta] | None = None
-    exact_samples: list[timedelta] = field(default_factory=list)
-    frontier: datetime | None = None
+    deltas: list[timedelta] = field(default_factory=list)
     error: str | None = None
+
+    @property
+    def observed(self) -> timedelta | None:
+        """Mean observed delay across the sampled files."""
+        if not self.deltas:
+            return None
+        return sum(self.deltas, timedelta()) / len(self.deltas)
+
+    @property
+    def spread(self) -> tuple[timedelta, timedelta] | None:
+        if not self.deltas:
+            return None
+        return (min(self.deltas), max(self.deltas))
+
+    @property
+    def stdev(self) -> timedelta | None:
+        if len(self.deltas) < 2:
+            return timedelta()
+        return timedelta(seconds=statistics.stdev(d.total_seconds() for d in self.deltas))
 
     @property
     def deviation(self) -> timedelta | None:
@@ -267,42 +297,10 @@ class Measurement:
             return None
         return abs(self.configured - self.observed)
 
-    def tolerance(self, grace: timedelta) -> timedelta:
-        return self.uncertainty + grace
-
     def status(self, grace: timedelta) -> str:
         if self.error is not None or self.observed is None:
             return "ERROR"
-        return "OK" if self.deviation <= self.tolerance(grace) else "DRIFT"
-
-
-def find_frontier(
-    url_for: Callable[[datetime], str],
-    start: datetime,
-    interval: timedelta,
-    available: Callable[[str], bool],
-    max_steps: int = 24,
-) -> datetime:
-    """Return the newest available release ``F`` with ``F + interval`` absent.
-
-    ``start`` is the integration's expected-latest release; we walk back if DWD
-    is slower than configured and forward if it is faster.
-    """
-    ts = start
-    steps = 0
-    while not available(url_for(ts)):
-        ts -= interval
-        steps += 1
-        if steps > max_steps:
-            raise RuntimeError("no available release found near the expected slot")
-
-    steps = 0
-    while available(url_for(ts + interval)):
-        ts += interval
-        steps += 1
-        if steps > max_steps:
-            raise RuntimeError("frontier kept advancing; interval/offset likely wrong")
-    return ts
+        return "OK" if self.deviation <= grace else "DRIFT"
 
 
 def measure(
@@ -310,91 +308,48 @@ def measure(
     configured: dict[str, timedelta],
     now: datetime,
     *,
-    available: Callable[[str], bool] = http_available,
-    poll: bool = True,
-    max_poll_wait: timedelta = timedelta(minutes=11),
-    poll_interval: timedelta = timedelta(seconds=20),
-    sleep: Callable[[float], None] = time.sleep,
-    monotonic: Callable[[], float] = time.monotonic,
-    wall_now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    last_modified: Callable[[str], datetime | None] = http_last_modified,
+    samples: int = 24,
+    min_samples: int = 3,
 ) -> Measurement:
-    """Measure the observed availability delay for one product."""
+    """Average the observed availability delay over recent published files.
+
+    Walks the release schedule backward from ``now``, reading each file's
+    publication time, until ``samples`` files have been measured or the folder's
+    recent window is exhausted.
+    """
     interval = configured["RELEASE_INTERVAL"]
     offset = configured["RELEASE_OFFSET"]
     delay = configured["RELEASE_DELAY"]
     m = Measurement(spec.key, spec.class_name, delay, interval)
 
     try:
-        start = previous_release(now - delay, interval, offset)
-        frontier = find_frontier(spec.url_for, start, interval, available)
-        m.frontier = frontier
+        ts = previous_release(now, interval, offset)
+        max_scan = samples * 3 + _MISS_CAP
+        consecutive_misses = 0
+        scanned = 0
 
-        if poll:
-            m.exact_samples = _capture_exact(
-                spec, frontier, interval, delay, now, available,
-                max_poll_wait, poll_interval, sleep, monotonic, wall_now,
+        while len(m.deltas) < samples and scanned < max_scan:
+            scanned += 1
+            published = last_modified(spec.url_for(ts))
+            if published is None:
+                consecutive_misses += 1
+                if consecutive_misses > _MISS_CAP:
+                    break
+            else:
+                consecutive_misses = 0
+                m.deltas.append(published - ts)
+            ts -= interval
+
+        if len(m.deltas) < min_samples:
+            m.error = (
+                f"only {len(m.deltas)} published file(s) found in the last "
+                f"{scanned} slots (need {min_samples})"
             )
-
-        if m.exact_samples:
-            total = sum(m.exact_samples, timedelta())
-            m.observed = total / len(m.exact_samples)
-            m.uncertainty = timedelta()
-        else:
-            lower = now - (frontier + interval)
-            upper = now - frontier
-            m.window = (lower, upper)
-            m.observed = (lower + upper) / 2
-            m.uncertainty = interval / 2
     except Exception as err:  # network / logic — reported, never crashes the run
         m.error = str(err)
 
     return m
-
-
-def _capture_exact(
-    spec: ProductSpec,
-    frontier: datetime,
-    interval: timedelta,
-    delay: timedelta,
-    now: datetime,
-    available: Callable[[str], bool],
-    max_poll_wait: timedelta,
-    poll_interval: timedelta,
-    sleep: Callable[[float], None],
-    monotonic: Callable[[], float],
-    wall_now: Callable[[], datetime],
-) -> list[timedelta]:
-    """Poll for imminent releases to pin the exact delay, averaging several.
-
-    Only polls when the next release is expected to land within
-    ``max_poll_wait``; otherwise returns no samples and the caller falls back to
-    the window estimate.
-    """
-    samples: list[timedelta] = []
-    deadline = monotonic() + max_poll_wait.total_seconds()
-    ts_next = frontier + interval
-
-    while True:
-        expected = ts_next + delay
-        wait_left = deadline - monotonic()
-        # Skip if the appearance is further out than we are willing to wait.
-        if (expected - now).total_seconds() > wait_left:
-            break
-
-        appeared = False
-        while monotonic() < deadline:
-            if available(spec.url_for(ts_next)):
-                appeared = True
-                break
-            sleep(poll_interval.total_seconds())
-
-        if not appeared:
-            break
-
-        samples.append(wall_now() - ts_next)
-        ts_next += interval
-
-    return samples
 
 
 # ---------------------------------------------------------------------------
@@ -411,29 +366,22 @@ def _fmt(td: timedelta | None) -> str:
 
 
 def _report_lines(measurements: list[Measurement], grace: timedelta) -> list[str]:
-    header = f"{'product':<8}{'status':<8}{'configured':>12}{'observed':>12}{'deviation':>12}{'tolerance':>12}"
+    header = f"{'product':<8}{'status':<8}{'configured':>12}{'observed':>12}{'deviation':>12}{'grace':>10}"
     lines = [header, "-" * len(header)]
     for m in measurements:
         lines.append(
             f"{m.key:<8}{m.status(grace):<8}"
             f"{_fmt(m.configured):>12}{_fmt(m.observed):>12}"
-            f"{_fmt(m.deviation):>12}{_fmt(m.tolerance(grace)):>12}"
+            f"{_fmt(m.deviation):>12}{_fmt(grace):>10}"
         )
-        detail = []
         if m.error:
-            detail.append(f"error: {m.error}")
-        elif m.exact_samples:
-            detail.append(
-                f"{len(m.exact_samples)} exact sample(s): "
-                + ", ".join(_fmt(s) for s in m.exact_samples)
+            lines.append(f"         └ error: {m.error}")
+        elif m.spread:
+            lines.append(
+                f"         └ {len(m.deltas)} files | "
+                f"min {_fmt(m.spread[0])}, max {_fmt(m.spread[1])}, "
+                f"σ {_fmt(m.stdev)}"
             )
-        elif m.window:
-            detail.append(
-                f"window {_fmt(m.window[0])}..{_fmt(m.window[1])} "
-                f"(frontier {m.frontier:%Y-%m-%d %H:%M UTC})"
-            )
-        if detail:
-            lines.append(f"         └ {' | '.join(detail)}")
     return lines
 
 
@@ -457,15 +405,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--grace", type=float, default=5.0,
-        help="tolerance in minutes on top of the measurement uncertainty (default: 5)",
+        help="allowed deviation of the mean observed delay, in minutes (default: 5)",
     )
     parser.add_argument(
-        "--no-poll", action="store_true",
-        help="skip exact-appearance polling; use the frontier window only",
+        "--samples", type=int, default=24,
+        help="number of recent files to average per product (default: 24)",
     )
     parser.add_argument(
-        "--max-poll-wait", type=float, default=11.0,
-        help="max minutes to poll for an imminent release (default: 11)",
+        "--min-samples", type=int, default=3,
+        help="minimum files required to report a measurement (default: 3)",
     )
     args = parser.parse_args(argv)
 
@@ -478,11 +426,7 @@ def main(argv: list[str] | None = None) -> int:
         spec = PRODUCTS[key]
         configured = extract_timing(spec.class_name, registry)
         measurements.append(
-            measure(
-                spec, configured, now,
-                poll=not args.no_poll,
-                max_poll_wait=timedelta(minutes=args.max_poll_wait),
-            )
+            measure(spec, configured, now, samples=args.samples, min_samples=args.min_samples)
         )
 
     report = "\n".join(_report_lines(measurements, grace))

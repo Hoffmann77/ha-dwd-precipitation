@@ -1,8 +1,9 @@
 """Tests for scripts/check_release_delay.py.
 
-Network-free: DWD probing is stubbed with an in-memory availability function.
-Lives in the integration tier because the drift guard imports the real product
-classes to confirm the ``ast`` extractor agrees with the running integration.
+Network-free: DWD is stubbed with an in-memory ``last_modified`` function that
+maps each release URL to a publication time. Lives in the integration tier
+because the drift guard imports the real product classes to confirm the ``ast``
+extractor agrees with the running integration.
 """
 
 from __future__ import annotations
@@ -20,7 +21,6 @@ from scripts.check_release_delay import (
     PRODUCTS,
     Measurement,
     extract_timing,
-    find_frontier,
     measure,
     previous_release,
 )
@@ -32,10 +32,7 @@ UTC = timezone.utc
 # Drift guard: extractor must agree with the real integration constants
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize(
-    "cls",
-    [RadvorRS, RadolanRW, RadolanSF],
-)
+@pytest.mark.parametrize("cls", [RadvorRS, RadolanRW, RadolanSF])
 def test_extract_timing_matches_integration(cls):
     """The ast extractor reproduces each class's resolved RELEASE_* constants."""
     timing = extract_timing(cls.__name__)
@@ -70,52 +67,7 @@ def test_previous_release_five_minute():
 
 
 # ---------------------------------------------------------------------------
-# Frontier detection
-# ---------------------------------------------------------------------------
-
-def _availability(published_upto: datetime, url_for, interval, anchor):
-    """Return an ``available(url)`` that maps a URL back to a timestamp.
-
-    Any release at or before ``published_upto`` is available. URLs are matched
-    by regenerating each candidate timestamp's URL and comparing.
-    """
-    known = {}
-    ts = anchor - 50 * interval
-    while ts <= anchor + 50 * interval:
-        known[url_for(ts)] = ts
-        ts += interval
-
-    def available(url: str) -> bool:
-        return known[url] <= published_upto
-
-    return available
-
-
-def test_find_frontier_walks_back_when_dwd_is_slow():
-    spec = PRODUCTS["rw"]
-    interval = timedelta(hours=1)
-    anchor = datetime(2025, 6, 1, 12, 50, tzinfo=UTC)
-    published = datetime(2025, 6, 1, 10, 50, tzinfo=UTC)
-    available = _availability(published, spec.url_for, interval, anchor)
-
-    # Start optimistically at 12:50 (DWD only up to 10:50) → walk back.
-    frontier = find_frontier(spec.url_for, anchor, interval, available)
-    assert frontier == published
-
-
-def test_find_frontier_walks_forward_when_dwd_is_fast():
-    spec = PRODUCTS["rw"]
-    interval = timedelta(hours=1)
-    anchor = datetime(2025, 6, 1, 12, 50, tzinfo=UTC)
-    published = datetime(2025, 6, 1, 14, 50, tzinfo=UTC)
-    available = _availability(published, spec.url_for, interval, anchor)
-
-    frontier = find_frontier(spec.url_for, anchor, interval, available)
-    assert frontier == published
-
-
-# ---------------------------------------------------------------------------
-# Measurement + classification (window fallback, no polling)
+# Measurement helpers
 # ---------------------------------------------------------------------------
 
 def _configured(interval, delay, offset):
@@ -126,105 +78,121 @@ def _configured(interval, delay, offset):
     }
 
 
-def test_measure_window_ok_when_delay_matches():
-    spec = PRODUCTS["rw"]
-    interval = timedelta(hours=1)
-    delay = timedelta(minutes=28)
-    offset = timedelta(minutes=50)
+def _publisher(spec, interval, offset, real_delay, published_before, extra=None):
+    """Return a ``last_modified(url)`` mapping each release URL to a publish time.
 
-    # now = 13:18 → frontier 12:50 was published, 13:50 not yet.
-    now = datetime(2025, 6, 1, 13, 18, tzinfo=UTC)
-    published = datetime(2025, 6, 1, 12, 50, tzinfo=UTC)
-    available = _availability(published, spec.url_for, interval, now.replace(minute=50))
+    A file exists (has a Last-Modified) only if its publish time is at or before
+    ``published_before``. ``extra`` overrides the per-timestamp delay to inject
+    jitter. The schedule grid is precomputed so URLs resolve exactly.
+    """
+    extra = extra or {}
+    ts_of: dict[str, datetime] = {}
+    base = previous_release(published_before, interval, offset)
+    for i in range(-2, 200):  # a couple ahead of now, plenty behind
+        cand = base - i * interval
+        ts_of[spec.url_for(cand)] = cand
 
-    m = measure(spec, _configured(interval, delay, offset), now, available=available, poll=False)
+    def last_modified(url: str) -> datetime | None:
+        ts = ts_of[url]
+        publish = ts + extra.get(ts, real_delay)
+        return publish if publish <= published_before else None
 
-    assert m.error is None
-    assert m.frontier == published
-    # window: (now-13:50, now-12:50) = (-32m, 28m); midpoint = -2m.
-    assert m.observed == timedelta(minutes=-2)
-    assert m.uncertainty == interval / 2
-    # 28m configured vs -2m observed → deviation 30m ≤ tol (30m + grace).
-    assert m.status(timedelta(minutes=5)) == "OK"
-
-
-def test_measure_flags_drift_beyond_tolerance():
-    """A frontier far older than configured delay → deviation exceeds tolerance."""
-    spec = PRODUCTS["rw"]
-    interval = timedelta(hours=1)
-    offset = timedelta(minutes=50)
-    delay = timedelta(minutes=28)
-
-    # DWD is badly behind: newest published release is 3h before configured.
-    now = datetime(2025, 6, 1, 13, 18, tzinfo=UTC)
-    published = datetime(2025, 6, 1, 9, 50, tzinfo=UTC)
-    available = _availability(published, spec.url_for, interval, now.replace(minute=50))
-
-    m = measure(spec, _configured(interval, delay, offset), now, available=available, poll=False)
-
-    # frontier 9:50 → window (now-10:50, now-9:50) = (2h28m, 3h28m), midpoint 2h58m.
-    assert m.observed == timedelta(hours=2, minutes=58)
-    # deviation |28m - 2h58m| = 2h30m ≫ tol (30m + 5m) → DRIFT.
-    assert m.status(timedelta(minutes=5)) == "DRIFT"
+    return last_modified
 
 
-class _FakeClock:
-    """Monotonic clock that only advances when sleep() is called."""
+# ---------------------------------------------------------------------------
+# Measurement + classification
+# ---------------------------------------------------------------------------
 
-    def __init__(self):
-        self.t = 0.0
-
-    def monotonic(self) -> float:
-        return self.t
-
-    def sleep(self, seconds: float) -> None:
-        self.t += seconds
-
-
-def test_measure_exact_samples_average():
-    """With polling, consecutive appearances are averaged and uncertainty is 0."""
+def test_measure_averages_observed_delay():
+    """Mean of the per-file (Last-Modified − nominal) deltas is the observed delay."""
     spec = PRODUCTS["rs"]
     interval = timedelta(minutes=5)
     delay = timedelta(minutes=4, seconds=10)
     offset = timedelta()
+    now = datetime(2025, 6, 1, 13, 7, tzinfo=UTC)
 
-    now = datetime(2025, 6, 1, 13, 4, 10, tzinfo=UTC)
-    ts_of = {}
-    base = previous_release(now, interval, offset)  # align grid to the :00/:05… schedule
-    ts = base - 30 * interval
-    while ts <= base + 30 * interval:
-        ts_of[spec.url_for(ts)] = ts
-        ts += interval
-
-    # Frontier 13:00 already up; 13:05 appears exactly at 13:09:10 (delay 4m10s).
-    published = {"upto": datetime(2025, 6, 1, 13, 0, tzinfo=UTC)}
-    wall = {"t": now}
-    clock = _FakeClock()
-
-    ts_1305 = datetime(2025, 6, 1, 13, 5, tzinfo=UTC)
-
-    def available(url: str) -> bool:
-        # Model 13:05 landing at 13:09:10 by keying its arrival to the fake clock:
-        # after ~5 minutes of polling it becomes available and wall-time is 13:09:10.
-        if ts_of[url] == ts_1305 and clock.t >= 5 * 60 and published["upto"] < ts_1305:
-            published["upto"] = ts_1305
-            wall["t"] = datetime(2025, 6, 1, 13, 9, 10, tzinfo=UTC)
-        return ts_of[url] <= published["upto"]
-
-    m = measure(
-        spec, _configured(interval, delay, offset), now,
-        available=available, poll=True,
-        max_poll_wait=timedelta(minutes=11),
-        sleep=clock.sleep,
-        monotonic=clock.monotonic,
-        wall_now=lambda: wall["t"],
-    )
+    lm = _publisher(spec, interval, offset, real_delay=delay, published_before=now)
+    m = measure(spec, _configured(interval, delay, offset), now, last_modified=lm, samples=5)
 
     assert m.error is None
-    assert m.exact_samples  # captured at least one appearance
-    assert m.uncertainty == timedelta()
-    assert m.observed == timedelta(minutes=4, seconds=10)
+    assert len(m.deltas) == 5
+    assert m.observed == delay
     assert m.status(timedelta(minutes=5)) == "OK"
+
+
+def test_measure_averages_jittered_delay():
+    """Averaging smooths per-file jitter around the true delay."""
+    spec = PRODUCTS["rs"]
+    interval = timedelta(minutes=5)
+    delay = timedelta(minutes=4, seconds=10)
+    offset = timedelta()
+    now = datetime(2025, 6, 1, 13, 7, tzinfo=UTC)
+
+    # Two files late by 10s, two early by 10s → mean unchanged.
+    r0 = previous_release(now, interval, offset) - interval  # first published slot
+    jitter = {
+        r0: delay + timedelta(seconds=10),
+        r0 - interval: delay - timedelta(seconds=10),
+        r0 - 2 * interval: delay + timedelta(seconds=10),
+        r0 - 3 * interval: delay - timedelta(seconds=10),
+    }
+    lm = _publisher(spec, interval, offset, real_delay=delay, published_before=now, extra=jitter)
+    m = measure(spec, _configured(interval, delay, offset), now, last_modified=lm, samples=4)
+
+    assert len(m.deltas) == 4
+    assert m.observed == delay
+    assert m.stdev > timedelta()  # jitter is visible in the spread
+
+
+def test_measure_flags_drift_when_dwd_is_slower():
+    """A real delay far above configured is caught as DRIFT."""
+    spec = PRODUCTS["rw"]
+    interval = timedelta(hours=1)
+    offset = timedelta(minutes=50)
+    configured_delay = timedelta(minutes=28)
+    real_delay = timedelta(minutes=45)  # DWD 17 min slower than configured
+    now = datetime(2025, 6, 1, 14, 0, tzinfo=UTC)
+
+    lm = _publisher(spec, interval, offset, real_delay=real_delay, published_before=now)
+    m = measure(spec, _configured(interval, configured_delay, offset), now, last_modified=lm, samples=6)
+
+    assert m.observed == real_delay
+    assert m.deviation == timedelta(minutes=17)
+    assert m.status(timedelta(minutes=5)) == "DRIFT"
+
+
+def test_measure_skips_unpublished_newest_slots():
+    """Newest slots not yet published are skipped; the average uses real files."""
+    spec = PRODUCTS["rs"]
+    interval = timedelta(minutes=5)
+    delay = timedelta(minutes=4, seconds=10)
+    offset = timedelta()
+    now = datetime(2025, 6, 1, 13, 7, tzinfo=UTC)
+
+    # previous_release(now) = 13:05, which would publish at 13:09:10 > now → 404.
+    lm = _publisher(spec, interval, offset, real_delay=delay, published_before=now)
+    newest = previous_release(now, interval, offset)
+    assert lm(spec.url_for(newest)) is None  # 13:05 not up yet
+
+    m = measure(spec, _configured(interval, delay, offset), now, last_modified=lm, samples=3)
+    assert m.error is None
+    assert all(d == delay for d in m.deltas)
+
+
+def test_measure_insufficient_samples_errors():
+    spec = PRODUCTS["rs"]
+    interval = timedelta(minutes=5)
+    delay = timedelta(minutes=4, seconds=10)
+    now = datetime(2025, 6, 1, 13, 7, tzinfo=UTC)
+
+    m = measure(
+        spec, _configured(interval, delay, timedelta()), now,
+        last_modified=lambda _url: None, samples=5, min_samples=3,
+    )
+    assert m.observed is None
+    assert m.status(timedelta(minutes=5)) == "ERROR"
+    assert "need 3" in m.error
 
 
 def test_measurement_status_error():
