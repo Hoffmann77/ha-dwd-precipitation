@@ -29,7 +29,11 @@ rolling window of them, so this is a stable central estimate rather than a
 single noisy probe. No polling or waiting: every sample is an exact, already
 published fact.
 
-A product is flagged when ``|configured − mean(observed)| > grace``.
+A product is flagged when the mean observed delay exceeds the configured
+``RELEASE_DELAY`` (by more than ``--grace``): that is the harmful direction —
+DWD publishing later than the coordinator waits, so it fetches too early and
+404s until the file appears. DWD being *faster* than configured is only a small
+latency cost and is not flagged.
 
 Exit status: ``0`` all products within tolerance, ``1`` at least one drifted,
 ``2`` a product could not be measured (too few files / network error).
@@ -292,15 +296,20 @@ class Measurement:
         return timedelta(seconds=statistics.stdev(d.total_seconds() for d in self.deltas))
 
     @property
-    def deviation(self) -> timedelta | None:
+    def overrun(self) -> timedelta | None:
+        """Signed amount the mean delay runs past the configured delay.
+
+        Positive = DWD slower than the coordinator waits (the harmful case);
+        negative = DWD publishes earlier than configured.
+        """
         if self.observed is None:
             return None
-        return abs(self.configured - self.observed)
+        return self.observed - self.configured
 
     def status(self, grace: timedelta) -> str:
         if self.error is not None or self.observed is None:
             return "ERROR"
-        return "OK" if self.deviation <= grace else "DRIFT"
+        return "DRIFT" if self.overrun > grace else "OK"
 
 
 def measure(
@@ -366,13 +375,13 @@ def _fmt(td: timedelta | None) -> str:
 
 
 def _report_lines(measurements: list[Measurement], grace: timedelta) -> list[str]:
-    header = f"{'product':<8}{'status':<8}{'configured':>12}{'observed':>12}{'deviation':>12}{'grace':>10}"
+    header = f"{'product':<8}{'status':<8}{'configured':>12}{'observed':>12}{'overrun':>12}{'grace':>10}"
     lines = [header, "-" * len(header)]
     for m in measurements:
         lines.append(
             f"{m.key:<8}{m.status(grace):<8}"
             f"{_fmt(m.configured):>12}{_fmt(m.observed):>12}"
-            f"{_fmt(m.deviation):>12}{_fmt(grace):>10}"
+            f"{_fmt(m.overrun):>12}{_fmt(grace):>10}"
         )
         if m.error:
             lines.append(f"         └ error: {m.error}")
@@ -405,7 +414,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--grace", type=float, default=5.0,
-        help="allowed deviation of the mean observed delay, in minutes (default: 5)",
+        help="minutes the mean delay may exceed the configured RELEASE_DELAY "
+             "before flagging, absorbing normal jitter and fast-poll slack (default: 5)",
     )
     parser.add_argument(
         "--samples", type=int, default=24,

@@ -64,8 +64,9 @@ latest = floor((now - RELEASE_DELAY) / RELEASE_INTERVAL) * RELEASE_INTERVAL + RE
 `scripts/check_release_delay.py` (run by `.github/workflows/release-delay.yml`,
 scheduled) averages the *observed* availability delay across a rolling window of
 recent files — for each file, its `Last-Modified` header (authoritative GMT)
-minus the nominal timestamp in its name — and flags any product whose real
-publication lag drifts too far from its configured `RELEASE_DELAY`. It reads the
+minus the nominal timestamp in its name — and flags (opens a tracking issue for)
+any product whose mean lag exceeds its configured `RELEASE_DELAY` — the harmful
+direction, where the coordinator fetches before DWD has published. It reads the
 constants straight from the source with `ast` (no HA import), so the configured
 value is the single source of truth.
 

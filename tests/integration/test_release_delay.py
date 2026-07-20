@@ -158,8 +158,41 @@ def test_measure_flags_drift_when_dwd_is_slower():
     m = measure(spec, _configured(interval, configured_delay, offset), now, last_modified=lm, samples=6)
 
     assert m.observed == real_delay
-    assert m.deviation == timedelta(minutes=17)
+    assert m.overrun == timedelta(minutes=17)
     assert m.status(timedelta(minutes=5)) == "DRIFT"
+
+
+def test_measure_faster_dwd_not_flagged():
+    """DWD publishing earlier than configured is a negative overrun → OK."""
+    spec = PRODUCTS["rw"]
+    interval = timedelta(hours=1)
+    offset = timedelta(minutes=50)
+    configured_delay = timedelta(minutes=28)
+    real_delay = timedelta(minutes=20)  # 8 min faster than configured
+    now = datetime(2025, 6, 1, 14, 0, tzinfo=UTC)
+
+    lm = _publisher(spec, interval, offset, real_delay=real_delay, published_before=now)
+    m = measure(spec, _configured(interval, configured_delay, offset), now, last_modified=lm, samples=6)
+
+    assert m.observed == real_delay
+    assert m.overrun == timedelta(minutes=-8)
+    assert m.status(timedelta(minutes=5)) == "OK"
+
+
+def test_measure_small_overrun_within_grace_not_flagged():
+    """A mean delay a little past configured, but within grace, is not flagged."""
+    spec = PRODUCTS["rw"]
+    interval = timedelta(hours=1)
+    offset = timedelta(minutes=50)
+    configured_delay = timedelta(minutes=28)
+    real_delay = timedelta(minutes=31)  # 3 min over, grace is 5
+    now = datetime(2025, 6, 1, 14, 0, tzinfo=UTC)
+
+    lm = _publisher(spec, interval, offset, real_delay=real_delay, published_before=now)
+    m = measure(spec, _configured(interval, configured_delay, offset), now, last_modified=lm, samples=6)
+
+    assert m.overrun == timedelta(minutes=3)
+    assert m.status(timedelta(minutes=5)) == "OK"
 
 
 def test_measure_skips_unpublished_newest_slots():
@@ -199,4 +232,4 @@ def test_measurement_status_error():
     m = Measurement("rw", "RadolanRW", timedelta(minutes=28), timedelta(hours=1))
     m.error = "boom"
     assert m.status(timedelta(minutes=5)) == "ERROR"
-    assert m.deviation is None
+    assert m.overrun is None
