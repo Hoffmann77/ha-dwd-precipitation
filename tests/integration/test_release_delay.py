@@ -179,6 +179,26 @@ def test_measure_faster_dwd_not_flagged():
     assert m.status(timedelta(minutes=5)) == "OK"
 
 
+def test_measure_strict_flags_any_overrun():
+    """With grace=0 (the default), a mean even seconds past configured flags."""
+    spec = PRODUCTS["rw"]
+    interval = timedelta(hours=1)
+    offset = timedelta(minutes=50)
+    configured_delay = timedelta(minutes=28)
+    now = datetime(2025, 6, 1, 14, 0, tzinfo=UTC)
+
+    # 30 s over configured → flagged; exactly equal → OK (strictly "exceeds").
+    over = _publisher(spec, interval, offset, configured_delay + timedelta(seconds=30), now)
+    m_over = measure(spec, _configured(interval, configured_delay, offset), now, last_modified=over, samples=6)
+    assert m_over.overrun == timedelta(seconds=30)
+    assert m_over.status(timedelta()) == "DRIFT"
+
+    equal = _publisher(spec, interval, offset, configured_delay, now)
+    m_equal = measure(spec, _configured(interval, configured_delay, offset), now, last_modified=equal, samples=6)
+    assert m_equal.overrun == timedelta()
+    assert m_equal.status(timedelta()) == "OK"
+
+
 def test_measure_small_overrun_within_grace_not_flagged():
     """A mean delay a little past configured, but within grace, is not flagged."""
     spec = PRODUCTS["rw"]

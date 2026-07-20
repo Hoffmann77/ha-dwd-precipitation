@@ -65,8 +65,9 @@ latest = floor((now - RELEASE_DELAY) / RELEASE_INTERVAL) * RELEASE_INTERVAL + RE
 scheduled) averages the *observed* availability delay across a rolling window of
 recent files — for each file, its `Last-Modified` header (authoritative GMT)
 minus the nominal timestamp in its name — and flags (opens a tracking issue for)
-any product whose mean lag exceeds its configured `RELEASE_DELAY` — the harmful
-direction, where the coordinator fetches before DWD has published. It reads the
+any product the instant its mean lag exceeds its configured `RELEASE_DELAY` —
+the harmful direction, where the coordinator fetches before DWD has published
+(`--grace` defaults to 0). It reads the
 constants straight from the source with `ast` (no HA import), so the configured
 value is the single source of truth.
 

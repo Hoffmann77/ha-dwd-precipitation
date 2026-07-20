@@ -29,8 +29,8 @@ rolling window of them, so this is a stable central estimate rather than a
 single noisy probe. No polling or waiting: every sample is an exact, already
 published fact.
 
-A product is flagged when the mean observed delay exceeds the configured
-``RELEASE_DELAY`` (by more than ``--grace``): that is the harmful direction —
+A product is flagged the instant the mean observed delay exceeds the configured
+``RELEASE_DELAY`` (``--grace`` defaults to 0): that is the harmful direction —
 DWD publishing later than the coordinator waits, so it fetches too early and
 404s until the file appears. DWD being *faster* than configured is only a small
 latency cost and is not flagged.
@@ -413,9 +413,9 @@ def main(argv: list[str] | None = None) -> int:
         help="products to check (default: all probeable products)",
     )
     parser.add_argument(
-        "--grace", type=float, default=5.0,
+        "--grace", type=float, default=0.0,
         help="minutes the mean delay may exceed the configured RELEASE_DELAY "
-             "before flagging, absorbing normal jitter and fast-poll slack (default: 5)",
+             "before flagging (default: 0 — flag the instant it is exceeded)",
     )
     parser.add_argument(
         "--samples", type=int, default=24,
