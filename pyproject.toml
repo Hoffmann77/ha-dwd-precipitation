@@ -22,7 +22,7 @@ unit-test = [
     "numpy==2.3.2",
     "h5py==3.16.0",
     "requests==2.34.2",
-    #"aiohttp==3.14.1",
+    "aiohttp==3.14.1",
 ]
 # Installs only HA-compatible packages — validates the component runs in the
 # same environment HA uses (same Python version, same numpy/h5py pins).
