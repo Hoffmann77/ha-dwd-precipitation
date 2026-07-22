@@ -15,15 +15,22 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import UnitOfPrecipitationDepth, UnitOfTime
+from homeassistant.const import (
+    UnitOfPrecipitationDepth,
+    UnitOfTime,
+    UnitOfVolumetricFlux,
+)
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from homeassistant.util import dt as dt_util
 
-from .const import CONF_EXTRA_ATTRIBUTES, DOMAIN
-from .coordinator import BaseProductUpdateCoordinator, ProductMetadata
+from .const import (
+    CONF_EXTRA_ATTRIBUTES,
+    CONF_START_END_MODE,
+    DEFAULT_START_END_MODE,
+    START_END_MODE_DURATION,
+)
+from .coordinator import ProductMetadata
+from .entity import DwdCoordinatorEntity
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -34,6 +41,9 @@ class PrecipitationSensorEntityDescription(SensorEntityDescription):
 
     product_key: str
     access_fn: Callable[[Any], Any]
+    # Optional companion attributes, computed from the coordinator data payload.
+    # Always exposed (not gated behind the diagnostic-attributes option).
+    attrs_fn: Callable[[Any], dict[str, Any]] | None = None
 
 
 RADOLAN_SENSORS = (
@@ -104,6 +114,8 @@ RADVOR_SENSORS = (
 )
 
 
+# RV sensors whose shape does not depend on the start/end display mode: the two
+# hourly totals and the two peak-intensity sensors.
 RADVOR_RV_SENSORS = (
     PrecipitationSensorEntityDescription(
         key="radvor_rv_060",
@@ -126,38 +138,80 @@ RADVOR_RV_SENSORS = (
         access_fn=lambda d: d["rv_120"],
     ),
     PrecipitationSensorEntityDescription(
-        key="rv_precipitation_start_in",
-        name="Precipitation start in",
-        native_unit_of_measurement=UnitOfTime.MINUTES,
-        device_class=SensorDeviceClass.DURATION,
+        key="radvor_rv_max_intensity_060",
+        name="Max precipitation intensity +1 hour (RV)",
+        native_unit_of_measurement=UnitOfVolumetricFlux.MILLIMETERS_PER_HOUR,
+        device_class=SensorDeviceClass.PRECIPITATION_INTENSITY,
+        suggested_display_precision=1,
         state_class=SensorStateClass.MEASUREMENT,
         product_key="rv",
-        access_fn=lambda d: d["start_in"],
+        access_fn=lambda d: d["max_060"],
     ),
     PrecipitationSensorEntityDescription(
-        key="rv_precipitation_start_at",
-        name="Precipitation start at",
-        device_class=SensorDeviceClass.TIMESTAMP,
-        product_key="rv",
-        access_fn=lambda d: d["start_at"],
-    ),
-    PrecipitationSensorEntityDescription(
-        key="rv_precipitation_end_in",
-        name="Precipitation end in",
-        native_unit_of_measurement=UnitOfTime.MINUTES,
-        device_class=SensorDeviceClass.DURATION,
+        key="radvor_rv_max_intensity_120",
+        name="Max precipitation intensity +2 hours (RV)",
+        native_unit_of_measurement=UnitOfVolumetricFlux.MILLIMETERS_PER_HOUR,
+        device_class=SensorDeviceClass.PRECIPITATION_INTENSITY,
+        suggested_display_precision=1,
         state_class=SensorStateClass.MEASUREMENT,
         product_key="rv",
-        access_fn=lambda d: d["end_in"],
-    ),
-    PrecipitationSensorEntityDescription(
-        key="rv_precipitation_end_at",
-        name="Precipitation end at",
-        device_class=SensorDeviceClass.TIMESTAMP,
-        product_key="rv",
-        access_fn=lambda d: d["end_at"],
+        access_fn=lambda d: d["max_120"],
     ),
 )
+
+
+def _rv_timing_sensors(
+    mode: str,
+) -> tuple[PrecipitationSensorEntityDescription, ...]:
+    """Return the merged RV start/end sensors for the configured display mode.
+
+    The entity keys are stable across modes so the entity id and unique id
+    survive an options change; only the state representation (and the companion
+    attribute) differs.
+    """
+    if mode == START_END_MODE_DURATION:
+        return (
+            PrecipitationSensorEntityDescription(
+                key="rv_precipitation_start",
+                name="Precipitation start",
+                native_unit_of_measurement=UnitOfTime.MINUTES,
+                device_class=SensorDeviceClass.DURATION,
+                state_class=SensorStateClass.MEASUREMENT,
+                product_key="rv",
+                access_fn=lambda d: d["start_in"],
+                attrs_fn=lambda d: {"at": d["start_at"]},
+            ),
+            PrecipitationSensorEntityDescription(
+                key="rv_precipitation_end",
+                name="Precipitation end",
+                native_unit_of_measurement=UnitOfTime.MINUTES,
+                device_class=SensorDeviceClass.DURATION,
+                state_class=SensorStateClass.MEASUREMENT,
+                product_key="rv",
+                access_fn=lambda d: d["end_in"],
+                attrs_fn=lambda d: {"at": d["end_at"]},
+            ),
+        )
+
+    # Default: absolute timestamp, with the minutes-until value as an attribute.
+    return (
+        PrecipitationSensorEntityDescription(
+            key="rv_precipitation_start",
+            name="Precipitation start",
+            device_class=SensorDeviceClass.TIMESTAMP,
+            product_key="rv",
+            access_fn=lambda d: d["start_at"],
+            attrs_fn=lambda d: {"minutes_until": d["start_in"]},
+        ),
+        PrecipitationSensorEntityDescription(
+            key="rv_precipitation_end",
+            name="Precipitation end",
+            device_class=SensorDeviceClass.TIMESTAMP,
+            product_key="rv",
+            access_fn=lambda d: d["end_at"],
+            attrs_fn=lambda d: {"minutes_until": d["end_in"]},
+        ),
+    )
 
 
 def _plain_value(value: Any) -> Any:
@@ -171,17 +225,6 @@ def _plain_value(value: Any) -> Any:
     return value
 
 
-def _metadata_datetime(metadata: dict[str, Any]) -> datetime | None:
-    """Extract a UTC source timestamp from product metadata."""
-    value = metadata.get("datetime")
-    if isinstance(value, datetime):
-        if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return dt_util.as_utc(value)
-
-    return None
-
-
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -190,7 +233,14 @@ async def async_setup_entry(
     """Set up the sensor platform."""
     coordinators = entry.runtime_data.coordinators
 
-    entity_descriptions = RADVOR_SENSORS + RADVOR_RV_SENSORS + RADOLAN_SENSORS
+    mode = entry.options.get(CONF_START_END_MODE, DEFAULT_START_END_MODE)
+
+    entity_descriptions = (
+        RADVOR_SENSORS
+        + RADVOR_RV_SENSORS
+        + _rv_timing_sensors(mode)
+        + RADOLAN_SENSORS
+    )
 
     async_add_entities(
         PrecipitationSensorEntity(
@@ -201,43 +251,13 @@ async def async_setup_entry(
     )
 
 
-class DwdCoordinatorEntity(CoordinatorEntity[BaseProductUpdateCoordinator]):
-    """Base coordinator entity."""
-
-    entity_description: PrecipitationSensorEntityDescription
-    _attr_has_entity_name = True
-
-    def __init__(
-        self,
-        coordinator: BaseProductUpdateCoordinator,
-        description: PrecipitationSensorEntityDescription,
-    ) -> None:
-        """Initialize the entity."""
-        super().__init__(coordinator)
-        self.entity_description = description
-        self._attr_device_info = DeviceInfo(
-            entry_type=DeviceEntryType.SERVICE,
-            identifiers={(DOMAIN, coordinator.config_entry.entry_id)},
-            name=coordinator.config_entry.title or "DWD Precipitation",
-        )
-
-
 class PrecipitationSensorEntity(DwdCoordinatorEntity, SensorEntity):
     """Implementation of a precipitation sensor."""
 
+    entity_description: PrecipitationSensorEntityDescription
+
     # The 5-minute constituent points would bloat the recorder history.
     _unrecorded_attributes = frozenset({"forecast_5min"})
-
-    def __init__(
-        self,
-        coordinator: BaseProductUpdateCoordinator,
-        description: PrecipitationSensorEntityDescription,
-    ) -> None:
-        """Initialize the sensor entity."""
-        super().__init__(coordinator, description)
-        self._attr_unique_id = (
-            f"{coordinator.config_entry.entry_id}_{description.key}"
-        )
 
     @property
     def native_value(self) -> float | datetime | None:
@@ -252,31 +272,42 @@ class PrecipitationSensorEntity(DwdCoordinatorEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return diagnostic metadata as state attributes."""
-        extra_state_attributes = self.coordinator.config_entry.options.get(
-            CONF_EXTRA_ATTRIBUTES, False
-        )
-        if not extra_state_attributes:
-            return {}
-
+        """Return companion values and, when enabled, diagnostic metadata."""
         if self.coordinator.data is None:
             return {}
+
+        attrs: dict[str, Any] = {}
+
+        # Companion attributes (e.g. the start/end representation not used as the
+        # state) are a feature, so they are always exposed.
+        attrs_fn = self.entity_description.attrs_fn
+        if attrs_fn is not None and self.coordinator.data.data is not None:
+            attrs.update(
+                {
+                    key: _plain_value(value)
+                    for key, value in attrs_fn(self.coordinator.data.data).items()
+                }
+            )
+
+        # Diagnostic metadata is opt-in via the integration options.
+        if not self.coordinator.config_entry.options.get(
+            CONF_EXTRA_ATTRIBUTES, False
+        ):
+            return attrs
 
         metadata: ProductMetadata = self.entity_description.access_fn(
             self.coordinator.data.metadata
         )
         if metadata is None:
-            return {}
+            return attrs
 
-        attrs: dict[str, Any] = {
-            "source_product": metadata.source_product,
-            "source_timestamp": (
-                metadata.source_timestamp.isoformat()
-                if metadata.source_timestamp
-                else None
-            ),
-            "lead_time_minutes": metadata.lead_time_minutes,
-        }
+        attrs["source_product"] = metadata.source_product
+        attrs["source_timestamp"] = (
+            metadata.source_timestamp.isoformat()
+            if metadata.source_timestamp
+            else None
+        )
+        attrs["lead_time_minutes"] = metadata.lead_time_minutes
         if metadata.data_start is not None:
             attrs["data_start"] = metadata.data_start.isoformat()
         if metadata.data_end is not None:

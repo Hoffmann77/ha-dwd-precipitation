@@ -8,6 +8,8 @@ from radar.nowcast import (
     HOUR1_LEADS,
     HOUR2_LEADS,
     LEADS,
+    STEPS_PER_HOUR,
+    bucket_max_intensity,
     bucket_sum,
     detect_start_end,
 )
@@ -42,6 +44,28 @@ def test_bucket_sum_skips_none_but_all_none_is_none():
 
     all_none = [None] * len(LEADS)
     assert bucket_sum(all_none, HOUR1_LEADS) is None
+
+
+# --- bucket_max_intensity ----------------------------------------------
+
+def test_steps_per_hour_is_twelve():
+    assert STEPS_PER_HOUR == 12
+
+
+def test_bucket_max_intensity_extrapolates_peak_to_mm_per_hour():
+    values = _series(**{"5": 0.5, "60": 1.5, "65": 2.0})
+    # HOUR1 peak 1.5 mm/5min → 18 mm/h; HOUR2 peak 2.0 mm/5min → 24 mm/h.
+    assert bucket_max_intensity(values, HOUR1_LEADS) == pytest.approx(18.0)
+    assert bucket_max_intensity(values, HOUR2_LEADS) == pytest.approx(24.0)
+
+
+def test_bucket_max_intensity_skips_none_but_all_none_is_none():
+    values = _series(**{"5": 1.0})
+    values[HOUR1_LEADS[1] // 5] = None  # one hole
+    assert bucket_max_intensity(values, HOUR1_LEADS) == pytest.approx(12.0)
+
+    all_none = [None] * len(LEADS)
+    assert bucket_max_intensity(all_none, HOUR1_LEADS) is None
 
 
 # --- detect_start_end ---------------------------------------------------

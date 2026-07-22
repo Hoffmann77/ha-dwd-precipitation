@@ -18,6 +18,10 @@ from .const import (
     CONF_UNAVAILABLE_WHEN_STALE,
     CONF_RAIN_THRESHOLD,
     DEFAULT_RAIN_THRESHOLD,
+    CONF_START_END_MODE,
+    DEFAULT_START_END_MODE,
+    START_END_MODE_TIMESTAMP,
+    START_END_MODE_DURATION,
 )
 from .radar import rs_grid_contains
 
@@ -52,8 +56,23 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     selector.NumberSelectorConfig(
                         min=0,
                         step=0.1,
-                        unit_of_measurement="mm",
+                        unit_of_measurement="mm/h",
                         mode=selector.NumberSelectorMode.BOX,
+                    )
+                ),
+                vol.Optional(
+                    CONF_START_END_MODE,
+                    default=self.config_entry.options.get(
+                        CONF_START_END_MODE, DEFAULT_START_END_MODE
+                    ),
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=[
+                            START_END_MODE_TIMESTAMP,
+                            START_END_MODE_DURATION,
+                        ],
+                        translation_key=CONF_START_END_MODE,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),
             }

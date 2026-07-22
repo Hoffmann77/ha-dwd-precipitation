@@ -47,10 +47,13 @@ async def test_entry_setup_creates_sensors_with_correct_values(
     rv_data = {
         "rv_060": 4.0,
         "rv_120": 1.0,
+        "max_060": 48.0,
+        "max_120": 12.0,
         "start_in": 0,
         "start_at": ts,
         "end_in": 30,
         "end_at": ts,
+        "rain_within_2h": True,
     }
     rv_meta = {key: rv_timing for key in rv_data}
 
@@ -125,3 +128,23 @@ async def test_entry_setup_creates_sensors_with_correct_values(
     state = hass.states.get(rv_060_entry.entity_id)
     assert state is not None
     assert float(state.state) == approx(4.0)
+
+    # The peak-intensity sensor reports the extrapolated mm/h rate.
+    max_060_entry = next(
+        e
+        for e in ent_reg.entities.values()
+        if e.domain == "sensor" and e.unique_id.endswith("radvor_rv_max_intensity_060")
+    )
+    state = hass.states.get(max_060_entry.entity_id)
+    assert state is not None
+    assert float(state.state) == approx(48.0)
+
+    # The new binary-sensor platform wires up and reflects rain_within_2h.
+    rain_entry = next(
+        e
+        for e in ent_reg.entities.values()
+        if e.domain == "binary_sensor" and e.unique_id.endswith("rv_rain_within_2h")
+    )
+    state = hass.states.get(rain_entry.entity_id)
+    assert state is not None
+    assert state.state == "on"
