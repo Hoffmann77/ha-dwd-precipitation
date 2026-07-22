@@ -17,6 +17,10 @@ LEAD_STEP = 5
 MAX_LEAD = 120
 LEADS = list(range(0, MAX_LEAD + 1, LEAD_STEP))  # [0, 5, ..., 120] → 25 entries
 
+# Number of 5-minute steps per hour — the factor to turn a 5-minute
+# accumulation (mm) into an intensity rate (mm/h).
+STEPS_PER_HOUR = 60 // LEAD_STEP  # 12
+
 # Lead lists for the two hourly comparison buckets (matching the RS product).
 HOUR1_LEADS = list(range(LEAD_STEP, 60 + 1, LEAD_STEP))   # 5..60   → [T, T+60]
 HOUR2_LEADS = list(range(60 + LEAD_STEP, 120 + 1, LEAD_STEP))  # 65..120 → [T+60, T+120]
@@ -41,6 +45,26 @@ def bucket_sum(values: list[float | None], leads: list[int]) -> float | None:
     if not present:
         return None
     return float(sum(present))
+
+
+def bucket_max_intensity(
+    values: list[float | None], leads: list[int]
+) -> float | None:
+    """Return the peak intensity (mm/h) over the given lead minutes.
+
+    ``values`` is aligned to :data:`LEADS` and holds 5-minute accumulations
+    (mm). Each is extrapolated to an hourly rate via :data:`STEPS_PER_HOUR`, and
+    the maximum is returned. ``None`` entries (nodata) are skipped; the result is
+    ``None`` only when *every* constituent is missing.
+    """
+    present = [
+        values[lead // LEAD_STEP]
+        for lead in leads
+        if values[lead // LEAD_STEP] is not None
+    ]
+    if not present:
+        return None
+    return float(max(present)) * STEPS_PER_HOUR
 
 
 def detect_start_end(
