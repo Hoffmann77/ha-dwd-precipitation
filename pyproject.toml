@@ -6,23 +6,15 @@ requires-python = ">=3.14.2"
 [tool.uv]
 package = false  # not a distributable Python package; test in-place via pythonpath
 
-conflicts = [
-    [
-        { group = "unit-test" },
-        { group = "ha-test" },
-        { group = "wradlib-comparison" },
-    ],
-]
-
 [dependency-groups]
 # Minimal deps for parser + live tests — no HA, no wradlib.
 # numpy/aiohttp are pulled so radar/* and utils.py import without HA installed.
 unit-test = [
-    "pytest==9.0.3",
-    "numpy==2.3.2",
-    "h5py==3.16.0",
+    "pytest",
+    "numpy",
+    "aiohttp",
     "requests==2.34.2",
-    "aiohttp==3.14.1",
+    "h5py==3.16.0",
 ]
 # Installs only HA-compatible packages — validates the component runs in the
 # same environment HA uses (same Python version, same numpy/h5py pins).
@@ -33,8 +25,8 @@ ha-test = [
 # Installs wradlib (+ pyproj, scipy, etc.) for parser comparison tests.
 # Kept separate because wradlib's heavy deps are not part of the HA ecosystem.
 wradlib-comparison = [
+    "pytest",
     "wradlib==2.9.5",
-    "pytest==9.0.3",
     "requests==2.34.2",
     "h5py==3.16.0",
 ]
