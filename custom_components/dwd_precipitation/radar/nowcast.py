@@ -31,22 +31,6 @@ def _is_rain(value: float | None, threshold: float) -> bool:
     return value is not None and value > threshold
 
 
-def bucket_sum(values: list[float | None], leads: list[int]) -> float | None:
-    """Sum the cell values for the given lead minutes.
-
-    ``values`` is aligned to :data:`LEADS`. ``None`` entries (nodata) are
-    skipped; the result is ``None`` only when *every* constituent is missing.
-    """
-    present = [
-        values[lead // LEAD_STEP]
-        for lead in leads
-        if values[lead // LEAD_STEP] is not None
-    ]
-    if not present:
-        return None
-    return float(sum(present))
-
-
 def bucket_max_intensity(
     values: list[float | None], leads: list[int]
 ) -> float | None:
