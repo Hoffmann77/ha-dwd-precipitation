@@ -51,7 +51,7 @@ async def test_rs_fetch_derives_base_source_timestamp_and_window() -> None:
             "async_get",
             new=AsyncMock(return_value=AsyncResponse(content=make_rs_tar(ts))),
         ),
-        patch.object(products, "read_odim_composite", side_effect=lambda _f: next(reads)),
+        patch.object(products, "read_odim_composite", side_effect=lambda _f, **_kw: next(reads)),
     ):
         _data, meta = await coord._fetch_and_parse(ts)
 
@@ -98,7 +98,7 @@ async def test_rv_fetch_derives_buckets_and_timing() -> None:
             "async_get",
             new=AsyncMock(return_value=AsyncResponse(content=make_rv_tar(ts))),
         ),
-        patch.object(products, "read_odim_composite", side_effect=lambda _f: next(reads)),
+        patch.object(products, "read_odim_composite", side_effect=lambda _f, **_kw: next(reads)),
     ):
         data, meta = await coord._fetch_and_parse(ts)
 
@@ -158,7 +158,7 @@ async def test_rv_threshold_from_options_suppresses_light_rain() -> None:
             "async_get",
             new=AsyncMock(return_value=AsyncResponse(content=make_rv_tar(ts))),
         ),
-        patch.object(products, "read_odim_composite", side_effect=lambda _f: next(reads)),
+        patch.object(products, "read_odim_composite", side_effect=lambda _f, **_kw: next(reads)),
     ):
         data, _meta = await coord._fetch_and_parse(ts)
 
@@ -195,7 +195,7 @@ async def test_rv_threshold_is_interpreted_as_mm_per_hour() -> None:
             "async_get",
             new=AsyncMock(return_value=AsyncResponse(content=make_rv_tar(ts))),
         ),
-        patch.object(products, "read_odim_composite", side_effect=lambda _f: next(reads)),
+        patch.object(products, "read_odim_composite", side_effect=lambda _f, **_kw: next(reads)),
     ):
         data, _meta = await coord._fetch_and_parse(ts)
 

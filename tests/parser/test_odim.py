@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from radar.odim import (
+    RS_GRID_SHAPE,
     RS_WHERE,
     _lonlat_to_xy,
     _parse_proj_param,
@@ -11,7 +12,12 @@ from radar.odim import (
     read_odim_composite,
 )
 
-from tests.factories.odim import make_odim_h5
+from tests.factories.odim import (
+    make_odim_external_link,
+    make_odim_h5,
+    make_odim_soft_link,
+    make_odim_virtual_dataset,
+)
 
 _PROJDEF = RS_WHERE["projdef"]
 _X_0 = 543196.83521776402
@@ -135,3 +141,43 @@ def test_bytes_projdef_roundtrip():
     data, _dataset_what = read_odim_composite(buf)
     assert data.shape == (5, 5)
     assert not np.isnan(data[1, 0])
+
+
+# ===========================================================================
+# Group 5 — untrusted-file hardening
+# ===========================================================================
+
+def test_external_link_payload_rejected():
+    """A payload dataset that is an HDF5 external link must be refused, not followed."""
+    with pytest.raises(ValueError, match="non-hard link"):
+        read_odim_composite(make_odim_external_link())
+
+
+def test_soft_link_payload_rejected():
+    """A payload dataset that is a soft link must be refused."""
+    with pytest.raises(ValueError, match="non-hard link"):
+        read_odim_composite(make_odim_soft_link())
+
+
+def test_virtual_dataset_rejected():
+    """A virtual dataset (data sourced from other files) must be refused."""
+    with pytest.raises(ValueError, match="virtual dataset"):
+        read_odim_composite(make_odim_virtual_dataset())
+
+
+def test_unexpected_shape_rejected():
+    """When expected_shape is pinned, a wrong-sized grid is refused before the read."""
+    buf = make_odim_h5(shape=(5, 5))
+    with pytest.raises(ValueError, match="Unexpected composite shape"):
+        read_odim_composite(buf, expected_shape=RS_GRID_SHAPE)
+
+
+def test_matching_shape_accepted():
+    """A file matching the pinned shape parses normally."""
+    buf = make_odim_h5(shape=(4, 6))
+    data, _ = read_odim_composite(buf, expected_shape=(4, 6))
+    assert data.shape == (4, 6)
+
+
+def test_rs_grid_shape_constant():
+    assert RS_GRID_SHAPE == (RS_WHERE["ysize"], RS_WHERE["xsize"]) == (1200, 1100)

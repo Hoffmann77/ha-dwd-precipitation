@@ -65,6 +65,61 @@ def make_odim_h5(shape=(5, 5), gain=0.001, offset=-0.001, nodata=4294967295,
     return buf
 
 
+def _base_groups(f, shape):
+    """Populate the /what and /dataset*/what groups shared by every RS file."""
+    d1w = f.create_group("dataset1/what")
+    d1w.attrs["product"]   = np.bytes_(b"MAX")
+    d1w.attrs["prodname"]  = np.bytes_(b"RS_top_view")
+    d1w.attrs["startdate"] = np.bytes_(b"20260518")
+    d1w.attrs["starttime"] = np.bytes_(b"150000")
+    d1w.attrs["enddate"]   = np.bytes_(b"20260518")
+    d1w.attrs["endtime"]   = np.bytes_(b"160000")
+
+    dw = f.create_group("dataset1/data1/what")
+    dw.attrs["quantity"] = np.bytes_(b"ACRR")
+    dw.attrs["gain"]     = np.float64(0.001)
+    dw.attrs["offset"]   = np.float64(-0.001)
+    dw.attrs["nodata"]   = np.float64(4294967295)
+    dw.attrs["undetect"] = np.float64(0.0)
+
+
+def make_odim_external_link(shape=(5, 5)):
+    """ODIM file whose payload dataset is an HDF5 external link to another file.
+
+    Dereferencing it would make libhdf5 open ``evil.h5`` on disk; a safe reader
+    must reject it without following the link. The target need not exist.
+    """
+    buf = io.BytesIO()
+    with h5py.File(buf, "w") as f:
+        _base_groups(f, shape)
+        f["dataset1/data1/data"] = h5py.ExternalLink("evil.h5", "/payload")
+    buf.seek(0)
+    return buf
+
+
+def make_odim_soft_link(shape=(5, 5)):
+    """ODIM file whose payload dataset is a soft link redirecting elsewhere."""
+    buf = io.BytesIO()
+    with h5py.File(buf, "w") as f:
+        _base_groups(f, shape)
+        f.create_dataset("decoy", data=np.zeros(shape, dtype=np.uint32))
+        f["dataset1/data1/data"] = h5py.SoftLink("/decoy")
+    buf.seek(0)
+    return buf
+
+
+def make_odim_virtual_dataset(shape=(5, 5)):
+    """ODIM file whose payload is a virtual dataset sourced from another file."""
+    buf = io.BytesIO()
+    with h5py.File(buf, "w") as f:
+        _base_groups(f, shape)
+        layout = h5py.VirtualLayout(shape=shape, dtype="uint32")
+        layout[...] = h5py.VirtualSource("evil.h5", "payload", shape=shape)
+        f.create_virtual_dataset("dataset1/data1/data", layout)
+    buf.seek(0)
+    return buf
+
+
 def make_rs_tar(ts: datetime) -> bytes:
     """Build an in-memory RS tar with the three lead-time members (dummy payloads).
 
