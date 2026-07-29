@@ -19,11 +19,11 @@ CONF_EXTRA_ATTRIBUTES = "extra_state_attributes"
 
 CONF_UNAVAILABLE_WHEN_STALE = "unavailable_when_stale"
 
-CONF_RAIN_THRESHOLD = "rain_threshold"
+CONF_PRECIPITATION_THRESHOLD = "precipitation_threshold"
 
 # Rain intensity (mm/h) above which a cell counts as raining for the RV
 # start/end detection. 0.0 = any DWD-detected precipitation.
-DEFAULT_RAIN_THRESHOLD = 0.0
+DEFAULT_PRECIPITATION_THRESHOLD = 0.0
 
 CONF_START_END_MODE = "start_end_mode"
 
@@ -34,7 +34,7 @@ START_END_MODE_TIMESTAMP = "timestamp"
 START_END_MODE_DURATION = "duration"
 DEFAULT_START_END_MODE = START_END_MODE_TIMESTAMP
 
-CONF_RAIN_END_ALGORITHM = "rain_end_algorithm"
+CONF_PRECIPITATION_END_ALGORITHM = "precipitation_end_algorithm"
 
 # Which algorithm derives the RV "precipitation end" from the 5-minute forecast
 # series. The accepted values are owned by radar.nowcast so the pure detector
@@ -43,12 +43,12 @@ CONF_RAIN_END_ALGORITHM = "rain_end_algorithm"
 # "clearing" = when no more rain is forecast within the 2-hour horizon.
 RAIN_END_ALGO_EPISODE = END_ALGO_EPISODE
 RAIN_END_ALGO_CLEARING = END_ALGO_CLEARING
-DEFAULT_RAIN_END_ALGORITHM = DEFAULT_END_ALGO
+DEFAULT_PRECIPITATION_END_ALGORITHM = DEFAULT_END_ALGO
 
-CONF_DRY_STREAK_THRESHOLD = "dry_streak_threshold"
+CONF_PRECIPITATION_RESET_THRESHOLD = "precipitation_reset_threshold"
 
 # mm; "Precipitation now" at/above this value resets the dry streak counter.
-DEFAULT_DRY_STREAK_THRESHOLD = 1.0
+DEFAULT_PRECIPITATION_RESET_THRESHOLD = 1.0
 
 # HymecNG precipitation-type classes, indexed by the DWD class value (0..10) as
 # defined by the ODIM legend embedded in the composite. These are the possible

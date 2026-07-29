@@ -14,7 +14,7 @@ import pytest
 from custom_components.dwd_precipitation import sensor as sensor_module
 from custom_components.dwd_precipitation.const import (
     CONF_EXTRA_ATTRIBUTES,
-    CONF_DRY_STREAK_THRESHOLD,
+    CONF_PRECIPITATION_RESET_THRESHOLD,
     START_END_MODE_DURATION,
     START_END_MODE_TIMESTAMP,
 )
@@ -30,7 +30,7 @@ from custom_components.dwd_precipitation.dry_streak import (
 )
 from homeassistant.components.sensor import SensorDeviceClass
 from custom_components.dwd_precipitation.sensor import (
-    DaysWithoutRainSensor,
+    TimespanWithoutPrecipitationSensor,
     PrecipitationSensorEntity,
     PrecipitationSensorEntityDescription,
     _rv_timing_sensors,
@@ -106,20 +106,20 @@ def test_native_value_uses_access_fn():
 
 
 # ===========================================================================
-# DaysWithoutRainSensor
+# TimespanWithoutPrecipitationSensor
 # ===========================================================================
 
 def _make_days_sensor(
     dry_since=None, rs_list=None, meta_list=None, threshold=1.0
-) -> DaysWithoutRainSensor:
-    """Build a DaysWithoutRainSensor with a stubbed rs coordinator."""
-    sensor = DaysWithoutRainSensor.__new__(DaysWithoutRainSensor)
+) -> TimespanWithoutPrecipitationSensor:
+    """Build a TimespanWithoutPrecipitationSensor with a stubbed rs coordinator."""
+    sensor = TimespanWithoutPrecipitationSensor.__new__(TimespanWithoutPrecipitationSensor)
     sensor._dry_since = dry_since
     data = None
     if rs_list is not None:
         data = CoordinatorData(data=rs_list, metadata=meta_list)
     sensor.coordinator = SimpleNamespace(
-        config_entry=SimpleNamespace(options={CONF_DRY_STREAK_THRESHOLD: threshold}),
+        config_entry=SimpleNamespace(options={CONF_PRECIPITATION_RESET_THRESHOLD: threshold}),
         data=data,
     )
     return sensor
@@ -134,14 +134,14 @@ def test_days_value_and_hours(monkeypatch):
 
     assert sensor.native_value == pytest.approx(2.5, abs=1e-6)
     attrs = sensor.extra_state_attributes
-    assert attrs["hours_without_rain"] == pytest.approx(60.0)
+    assert attrs["hours_without_precipitation"] == pytest.approx(60.0)
     assert attrs["dry_since"] == anchor.isoformat()
 
 
 def test_days_none_anchor_is_unknown():
     sensor = _make_days_sensor(dry_since=None)
     assert sensor.native_value is None
-    assert sensor.extra_state_attributes == {"hours_without_rain": None}
+    assert sensor.extra_state_attributes == {"hours_without_precipitation": None}
 
 
 def test_days_future_anchor_clamped_to_zero(monkeypatch):
@@ -149,7 +149,7 @@ def test_days_future_anchor_clamped_to_zero(monkeypatch):
     monkeypatch.setattr(sensor_module.dt_util, "utcnow", lambda: now)
     sensor = _make_days_sensor(dry_since=now + timedelta(hours=1))
     assert sensor.native_value == 0.0
-    assert sensor.extra_state_attributes["hours_without_rain"] == 0.0
+    assert sensor.extra_state_attributes["hours_without_precipitation"] == 0.0
 
 
 def test_process_resets_anchor_when_raining():
@@ -240,8 +240,8 @@ def test_dry_streak_extra_data_roundtrip():
 def test_timestamp_mode_state_is_time_with_minutes_attribute():
     start, end = _rv_timing_sensors(START_END_MODE_TIMESTAMP)
     assert start.device_class is SensorDeviceClass.TIMESTAMP
-    assert start.key == "rv_precipitation_start"
-    assert end.key == "rv_precipitation_end"
+    assert start.key == "radvor_rv_precipitation_start"
+    assert end.key == "radvor_rv_precipitation_end"
 
     sensor = _make_sensor_with_desc(start, data=_rv_timing_data(), extra=False)
     assert sensor.native_value == datetime(2026, 7, 16, 20, 55, tzinfo=UTC)
@@ -252,7 +252,7 @@ def test_timestamp_mode_state_is_time_with_minutes_attribute():
 def test_duration_mode_state_is_minutes_with_time_attribute():
     start, _end = _rv_timing_sensors(START_END_MODE_DURATION)
     assert start.device_class is SensorDeviceClass.DURATION
-    assert start.key == "rv_precipitation_start"
+    assert start.key == "radvor_rv_precipitation_start"
 
     sensor = _make_sensor_with_desc(start, data=_rv_timing_data(), extra=False)
     assert sensor.native_value == 25
@@ -263,4 +263,7 @@ def test_duration_mode_state_is_minutes_with_time_attribute():
 def test_timing_keys_are_stable_across_modes():
     ts_keys = {d.key for d in _rv_timing_sensors(START_END_MODE_TIMESTAMP)}
     dur_keys = {d.key for d in _rv_timing_sensors(START_END_MODE_DURATION)}
-    assert ts_keys == dur_keys == {"rv_precipitation_start", "rv_precipitation_end"}
+    assert ts_keys == dur_keys == {
+        "radvor_rv_precipitation_start",
+        "radvor_rv_precipitation_end",
+    }

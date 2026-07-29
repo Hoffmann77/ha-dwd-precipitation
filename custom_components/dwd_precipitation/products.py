@@ -33,10 +33,10 @@ from .radar.nowcast import (
     detect_start_end,
 )
 from .const import (
-    CONF_RAIN_THRESHOLD,
-    DEFAULT_RAIN_THRESHOLD,
-    CONF_RAIN_END_ALGORITHM,
-    DEFAULT_RAIN_END_ALGORITHM,
+    CONF_PRECIPITATION_THRESHOLD,
+    DEFAULT_PRECIPITATION_THRESHOLD,
+    CONF_PRECIPITATION_END_ALGORITHM,
+    DEFAULT_PRECIPITATION_END_ALGORITHM,
     PRECIP_TYPE_BY_INDEX,
     DWD_RADOLAN_URL,
     DWD_COMPOSITE_URL,
@@ -228,11 +228,11 @@ class RadvorRV(BaseProductUpdateCoordinator):
         # The user configures the threshold as an intensity (mm/h); the
         # detection works on 5-minute accumulations, so convert back to mm/5min.
         threshold_mmh = self.config_entry.options.get(
-            CONF_RAIN_THRESHOLD, DEFAULT_RAIN_THRESHOLD
+            CONF_PRECIPITATION_THRESHOLD, DEFAULT_PRECIPITATION_THRESHOLD
         )
         threshold = threshold_mmh / STEPS_PER_HOUR
         end_algorithm = self.config_entry.options.get(
-            CONF_RAIN_END_ALGORITHM, DEFAULT_RAIN_END_ALGORITHM
+            CONF_PRECIPITATION_END_ALGORITHM, DEFAULT_PRECIPITATION_END_ALGORITHM
         )
         start_in, end_in = detect_start_end(values, threshold, end_algorithm)
 

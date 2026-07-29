@@ -16,18 +16,18 @@ from .const import (
     CONF_COORDS,
     CONF_EXTRA_ATTRIBUTES,
     CONF_UNAVAILABLE_WHEN_STALE,
-    CONF_RAIN_THRESHOLD,
-    DEFAULT_RAIN_THRESHOLD,
+    CONF_PRECIPITATION_THRESHOLD,
+    DEFAULT_PRECIPITATION_THRESHOLD,
     CONF_START_END_MODE,
     DEFAULT_START_END_MODE,
     START_END_MODE_TIMESTAMP,
     START_END_MODE_DURATION,
-    CONF_RAIN_END_ALGORITHM,
-    DEFAULT_RAIN_END_ALGORITHM,
+    CONF_PRECIPITATION_END_ALGORITHM,
+    DEFAULT_PRECIPITATION_END_ALGORITHM,
     RAIN_END_ALGO_EPISODE,
     RAIN_END_ALGO_CLEARING,
-    CONF_DRY_STREAK_THRESHOLD,
-    DEFAULT_DRY_STREAK_THRESHOLD,
+    CONF_PRECIPITATION_RESET_THRESHOLD,
+    DEFAULT_PRECIPITATION_RESET_THRESHOLD,
 )
 from .radar import rs_grid_contains
 
@@ -54,9 +54,9 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     default=self.config_entry.options.get(CONF_UNAVAILABLE_WHEN_STALE, True),
                 ): selector.BooleanSelector(),
                 vol.Optional(
-                    CONF_RAIN_THRESHOLD,
+                    CONF_PRECIPITATION_THRESHOLD,
                     default=self.config_entry.options.get(
-                        CONF_RAIN_THRESHOLD, DEFAULT_RAIN_THRESHOLD
+                        CONF_PRECIPITATION_THRESHOLD, DEFAULT_PRECIPITATION_THRESHOLD
                     ),
                 ): selector.NumberSelector(
                     selector.NumberSelectorConfig(
@@ -82,9 +82,9 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     )
                 ),
                 vol.Optional(
-                    CONF_RAIN_END_ALGORITHM,
+                    CONF_PRECIPITATION_END_ALGORITHM,
                     default=self.config_entry.options.get(
-                        CONF_RAIN_END_ALGORITHM, DEFAULT_RAIN_END_ALGORITHM
+                        CONF_PRECIPITATION_END_ALGORITHM, DEFAULT_PRECIPITATION_END_ALGORITHM
                     ),
                 ): selector.SelectSelector(
                     selector.SelectSelectorConfig(
@@ -92,14 +92,14 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                             RAIN_END_ALGO_EPISODE,
                             RAIN_END_ALGO_CLEARING,
                         ],
-                        translation_key=CONF_RAIN_END_ALGORITHM,
+                        translation_key=CONF_PRECIPITATION_END_ALGORITHM,
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),
                 vol.Optional(
-                    CONF_DRY_STREAK_THRESHOLD,
+                    CONF_PRECIPITATION_RESET_THRESHOLD,
                     default=self.config_entry.options.get(
-                        CONF_DRY_STREAK_THRESHOLD, DEFAULT_DRY_STREAK_THRESHOLD
+                        CONF_PRECIPITATION_RESET_THRESHOLD, DEFAULT_PRECIPITATION_RESET_THRESHOLD
                     ),
                 ): selector.NumberSelector(
                     selector.NumberSelectorConfig(

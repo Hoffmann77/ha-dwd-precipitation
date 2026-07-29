@@ -156,7 +156,7 @@ async def test_rv_threshold_from_options_suppresses_light_rain() -> None:
     coord.async_client = object()
     coord.coords = (51.05, 13.73)
     # Threshold is now an intensity (mm/h); 2.4 mm/h < 3.0 mm/h → suppressed.
-    coord.config_entry = SimpleNamespace(options={"rain_threshold": 3.0})
+    coord.config_entry = SimpleNamespace(options={"precipitation_threshold": 3.0})
 
     with (
         patch.object(
@@ -193,7 +193,7 @@ async def test_rv_threshold_is_interpreted_as_mm_per_hour() -> None:
     coord.async_client = object()
     coord.coords = (51.05, 13.73)
     # 6 mm/h → 0.5 mm/5min gate: 4.8 mm/h is dry, 7.2 mm/h counts.
-    coord.config_entry = SimpleNamespace(options={"rain_threshold": 6.0})
+    coord.config_entry = SimpleNamespace(options={"precipitation_threshold": 6.0})
 
     with (
         patch.object(
@@ -244,7 +244,7 @@ async def test_rv_end_algorithm_option_selects_clearing() -> None:
     assert episode["end_in"] == 10
 
     # Clearing: waits out the lull to the boundary after the lead-60 wave.
-    coord.config_entry = SimpleNamespace(options={"rain_end_algorithm": "clearing"})
+    coord.config_entry = SimpleNamespace(options={"precipitation_end_algorithm": "clearing"})
     clearing_reads = _make_reads()
     with (
         patch.object(
