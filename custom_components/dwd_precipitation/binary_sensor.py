@@ -27,8 +27,8 @@ class DwdBinarySensorEntityDescription(BinarySensorEntityDescription):
 
 BINARY_SENSORS = (
     DwdBinarySensorEntityDescription(
-        key="rv_rain_within_2h",
-        name="Rain expected next 2 hours",
+        key="radvor_rv_precipitation_expected_2h",
+        name="Precipitation expected +2h",
         icon="mdi:weather-rainy",
         product_key="rv",
         access_fn=lambda d: d["rain_within_2h"],
