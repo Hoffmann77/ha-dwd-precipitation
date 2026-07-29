@@ -12,7 +12,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .coordinator import BaseProductUpdateCoordinator
 from .const import PLATFORMS
-from .products import RadvorRS, RadolanRW, RadolanSF, RadolanSFLastYesterday
+from .products import RadvorRS, RadvorRV, RadolanRW, RadolanSF, RadolanSFLastYesterday
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -44,6 +44,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: MyConfigEntry) -> bool:
 
     product_coordinators: list[BaseProductUpdateCoordinator] = [
         RadvorRS(hass, entry, client, lat, lon),
+        RadvorRV(hass, entry, client, lat, lon),
         RadolanRW(hass, entry, client, lat, lon),
         RadolanSF(hass, entry, client, lat, lon),
         RadolanSFLastYesterday(hass, entry, client, lat, lon),

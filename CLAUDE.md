@@ -40,6 +40,7 @@ radar/                Embedded parsers (no heavy external deps).
 | Class | Key | Format | Update | Description |
 |-------|-----|--------|--------|-------------|
 | `RadvorRS` | `rs` | ODIM_H5 (tar) | 5 min | RADVOR nowcast, 0/60/120 min lead |
+| `RadvorRV` | `rv` | ODIM_H5 (tar) | 5 min | RV nowcast, 25×5-min grids; derives +1h/+2h peak intensity (mm/h), precip start/end timing, and a rain-within-2h flag (whose metadata carries the raw 25-point forecast series) |
 | `RadvorRQ` | `rq` | RADOLAN binary (.gz) | 15 min | RADVOR nowcast (deprecated) |
 | `RadolanRW` | `rw` | RADOLAN binary (.bz2) | 1 h | 1-hour precipitation analysis |
 | `RadolanSF` | `sf` | RADOLAN binary (.bz2) | 1 h | 24-hour precipitation analysis |
@@ -63,6 +64,16 @@ latest = floor((now - RELEASE_DELAY) / RELEASE_INTERVAL) * RELEASE_INTERVAL + RE
 ```
 `RELEASE_DELAY` = how long after the nominal product time it's available on OpenData.
 `RELEASE_OFFSET` = minute/second alignment of nominal product times within the interval.
+
+`scripts/check_release_delay.py` (run by `.github/workflows/release-delay.yml`,
+scheduled) averages the *observed* availability delay across a rolling window of
+recent files — for each file, its `Last-Modified` header (authoritative GMT)
+minus the nominal timestamp in its name — and flags (opens a tracking issue for)
+any product the instant its mean lag exceeds its configured `RELEASE_DELAY` —
+the harmful direction, where the coordinator fetches before DWD has published
+(`--grace` defaults to 0). It reads the
+constants straight from the source with `ast` (no HA import), so the configured
+value is the single source of truth.
 
 ## Grid lookup
 
