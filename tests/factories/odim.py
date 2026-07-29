@@ -65,6 +65,79 @@ def make_odim_h5(shape=(5, 5), gain=0.001, offset=-0.001, nodata=4294967295,
     return buf
 
 
+# DWD HymecNG legend: class index (as stored) → symbolic name.
+HYMECNG_LEGEND = (
+    (0, "NO_PRECIPITATION"),
+    (1, "NOT_CLASSIFIED"),
+    (2, "DRIZZLE"),
+    (3, "RAIN"),
+    (4, "FREEZING_DRIZZLE"),
+    (5, "FREEZING_RAIN"),
+    (6, "SNOW_RAIN"),
+    (7, "SNOW"),
+    (8, "GRAUPEL"),
+    (9, "HAIL"),
+    (10, "LARGE_HAIL"),
+)
+
+
+def make_hymecng_h5(shape=(5, 5), fill=3, nodata=255, undetect=254):
+    """Build a minimal HymecNG classification ODIM_H5 file in memory.
+
+    ``quantity=CLASS``, uint8 class indices, gain=1/offset=0 (unscaled). Every
+    cell is ``fill`` (default 3 = RAIN); cell [0, 0] is set to nodata and cell
+    [0, 1] to undetect, matching the real composite's sentinel encoding.
+    Returns a rewound BytesIO ready for read_odim_classification().
+    """
+    buf = io.BytesIO()
+    with h5py.File(buf, "w") as f:
+        rw = f.create_group("what")
+        rw.attrs["version"] = np.bytes_(b"H5rad 2.3")
+        rw.attrs["date"]    = np.bytes_(b"20260729")
+        rw.attrs["time"]    = np.bytes_(b"173000")
+        rw.attrs["object"]  = np.bytes_(b"COMP")
+
+        w = f.create_group("where")
+        w.attrs.create("projdef", data=_PROJDEF)
+        w.attrs["xsize"]  = np.int64(shape[1])
+        w.attrs["ysize"]  = np.int64(shape[0])
+        w.attrs["xscale"] = np.float64(1000.0)
+        w.attrs["yscale"] = np.float64(1000.0)
+        w.attrs["LL_lat"] = np.float64(RS_WHERE["LL_lat"])
+        w.attrs["LL_lon"] = np.float64(RS_WHERE["LL_lon"])
+
+        d1w = f.create_group("dataset1/what")
+        d1w.attrs["product"]   = np.bytes_(b"COMP")
+        d1w.attrs["prodname"]  = np.bytes_(b"HymecNG_top_view")
+        d1w.attrs["startdate"] = np.bytes_(b"20260729")
+        d1w.attrs["starttime"] = np.bytes_(b"173000")
+        d1w.attrs["enddate"]   = np.bytes_(b"20260729")
+        d1w.attrs["endtime"]   = np.bytes_(b"173000")
+
+        dw = f.create_group("dataset1/data1/what")
+        dw.attrs["quantity"] = np.bytes_(b"CLASS")
+        dw.attrs["gain"]     = np.float64(1.0)
+        dw.attrs["offset"]   = np.float64(0.0)
+        dw.attrs["nodata"]   = np.float64(nodata)
+        dw.attrs["undetect"] = np.float64(undetect)
+
+        raw = np.full(shape, fill, dtype=np.uint8)
+        raw[0, 0] = nodata
+        raw[0, 1] = undetect
+        f.create_dataset("dataset1/data1/data", data=raw)
+
+        legend_dtype = np.dtype([("key", "S64"), ("value", "S32")])
+        legend = np.array(
+            [(name.encode(), str(idx).encode()) for idx, name in HYMECNG_LEGEND],
+            dtype=legend_dtype,
+        )
+        leg = f.create_dataset("dataset1/data1/legend", data=legend)
+        leg.attrs["levels"] = np.int64(len(HYMECNG_LEGEND))
+
+    buf.seek(0)
+    return buf
+
+
 def _base_groups(f, shape):
     """Populate the /what and /dataset*/what groups shared by every RS file."""
     d1w = f.create_group("dataset1/what")

@@ -15,10 +15,16 @@ import pytest
 from types import SimpleNamespace
 
 from custom_components.dwd_precipitation import products
-from custom_components.dwd_precipitation.products import RadolanRW, RadvorRS, RadvorRV
+from custom_components.dwd_precipitation.products import (
+    HymecNG,
+    RadolanRW,
+    RadvorRS,
+    RadvorRV,
+)
+from custom_components.dwd_precipitation.radar import RS_GRID_SHAPE
 from custom_components.dwd_precipitation.utils import AsyncResponse
 
-from tests.factories.odim import make_rs_tar, make_rv_tar
+from tests.factories.odim import make_hymecng_h5, make_rs_tar, make_rv_tar
 
 
 @pytest.mark.asyncio
@@ -202,6 +208,129 @@ async def test_rv_threshold_is_interpreted_as_mm_per_hour() -> None:
     # Only the 7.2 mm/h step at lead 60 crosses the gate → start 55 min out.
     assert data["start_in"] == 55
     assert data["rain_within_2h"] is True
+
+
+@pytest.mark.asyncio
+async def test_rv_end_algorithm_option_selects_clearing() -> None:
+    """RV: the clearing algorithm looks past a lull to the last forecast wave."""
+    ts = datetime(2026, 7, 16, 20, 30, tzinfo=timezone.utc)
+    leads = list(range(0, 121, 5))
+    # Dry now; a wave at lead 10, a lull, then a second wave at lead 60.
+    values = {lead: (1.0 if lead in (10, 60) else 0.0) for lead in leads}
+
+    def _make_reads():
+        return iter([
+            (np.full((1200, 1100), values[lead], dtype=np.float32), _rv_what(ts, lead))
+            for lead in leads
+        ])
+
+    coord = RadvorRV.__new__(RadvorRV)
+    coord.async_client = object()
+    coord.coords = (51.05, 13.73)
+
+    # Default (episode): ends at the first lull after the lead-10 wave.
+    coord.config_entry = SimpleNamespace(options={})
+    episode_reads = _make_reads()
+    with (
+        patch.object(
+            products,
+            "async_get",
+            new=AsyncMock(return_value=AsyncResponse(content=make_rv_tar(ts))),
+        ),
+        patch.object(products, "read_odim_composite", side_effect=lambda _f, **_kw: next(episode_reads)),
+    ):
+        episode, _ = await coord._fetch_and_parse(ts)
+    assert episode["start_in"] == 5
+    assert episode["end_in"] == 10
+
+    # Clearing: waits out the lull to the boundary after the lead-60 wave.
+    coord.config_entry = SimpleNamespace(options={"rain_end_algorithm": "clearing"})
+    clearing_reads = _make_reads()
+    with (
+        patch.object(
+            products,
+            "async_get",
+            new=AsyncMock(return_value=AsyncResponse(content=make_rv_tar(ts))),
+        ),
+        patch.object(products, "read_odim_composite", side_effect=lambda _f, **_kw: next(clearing_reads)),
+    ):
+        clearing, _ = await coord._fetch_and_parse(ts)
+    assert clearing["start_in"] == 5
+    assert clearing["end_in"] == 60
+    assert clearing["end_at"] == datetime(2026, 7, 16, 21, 30, tzinfo=timezone.utc)
+
+
+def _hymecng_reader(class_value: int, nodata: int = 255, undetect: int = 254):
+    """Return a fake read_odim_classification yielding a uniform class grid."""
+    raw = np.full(RS_GRID_SHAPE, class_value, dtype=np.uint8)
+    dataset_what = {
+        "prodname": "HymecNG_top_view",
+        "product": "COMP",
+        "startdate": "20260729", "starttime": "173000",
+        "enddate": "20260729", "endtime": "173000",
+    }
+    moment_what = {"quantity": "CLASS", "nodata": float(nodata), "undetect": float(undetect)}
+    return lambda _f, **_kw: (raw, dataset_what, moment_what)
+
+
+@pytest.mark.asyncio
+async def test_hymecng_fetch_maps_class_index_to_label() -> None:
+    """HymecNG: end-to-end fetch + real reader maps the cell class to a label."""
+    ts = datetime(2026, 7, 29, 17, 30, tzinfo=timezone.utc)
+    hd5 = make_hymecng_h5(shape=RS_GRID_SHAPE, fill=7)  # SNOW everywhere
+
+    coord = HymecNG.__new__(HymecNG)
+    coord.async_client = object()
+    coord.coords = (51.05, 13.73)
+
+    get_mock = AsyncMock(return_value=AsyncResponse(content=hd5.getvalue()))
+    with patch.object(products, "async_get", new=get_mock):
+        data, meta = await coord._fetch_and_parse(ts)
+
+    assert data == "snow"
+    assert meta.source_product == "HymecNG_top_view"
+    assert meta.source_timestamp == ts
+    assert meta.data_end == ts
+    # The single ODIM_H5 file (no tar) is addressed by the expected URL.
+    assert get_mock.call_args.args[0].endswith(
+        "/composite/hymecng/composite_HymecNG_20260729_1730_000-hd5"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "class_value, expected",
+    [
+        (0, "no_precipitation"),
+        (3, "rain"),
+        (5, "freezing_rain"),
+        (9, "hail"),
+        (10, "large_hail"),
+        (254, "no_precipitation"),  # undetect → scanned, dry
+        (255, None),                # nodata → outside coverage → unavailable
+        (200, None),                # unexpected index → unavailable
+    ],
+)
+async def test_hymecng_class_and_sentinel_mapping(class_value, expected) -> None:
+    """HymecNG: class indices, undetect, and nodata map to the right sensor state."""
+    ts = datetime(2026, 7, 29, 17, 30, tzinfo=timezone.utc)
+    coord = HymecNG.__new__(HymecNG)
+    coord.async_client = object()
+    coord.coords = (51.05, 13.73)
+
+    with (
+        patch.object(
+            products,
+            "async_get",
+            new=AsyncMock(return_value=AsyncResponse(content=b"x")),
+        ),
+        patch.object(
+            products, "read_odim_classification", side_effect=_hymecng_reader(class_value)
+        ),
+    ):
+        data, _meta = await coord._fetch_and_parse(ts)
+
+    assert data == expected
 
 
 @pytest.mark.asyncio

@@ -40,7 +40,8 @@ radar/                Embedded parsers (no heavy external deps).
 | Class | Key | Format | Update | Description |
 |-------|-----|--------|--------|-------------|
 | `RadvorRS` | `rs` | ODIM_H5 (tar) | 5 min | RADVOR nowcast, 0/60/120 min lead |
-| `RadvorRV` | `rv` | ODIM_H5 (tar) | 5 min | RV nowcast, 25×5-min grids; derives +1h/+2h peak intensity (mm/h), precip start/end timing, and a rain-within-2h flag (whose metadata carries the raw 25-point forecast series) |
+| `RadvorRV` | `rv` | ODIM_H5 (tar) | 5 min | RV nowcast, 25×5-min grids; derives +1h/+2h peak intensity (mm/h), precip start/end timing (episode/clearing end algorithm, user-selectable), and a rain-within-2h flag (whose metadata carries the raw 25-point forecast series, exposed by default) |
+| `HymecNG` | `hymecng` | ODIM_H5 (single .hd5) | 5 min | Precipitation-*type* composite (rain/snow/freezing rain/hail/…); one enum "Current precipitation type" sensor |
 | `RadvorRQ` | `rq` | RADOLAN binary (.gz) | 15 min | RADVOR nowcast (deprecated) |
 | `RadolanRW` | `rw` | RADOLAN binary (.bz2) | 1 h | 1-hour precipitation analysis |
 | `RadolanSF` | `sf` | RADOLAN binary (.bz2) | 1 h | 24-hour precipitation analysis |
@@ -95,7 +96,11 @@ family as RADOLAN but WGS84 ellipsoid, different false easting/northing, and lar
 wradlib as a runtime dependency (wradlib pulls in many heavy packages that cannot
 be installed in standard HA environments).
 
-`radar/odim.py` is original code that uses `h5py` directly.
+`radar/odim.py` is original code that uses `h5py` directly. It exposes
+`read_odim_composite` (physical quantities like RS/RV's `ACRR`, scaled by
+gain/offset) and `read_odim_classification` (HymecNG's `CLASS` quantity —
+discrete class indices returned unscaled, with the `nodata`/`undetect`
+sentinels preserved so the caller can tell "outside coverage" from "dry").
 
 ## Dependencies
 
@@ -114,3 +119,13 @@ Current runtime deps: `numpy`, `h5py`
 - **Grid**: `xsize=1100`, `ysize=1200`, `xscale=yscale=1000.0 m`
 - **Projection**: `+proj=stere +lat_ts=60 +lat_0=90 +lon_0=10 +x_0=543196.835... +y_0=3622588.861...` (WGS84)
 - **Fetching**: `RadvorRS.update()` downloads one tar and extracts the `_000`, `_060`, `_120` members using stdlib `tarfile`
+
+## HymecNG product specifics
+
+- **URL**: `https://opendata.dwd.de/weather/radar/composite/hymecng/composite_HymecNG_YYYYMMDD_HHMM_000-hd5`
+- **Archive**: none — one plain `.hd5` file per 5-minute release (single `_000` grid)
+- **Format**: ODIM_H5 H5rad 2.3, `object=COMP`, `quantity=CLASS`, `gain=1`, `offset=0`
+- **Grid**: identical to RS/RV (1200×1100, same projection) → reuses `get_rs_grid_index` / `RS_GRID_SHAPE`
+- **Encoding**: `uint8` class index 0–10; `nodata=255` (outside coverage → sensor `unknown`), `undetect=254` (scanned, no echo → `no_precipitation`)
+- **Classes** (`PRECIP_TYPE_BY_INDEX` in `const.py`): 0 no_precipitation, 1 not_classified, 2 drizzle, 3 rain, 4 freezing_drizzle, 5 freezing_rain, 6 sleet, 7 snow, 8 graupel, 9 hail, 10 large_hail
+- **Sensor**: one `SensorDeviceClass.ENUM` "Current precipitation type" sensor; state labels are translated via the `precipitation_type` entity translation key
