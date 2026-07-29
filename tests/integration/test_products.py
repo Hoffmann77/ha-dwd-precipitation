@@ -77,7 +77,7 @@ def _rv_what(base: datetime, lead: int) -> dict:
 
 @pytest.mark.asyncio
 async def test_rv_fetch_derives_buckets_and_timing() -> None:
-    """RV: hourly buckets, start/end detection, and per-bucket 5-min samples."""
+    """RV: peak intensity, start/end detection, and the raw 5-min series."""
     ts = datetime(2026, 7, 16, 20, 30, tzinfo=timezone.utc)
     # Scenario: dry now, rain at leads 30..60 (1.0 mm each), dry afterwards.
     leads = list(range(0, 121, 5))
@@ -102,12 +102,12 @@ async def test_rv_fetch_derives_buckets_and_timing() -> None:
     ):
         data, meta = await coord._fetch_and_parse(ts)
 
-    # 7 raining members (leads 30..60) fall in the first hour bucket.
-    assert data["rv_060"] == pytest.approx(7.0)
-    assert data["rv_120"] == pytest.approx(0.0)
     # Peak intensity: 1.0 mm/5min → 12 mm/h in hour 1; hour 2 is dry.
     assert data["max_060"] == pytest.approx(12.0)
     assert data["max_120"] == pytest.approx(0.0)
+    # The two-hour sum sensors were removed; only max intensity remains.
+    assert "rv_060" not in data
+    assert "rv_120" not in data
     # Dry now → rain starts at lead 30 (25 min out); ends at lead 65 boundary (60 min out).
     assert data["start_in"] == 25
     assert data["start_at"] == datetime(2026, 7, 16, 20, 55, tzinfo=timezone.utc)
@@ -116,25 +116,23 @@ async def test_rv_fetch_derives_buckets_and_timing() -> None:
     # Rain occurs within the horizon → the "rain expected" flag is set.
     assert data["rain_within_2h"] is True
 
-    # Base run time and bucket metadata.
-    assert meta["rv_060"].source_timestamp == ts
-    assert meta["rv_060"].lead_time_minutes == 60
-    assert meta["rv_060"].data_start == datetime(2026, 7, 16, 20, 30, tzinfo=timezone.utc)
-    assert meta["rv_060"].data_end == datetime(2026, 7, 16, 21, 30, tzinfo=timezone.utc)
+    # Base run time and per-hour bucket metadata (no samples on these anymore).
+    assert meta["max_060"].source_timestamp == ts
+    assert meta["max_060"].lead_time_minutes == 60
+    assert meta["max_060"].data_start == datetime(2026, 7, 16, 20, 30, tzinfo=timezone.utc)
+    assert meta["max_060"].data_end == datetime(2026, 7, 16, 21, 30, tzinfo=timezone.utc)
+    assert meta["max_060"].samples is None
+    assert meta["max_120"].samples is None
 
-    # Per-bucket 5-min samples: 12 points, last one is lead 60.
-    samples = meta["rv_060"].samples
-    assert len(samples) == 12
-    assert samples[-1]["lead"] == 60
-    assert samples[-1]["value"] == pytest.approx(1.0)
-    assert samples[-1]["intensity"] == pytest.approx(12.0)
-    assert samples[0]["lead"] == 5
-    assert samples[0]["value"] == pytest.approx(0.0)
-    assert samples[0]["intensity"] == pytest.approx(0.0)
-
-    # The max-intensity sensors reuse the hourly bucket metadata (same samples).
-    assert meta["max_060"] is meta["rv_060"]
-    assert meta["max_120"] is meta["rv_120"]
+    # The raw 5-min series (25 points, leads 0..120) rides on the rain flag.
+    samples = meta["rain_within_2h"].samples
+    assert len(samples) == 25
+    assert samples[0]["lead"] == 0
+    assert samples[-1]["lead"] == 120
+    # Lead 60 is the last raining member: 1.0 mm/5min → 12 mm/h.
+    lead_60 = next(s for s in samples if s["lead"] == 60)
+    assert lead_60["value"] == pytest.approx(1.0)
+    assert lead_60["intensity"] == pytest.approx(12.0)
 
 
 @pytest.mark.asyncio

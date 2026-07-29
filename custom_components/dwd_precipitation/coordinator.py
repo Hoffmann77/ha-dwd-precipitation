@@ -66,8 +66,9 @@ class ProductMetadata:
     lead_time_minutes: int | None = None
     data_start: datetime | None = None  # accumulation/validity window start (UTC), or None
     data_end: datetime | None = None    # accumulation/validity window end (UTC), or None
-    # Optional constituent 5-minute points (RV hourly buckets), each a dict of
-    # {"lead", "start", "end", "value"} — surfaced as an entity state attribute.
+    # Optional constituent 5-minute points (the RV forecast series), each a dict
+    # of {"lead", "start", "end", "value", "intensity"} — surfaced as an entity
+    # state attribute.
     samples: list[dict[str, Any]] | None = None
 
 

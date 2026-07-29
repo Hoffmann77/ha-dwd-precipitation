@@ -10,7 +10,6 @@ from radar.nowcast import (
     LEADS,
     STEPS_PER_HOUR,
     bucket_max_intensity,
-    bucket_sum,
     detect_start_end,
 )
 
@@ -23,27 +22,12 @@ def _series(**overrides):
     return values
 
 
-# --- bucket_sum ---------------------------------------------------------
+# --- bucket leads -------------------------------------------------------
 
 def test_bucket_leads_are_disjoint_hours():
     assert HOUR1_LEADS == list(range(5, 61, 5))
     assert HOUR2_LEADS == list(range(65, 121, 5))
     assert set(HOUR1_LEADS).isdisjoint(HOUR2_LEADS)
-
-
-def test_bucket_sum_adds_constituents():
-    values = _series(**{"5": 0.5, "60": 1.5, "65": 2.0})
-    assert bucket_sum(values, HOUR1_LEADS) == pytest.approx(2.0)
-    assert bucket_sum(values, HOUR2_LEADS) == pytest.approx(2.0)
-
-
-def test_bucket_sum_skips_none_but_all_none_is_none():
-    values = _series(**{"5": 1.0})
-    values[HOUR1_LEADS[1] // 5] = None  # one hole
-    assert bucket_sum(values, HOUR1_LEADS) == pytest.approx(1.0)
-
-    all_none = [None] * len(LEADS)
-    assert bucket_sum(all_none, HOUR1_LEADS) is None
 
 
 # --- bucket_max_intensity ----------------------------------------------

@@ -22,7 +22,6 @@ from .radar.nowcast import (
     LEADS,
     STEPS_PER_HOUR,
     bucket_max_intensity,
-    bucket_sum,
     detect_start_end,
 )
 from .const import (
@@ -141,13 +140,13 @@ class RadvorRV(BaseProductUpdateCoordinator):
 
     From the per-cell 5-minute series this coordinator derives:
 
-    * ``rv_060`` / ``rv_120`` — 1-hour totals over [T, T+60] / [T+60, T+120],
-      mirroring the RS "+1 hour" / "+2 hours" entities for comparison.
-    * ``max_060`` / ``max_120`` — peak intensity (mm/h) over the same two hours.
+    * ``max_060`` / ``max_120`` — peak intensity (mm/h) over [T, T+60] /
+      [T+60, T+120].
     * ``start_in`` / ``start_at`` / ``end_in`` / ``end_at`` — when precipitation
       begins / ends at the location (see radar.nowcast.detect_start_end).
     * ``rain_within_2h`` — whether any precipitation is forecast within the
-      2-hour horizon (drives the "rain expected" binary sensor).
+      2-hour horizon (drives the "rain expected" binary sensor). Its metadata
+      carries the full 25-point 5-minute forecast series as ``samples``.
 
     precipitation → dict[str, value], metadata → dict[str, ProductMetadata]
     """
@@ -250,18 +249,22 @@ class RadvorRV(BaseProductUpdateCoordinator):
                 lead_time_minutes=lead_minutes,
                 data_start=starts[leads[0] // LEAD_STEP],
                 data_end=ends[leads[-1] // LEAD_STEP],
-                samples=_samples(leads),
             )
 
         timing_meta = ProductMetadata(source_product="RV", source_timestamp=base_ts)
-        # The hourly buckets and their max-intensity siblings share the same
-        # constituent 5-minute samples, so reuse one metadata object per hour.
         hour1_meta = _bucket_meta(HOUR1_LEADS, 60)
         hour2_meta = _bucket_meta(HOUR2_LEADS, 120)
+        # The rain-expected flag owns the raw forecast curve: the full 25-point
+        # 5-minute series is attached here so the binary sensor can surface it.
+        rain_meta = ProductMetadata(
+            source_product="RV",
+            source_timestamp=base_ts,
+            data_start=starts[0],
+            data_end=ends[-1],
+            samples=_samples(LEADS),
+        )
 
         data = {
-            "rv_060": bucket_sum(values, HOUR1_LEADS),
-            "rv_120": bucket_sum(values, HOUR2_LEADS),
             "max_060": bucket_max_intensity(values, HOUR1_LEADS),
             "max_120": bucket_max_intensity(values, HOUR2_LEADS),
             "start_in": start_in,
@@ -271,15 +274,13 @@ class RadvorRV(BaseProductUpdateCoordinator):
             "rain_within_2h": start_in is not None,
         }
         metadata = {
-            "rv_060": hour1_meta,
-            "rv_120": hour2_meta,
             "max_060": hour1_meta,
             "max_120": hour2_meta,
             "start_in": timing_meta,
             "start_at": timing_meta,
             "end_in": timing_meta,
             "end_at": timing_meta,
-            "rain_within_2h": timing_meta,
+            "rain_within_2h": rain_meta,
         }
         return data, metadata
 

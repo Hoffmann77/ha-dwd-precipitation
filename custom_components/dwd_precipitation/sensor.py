@@ -115,28 +115,8 @@ RADVOR_SENSORS = (
 
 
 # RV sensors whose shape does not depend on the start/end display mode: the two
-# hourly totals and the two peak-intensity sensors.
+# peak-intensity sensors.
 RADVOR_RV_SENSORS = (
-    PrecipitationSensorEntityDescription(
-        key="radvor_rv_060",
-        name="Precipitation +1 hour (RV)",
-        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
-        device_class=SensorDeviceClass.PRECIPITATION,
-        suggested_display_precision=1,
-        state_class=SensorStateClass.MEASUREMENT,
-        product_key="rv",
-        access_fn=lambda d: d["rv_060"],
-    ),
-    PrecipitationSensorEntityDescription(
-        key="radvor_rv_120",
-        name="Precipitation +2 hours (RV)",
-        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
-        device_class=SensorDeviceClass.PRECIPITATION,
-        suggested_display_precision=1,
-        state_class=SensorStateClass.MEASUREMENT,
-        product_key="rv",
-        access_fn=lambda d: d["rv_120"],
-    ),
     PrecipitationSensorEntityDescription(
         key="radvor_rv_max_intensity_060",
         name="Max precipitation intensity +1 hour (RV)",
@@ -173,7 +153,7 @@ def _rv_timing_sensors(
         return (
             PrecipitationSensorEntityDescription(
                 key="rv_precipitation_start",
-                name="Precipitation start",
+                name="Precipitation start (next 2 h)",
                 native_unit_of_measurement=UnitOfTime.MINUTES,
                 device_class=SensorDeviceClass.DURATION,
                 state_class=SensorStateClass.MEASUREMENT,
@@ -183,7 +163,7 @@ def _rv_timing_sensors(
             ),
             PrecipitationSensorEntityDescription(
                 key="rv_precipitation_end",
-                name="Precipitation end",
+                name="Precipitation end (next 2 h)",
                 native_unit_of_measurement=UnitOfTime.MINUTES,
                 device_class=SensorDeviceClass.DURATION,
                 state_class=SensorStateClass.MEASUREMENT,
@@ -197,7 +177,7 @@ def _rv_timing_sensors(
     return (
         PrecipitationSensorEntityDescription(
             key="rv_precipitation_start",
-            name="Precipitation start",
+            name="Precipitation start (next 2 h)",
             device_class=SensorDeviceClass.TIMESTAMP,
             product_key="rv",
             access_fn=lambda d: d["start_at"],
@@ -205,7 +185,7 @@ def _rv_timing_sensors(
         ),
         PrecipitationSensorEntityDescription(
             key="rv_precipitation_end",
-            name="Precipitation end",
+            name="Precipitation end (next 2 h)",
             device_class=SensorDeviceClass.TIMESTAMP,
             product_key="rv",
             access_fn=lambda d: d["end_at"],

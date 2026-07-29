@@ -8,7 +8,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
-from custom_components.dwd_precipitation.coordinator import CoordinatorData
+from custom_components.dwd_precipitation.const import CONF_EXTRA_ATTRIBUTES
+from custom_components.dwd_precipitation.coordinator import (
+    CoordinatorData,
+    ProductMetadata,
+)
 from custom_components.dwd_precipitation.binary_sensor import (
     BINARY_SENSORS,
     DwdBinarySensorEntity,
@@ -17,11 +21,14 @@ from custom_components.dwd_precipitation.binary_sensor import (
 UTC = timezone.utc
 
 
-def _make_binary(data) -> DwdBinarySensorEntity:
+def _make_binary(data, metadata=None, extra=False) -> DwdBinarySensorEntity:
     entity = DwdBinarySensorEntity.__new__(DwdBinarySensorEntity)
     entity.entity_description = BINARY_SENSORS[0]
     entity.coordinator = SimpleNamespace(
-        data=None if data is None else CoordinatorData(data=data, metadata={}),
+        config_entry=SimpleNamespace(options={CONF_EXTRA_ATTRIBUTES: extra}),
+        data=None
+        if data is None
+        else CoordinatorData(data=data, metadata=metadata or {}),
     )
     return entity
 
@@ -52,3 +59,23 @@ def test_none_when_no_data():
     entity = _make_binary(None)
     assert entity.is_on is None
     assert entity.extra_state_attributes == {}
+
+
+def test_raw_forecast_hidden_unless_diagnostics_enabled():
+    data = {"rain_within_2h": True, "start_in": 0, "start_at": None}
+    samples = [{"lead": 0, "value": 1.0, "intensity": 12.0}]
+    meta = {
+        "rain_within_2h": ProductMetadata(
+            source_product="RV", source_timestamp=None, samples=samples
+        )
+    }
+
+    # Diagnostic option off → raw curve is not exposed.
+    off = _make_binary(data, metadata=meta, extra=False)
+    assert "forecast_5min" not in off.extra_state_attributes
+
+    # Diagnostic option on → the raw 5-minute series is surfaced.
+    on = _make_binary(data, metadata=meta, extra=True)
+    assert on.extra_state_attributes["forecast_5min"] == samples
+    # forecast_5min is excluded from the recorder history.
+    assert "forecast_5min" in DwdBinarySensorEntity._unrecorded_attributes

@@ -45,8 +45,6 @@ async def test_entry_setup_creates_sensors_with_correct_values(
     rw_meta = {"producttype": "RW", "datetime": datetime(2025, 6, 1, 12, 50)}
     rv_timing = ProductMetadata(source_product="RV", source_timestamp=ts)
     rv_data = {
-        "rv_060": 4.0,
-        "rv_120": 1.0,
         "max_060": 48.0,
         "max_120": 12.0,
         "start_in": 0,
@@ -98,7 +96,7 @@ async def test_entry_setup_creates_sensors_with_correct_values(
     assert set(coordinators) == {"rs", "rv", "rw", "sf", "sf_2350"}
     assert coordinators["rw"].data.data == approx(3.2)
     assert coordinators["rs"].data.data == [1.5, 2.0, None]
-    assert coordinators["rv"].data.data["rv_060"] == approx(4.0)
+    assert coordinators["rv"].data.data["max_060"] == approx(48.0)
 
     # Resolve entity_id via unique_id (avoids relying on HA's slug logic)
     ent_reg = er.async_get(hass)
@@ -119,15 +117,6 @@ async def test_entry_setup_creates_sensors_with_correct_values(
     state = hass.states.get(rs_000_entry.entity_id)
     assert state is not None
     assert float(state.state) == approx(1.5)
-
-    rv_060_entry = next(
-        e
-        for e in ent_reg.entities.values()
-        if e.domain == "sensor" and e.unique_id.endswith("radvor_rv_060")
-    )
-    state = hass.states.get(rv_060_entry.entity_id)
-    assert state is not None
-    assert float(state.state) == approx(4.0)
 
     # The peak-intensity sensor reports the extrapolated mm/h rate.
     max_060_entry = next(

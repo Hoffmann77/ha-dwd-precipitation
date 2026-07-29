@@ -14,6 +14,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from .const import CONF_EXTRA_ATTRIBUTES
 from .entity import DwdCoordinatorEntity
 
 
@@ -58,6 +59,9 @@ class DwdBinarySensorEntity(DwdCoordinatorEntity, BinarySensorEntity):
 
     entity_description: DwdBinarySensorEntityDescription
 
+    # The 25-point 5-minute forecast series would bloat the recorder history.
+    _unrecorded_attributes = frozenset({"forecast_5min"})
+
     @property
     def is_on(self) -> bool | None:
         """Return True when precipitation is forecast within the horizon."""
@@ -71,13 +75,21 @@ class DwdBinarySensorEntity(DwdCoordinatorEntity, BinarySensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Expose the forecast start time so automations can read it directly."""
+        """Expose the forecast start time (and, when enabled, the raw curve)."""
         if self.coordinator.data is None or self.coordinator.data.data is None:
             return {}
 
         data = self.coordinator.data.data
         start_at = data.get("start_at")
-        return {
+        attrs: dict[str, Any] = {
             "minutes_until": data.get("start_in"),
             "at": start_at.isoformat() if start_at is not None else None,
         }
+
+        # The raw 5-minute RV forecast is opt-in via the diagnostic option.
+        if self.coordinator.config_entry.options.get(CONF_EXTRA_ATTRIBUTES, False):
+            metadata = self.entity_description.access_fn(self.coordinator.data.metadata)
+            if metadata is not None and getattr(metadata, "samples", None):
+                attrs["forecast_5min"] = metadata.samples
+
+        return attrs
