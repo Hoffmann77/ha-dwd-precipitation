@@ -41,6 +41,10 @@ RS_WHERE = {
     "xsize": 1100,
 }
 
+# Expected grid shape (rows, cols) of RS and RV composites — used to bound the
+# array read and reject a crafted file that declares a different-sized dataset.
+RS_GRID_SHAPE = (RS_WHERE["ysize"], RS_WHERE["xsize"])
+
 
 def _parse_proj_param(projdef: str, key: str) -> float:
     """Extract a numeric PROJ4 parameter from a projdef string."""
@@ -76,24 +80,82 @@ def _normalise_attr_value(value):
     return value
 
 
-def read_odim_composite(fileobj, dataset: str = "dataset1", moment: str = "data1"):
+def _resolve_hard(parent, path: str):
+    """Traverse ``path`` under ``parent``, requiring every component to be a hard link.
+
+    ``get(..., getclass=True, getlink=True)`` returns the *link class* without
+    dereferencing it, so a soft or external link is rejected before libhdf5 ever
+    follows it. This closes the HDF5 external-link / soft-link vector: a crafted
+    file could otherwise redirect a path to another object — or, via an external
+    link, to another file on disk — the moment we index into it. DWD RS/RV
+    composites are self-contained with plain hard links only, so nothing
+    legitimate is rejected.
+    """
+    obj = parent
+    for part in path.split("/"):
+        if not part:
+            continue
+        link_cls = getattr(obj.get(part, getclass=True, getlink=True), "__name__", None)
+        if link_cls != "HardLink":
+            raise ValueError(
+                f"Refusing to follow non-hard link ({link_cls}) at {part!r} in {path!r}"
+            )
+        obj = obj[part]
+    return obj
+
+
+def _require_plain_dataset(dset, expected_shape=None):
+    """Return ``dset`` if it is a safe in-file dataset, else raise.
+
+    Rejects virtual datasets and datasets whose raw data lives in external files
+    — both let a crafted file pull bytes from outside the buffer we opened — and,
+    when ``expected_shape`` is given, any unexpected shape (which also bounds the
+    allocation the subsequent read performs).
+    """
+    if not isinstance(dset, h5py.Dataset):
+        raise ValueError("Expected an HDF5 dataset for the composite payload")
+    if dset.is_virtual:
+        raise ValueError("Refusing to read a virtual dataset")
+    if dset.external:
+        raise ValueError("Refusing to read a dataset backed by external files")
+    if expected_shape is not None and dset.shape != tuple(expected_shape):
+        raise ValueError(
+            f"Unexpected composite shape {dset.shape}, expected {tuple(expected_shape)}"
+        )
+    return dset
+
+
+def read_odim_composite(
+    fileobj,
+    dataset: str = "dataset1",
+    moment: str = "data1",
+    expected_shape=None,
+):
     """Read a Cartesian ODIM_H5 composite.
 
     Returns (data, dataset_what) where data is a float32 array and dataset_what
     is the normalised /dataset/what attribute dict.
     nodata cells (outside radar range / masked) → NaN.
     undetect cells (radar scanned, zero precipitation detected) → 0.0.
+
+    The file is treated as untrusted input: every path is walked hard-link-only
+    and the payload dataset must be a plain in-file array (no virtual/external
+    storage). Pass ``expected_shape`` (rows, cols) to also pin the grid size,
+    which bounds the array allocation.
     """
     with h5py.File(fileobj, "r") as hf:
         dataset_what = {
             k: _normalise_attr_value(v)
-            for k, v in hf[f"{dataset}/what"].attrs.items()
+            for k, v in _resolve_hard(hf, f"{dataset}/what").attrs.items()
         }
         what = {
             k: _normalise_attr_value(v)
-            for k, v in hf[f"{dataset}/{moment}/what"].attrs.items()
+            for k, v in _resolve_hard(hf, f"{dataset}/{moment}/what").attrs.items()
         }
-        raw = hf[f"{dataset}/{moment}/data"][:]
+        dset = _require_plain_dataset(
+            _resolve_hard(hf, f"{dataset}/{moment}/data"), expected_shape
+        )
+        raw = dset[:]
 
     gain     = float(what["gain"])
     offset   = float(what["offset"])

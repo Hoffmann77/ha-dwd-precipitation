@@ -9,12 +9,19 @@ from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
 from functools import cached_property, lru_cache
 from io import BytesIO
+from typing import ClassVar
 
 import numpy as np
 
 from .coordinator import BaseProductUpdateCoordinator, ProductMetadata
 from .utils import async_get
-from .radar import read_radolan_composite, get_radolan_grid, read_odim_composite, get_rs_grid_index
+from .radar import (
+    read_radolan_composite,
+    get_radolan_grid,
+    read_odim_composite,
+    get_rs_grid_index,
+    RS_GRID_SHAPE,
+)
 from .radar.nowcast import (
     HOUR1_LEADS,
     HOUR2_LEADS,
@@ -112,7 +119,9 @@ class RadvorRS(BaseProductUpdateCoordinator):
                     metadata.append(None)
                     continue
 
-                _data, _what = read_odim_composite(BytesIO(f.read()))
+                _data, _what = read_odim_composite(
+                    BytesIO(f.read()), expected_shape=RS_GRID_SHAPE
+                )
                 val = float(_data[row, col])
                 data.append(None if np.isnan(val) else val)
 
@@ -198,7 +207,9 @@ class RadvorRV(BaseProductUpdateCoordinator):
                     ends.append(None)
                     continue
 
-                _data, _what = read_odim_composite(BytesIO(f.read()))
+                _data, _what = read_odim_composite(
+                    BytesIO(f.read()), expected_shape=RS_GRID_SHAPE
+                )
                 val = float(_data[row, col])
                 values.append(None if np.isnan(val) else val)
 
@@ -293,6 +304,9 @@ class RadolanProduct(BaseProductUpdateCoordinator, ABC):
 
     """
 
+    # National RADOLAN composite grid (rows, cols); validated on every parse.
+    EXPECTED_SHAPE: ClassVar[tuple[int, int]] = (900, 900)
+
     @cached_property
     def index(self) -> tuple[int, int]:
         """Return the nearest-cell (row, col) in the RADOLAN 900×900 WGS84 grid."""
@@ -311,6 +325,12 @@ class RadolanProduct(BaseProductUpdateCoordinator, ABC):
         response = await async_get(self._get_url(ts), self.async_client)
         f = bz2.open(BytesIO(response.content))
         data, raw = read_radolan_composite(f)
+
+        if data.shape != self.EXPECTED_SHAPE:
+            raise ValueError(
+                f"Unexpected RADOLAN grid shape {data.shape}, "
+                f"expected {self.EXPECTED_SHAPE}"
+            )
 
         dt_end = _utc(raw.get("datetime"))
         interval = raw.get("intervalseconds")
