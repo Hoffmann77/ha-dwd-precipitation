@@ -61,7 +61,7 @@ def test_none_when_no_data():
     assert entity.extra_state_attributes == {}
 
 
-def test_raw_forecast_hidden_unless_diagnostics_enabled():
+def test_raw_forecast_exposed_by_default():
     data = {"rain_within_2h": True, "start_in": 0, "start_at": None}
     samples = [{"lead": 0, "value": 1.0, "intensity": 12.0}]
     meta = {
@@ -70,12 +70,12 @@ def test_raw_forecast_hidden_unless_diagnostics_enabled():
         )
     }
 
-    # Diagnostic option off → raw curve is not exposed.
+    # The full 5-minute series is surfaced regardless of the diagnostic option.
     off = _make_binary(data, metadata=meta, extra=False)
-    assert "forecast_5min" not in off.extra_state_attributes
+    assert off.extra_state_attributes["forecast_5min"] == samples
 
-    # Diagnostic option on → the raw 5-minute series is surfaced.
     on = _make_binary(data, metadata=meta, extra=True)
     assert on.extra_state_attributes["forecast_5min"] == samples
+
     # forecast_5min is excluded from the recorder history.
     assert "forecast_5min" in DwdBinarySensorEntity._unrecorded_attributes

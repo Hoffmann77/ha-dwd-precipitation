@@ -5,6 +5,8 @@ from __future__ import annotations
 import pytest
 
 from radar.nowcast import (
+    END_ALGO_CLEARING,
+    END_ALGO_EPISODE,
     HOUR1_LEADS,
     HOUR2_LEADS,
     LEADS,
@@ -96,3 +98,50 @@ def test_none_values_are_not_rain():
     values[1] = None  # lead 5 nodata
     # lead 5 None → not rain; only rain window ends at lead 10 → starts T+5, ends T+10
     assert detect_start_end(values, 0.0) == (5, 10)
+
+
+def test_default_algorithm_is_episode():
+    # Rain now and at lead 5, a lull, then rain again at lead 60.
+    values = _series(**{"0": 1.0, "5": 1.0, "60": 1.0})
+    # No explicit algorithm → episode: the first lull ends the episode at T+5.
+    assert detect_start_end(values, 0.0) == (0, 5)
+    assert detect_start_end(values, 0.0, END_ALGO_EPISODE) == (0, 5)
+
+
+# --- detect_start_end: clearing algorithm --------------------------------
+
+def test_clearing_matches_episode_for_single_episode():
+    # A single uninterrupted episode: both algorithms agree.
+    values = _series(**{"30": 1.0, "35": 1.0, "40": 1.0, "45": 1.0})
+    assert detect_start_end(values, 0.0, END_ALGO_EPISODE) == (25, 45)
+    assert detect_start_end(values, 0.0, END_ALGO_CLEARING) == (25, 45)
+
+
+def test_clearing_looks_through_lull_to_last_wave():
+    # Dry now; a wave at lead 10, a lull, then a second wave at lead 60.
+    values = _series(**{"10": 1.0, "60": 1.0})
+    # Episode ends at the first lull (T+10); clearing waits out the last wave.
+    assert detect_start_end(values, 0.0, END_ALGO_EPISODE) == (5, 10)
+    assert detect_start_end(values, 0.0, END_ALGO_CLEARING) == (5, 60)
+
+
+def test_clearing_while_raining_now_with_later_wave():
+    # Raining now and at lead 5, a lull, then rain again at lead 30.
+    values = _series(**{"0": 1.0, "5": 1.0, "30": 1.0})
+    assert detect_start_end(values, 0.0, END_ALGO_EPISODE) == (0, 5)
+    assert detect_start_end(values, 0.0, END_ALGO_CLEARING) == (0, 30)
+
+
+def test_clearing_rain_through_horizon_has_no_end():
+    values = [1.0] * len(LEADS)
+    assert detect_start_end(values, 0.0, END_ALGO_CLEARING) == (0, None)
+
+
+def test_clearing_last_wave_at_horizon_edge_has_no_end():
+    # A lull then rain that runs to the +120 edge → never clears in the horizon.
+    values = _series(**{"10": 1.0, "115": 1.0, "120": 1.0})
+    assert detect_start_end(values, 0.0, END_ALGO_CLEARING) == (5, None)
+
+
+def test_clearing_never_rains():
+    assert detect_start_end(_series(), 0.0, END_ALGO_CLEARING) == (None, None)

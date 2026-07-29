@@ -22,6 +22,10 @@ from .const import (
     DEFAULT_START_END_MODE,
     START_END_MODE_TIMESTAMP,
     START_END_MODE_DURATION,
+    CONF_RAIN_END_ALGORITHM,
+    DEFAULT_RAIN_END_ALGORITHM,
+    RAIN_END_ALGO_EPISODE,
+    RAIN_END_ALGO_CLEARING,
     CONF_DRY_STREAK_THRESHOLD,
     DEFAULT_DRY_STREAK_THRESHOLD,
 )
@@ -74,6 +78,21 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                             START_END_MODE_DURATION,
                         ],
                         translation_key=CONF_START_END_MODE,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+                vol.Optional(
+                    CONF_RAIN_END_ALGORITHM,
+                    default=self.config_entry.options.get(
+                        CONF_RAIN_END_ALGORITHM, DEFAULT_RAIN_END_ALGORITHM
+                    ),
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=[
+                            RAIN_END_ALGO_EPISODE,
+                            RAIN_END_ALGO_CLEARING,
+                        ],
+                        translation_key=CONF_RAIN_END_ALGORITHM,
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),

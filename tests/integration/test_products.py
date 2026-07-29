@@ -205,6 +205,56 @@ async def test_rv_threshold_is_interpreted_as_mm_per_hour() -> None:
 
 
 @pytest.mark.asyncio
+async def test_rv_end_algorithm_option_selects_clearing() -> None:
+    """RV: the clearing algorithm looks past a lull to the last forecast wave."""
+    ts = datetime(2026, 7, 16, 20, 30, tzinfo=timezone.utc)
+    leads = list(range(0, 121, 5))
+    # Dry now; a wave at lead 10, a lull, then a second wave at lead 60.
+    values = {lead: (1.0 if lead in (10, 60) else 0.0) for lead in leads}
+
+    def _make_reads():
+        return iter([
+            (np.full((1200, 1100), values[lead], dtype=np.float32), _rv_what(ts, lead))
+            for lead in leads
+        ])
+
+    coord = RadvorRV.__new__(RadvorRV)
+    coord.async_client = object()
+    coord.coords = (51.05, 13.73)
+
+    # Default (episode): ends at the first lull after the lead-10 wave.
+    coord.config_entry = SimpleNamespace(options={})
+    episode_reads = _make_reads()
+    with (
+        patch.object(
+            products,
+            "async_get",
+            new=AsyncMock(return_value=AsyncResponse(content=make_rv_tar(ts))),
+        ),
+        patch.object(products, "read_odim_composite", side_effect=lambda _f, **_kw: next(episode_reads)),
+    ):
+        episode, _ = await coord._fetch_and_parse(ts)
+    assert episode["start_in"] == 5
+    assert episode["end_in"] == 10
+
+    # Clearing: waits out the lull to the boundary after the lead-60 wave.
+    coord.config_entry = SimpleNamespace(options={"rain_end_algorithm": "clearing"})
+    clearing_reads = _make_reads()
+    with (
+        patch.object(
+            products,
+            "async_get",
+            new=AsyncMock(return_value=AsyncResponse(content=make_rv_tar(ts))),
+        ),
+        patch.object(products, "read_odim_composite", side_effect=lambda _f, **_kw: next(clearing_reads)),
+    ):
+        clearing, _ = await coord._fetch_and_parse(ts)
+    assert clearing["start_in"] == 5
+    assert clearing["end_in"] == 60
+    assert clearing["end_at"] == datetime(2026, 7, 16, 21, 30, tzinfo=timezone.utc)
+
+
+@pytest.mark.asyncio
 async def test_radolan_fetch_derives_window_from_interval() -> None:
     """RADOLAN: data_end == nominal datetime, data_start == datetime - intervalseconds."""
     ts = datetime(2025, 6, 1, 12, 50, tzinfo=timezone.utc)

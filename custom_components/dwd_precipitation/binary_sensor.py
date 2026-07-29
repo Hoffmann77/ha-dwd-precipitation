@@ -14,7 +14,6 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import CONF_EXTRA_ATTRIBUTES
 from .entity import DwdCoordinatorEntity
 
 
@@ -75,7 +74,7 @@ class DwdBinarySensorEntity(DwdCoordinatorEntity, BinarySensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Expose the forecast start time (and, when enabled, the raw curve)."""
+        """Expose the forecast start time and the full 5-minute RV forecast curve."""
         if self.coordinator.data is None or self.coordinator.data.data is None:
             return {}
 
@@ -86,10 +85,10 @@ class DwdBinarySensorEntity(DwdCoordinatorEntity, BinarySensorEntity):
             "at": start_at.isoformat() if start_at is not None else None,
         }
 
-        # The raw 5-minute RV forecast is opt-in via the diagnostic option.
-        if self.coordinator.config_entry.options.get(CONF_EXTRA_ATTRIBUTES, False):
-            metadata = self.entity_description.access_fn(self.coordinator.data.metadata)
-            if metadata is not None and getattr(metadata, "samples", None):
-                attrs["forecast_5min"] = metadata.samples
+        # The full 25-point RV forecast series is exposed by default; it is kept
+        # out of the recorder history via _unrecorded_attributes.
+        metadata = self.entity_description.access_fn(self.coordinator.data.metadata)
+        if metadata is not None and getattr(metadata, "samples", None):
+            attrs["forecast_5min"] = metadata.samples
 
         return attrs

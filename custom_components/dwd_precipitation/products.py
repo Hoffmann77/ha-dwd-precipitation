@@ -34,6 +34,8 @@ from .radar.nowcast import (
 from .const import (
     CONF_RAIN_THRESHOLD,
     DEFAULT_RAIN_THRESHOLD,
+    CONF_RAIN_END_ALGORITHM,
+    DEFAULT_RAIN_END_ALGORITHM,
     DWD_RADOLAN_URL,
     DWD_COMPOSITE_URL,
 )
@@ -227,7 +229,10 @@ class RadvorRV(BaseProductUpdateCoordinator):
             CONF_RAIN_THRESHOLD, DEFAULT_RAIN_THRESHOLD
         )
         threshold = threshold_mmh / STEPS_PER_HOUR
-        start_in, end_in = detect_start_end(values, threshold)
+        end_algorithm = self.config_entry.options.get(
+            CONF_RAIN_END_ALGORITHM, DEFAULT_RAIN_END_ALGORITHM
+        )
+        start_in, end_in = detect_start_end(values, threshold, end_algorithm)
 
         def _at(minutes: int | None) -> datetime | None:
             if minutes is None or base_ts is None:
