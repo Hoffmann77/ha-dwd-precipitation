@@ -22,6 +22,8 @@ from .const import (
     DEFAULT_START_END_MODE,
     START_END_MODE_TIMESTAMP,
     START_END_MODE_DURATION,
+    CONF_DRY_STREAK_THRESHOLD,
+    DEFAULT_DRY_STREAK_THRESHOLD,
 )
 from .radar import rs_grid_contains
 
@@ -73,6 +75,19 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                         ],
                         translation_key=CONF_START_END_MODE,
                         mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+                vol.Optional(
+                    CONF_DRY_STREAK_THRESHOLD,
+                    default=self.config_entry.options.get(
+                        CONF_DRY_STREAK_THRESHOLD, DEFAULT_DRY_STREAK_THRESHOLD
+                    ),
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=0,
+                        step=0.1,
+                        unit_of_measurement="mm",
+                        mode=selector.NumberSelectorMode.BOX,
                     )
                 ),
             }

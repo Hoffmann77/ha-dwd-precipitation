@@ -28,6 +28,11 @@ START_END_MODE_TIMESTAMP = "timestamp"
 START_END_MODE_DURATION = "duration"
 DEFAULT_START_END_MODE = START_END_MODE_TIMESTAMP
 
+CONF_DRY_STREAK_THRESHOLD = "dry_streak_threshold"
+
+# mm; "Precipitation now" at/above this value resets the dry streak counter.
+DEFAULT_DRY_STREAK_THRESHOLD = 1.0
+
 DWD_OPENDATA_URL = "https://opendata.dwd.de"
 
 DWD_RADOLAN_URL = f"{DWD_OPENDATA_URL}/weather/radar/radolan"

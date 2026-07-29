@@ -22,11 +22,13 @@
           "extra_state_attributes": "Enable diagnostic state attributes",
           "unavailable_when_stale": "Mark sensors unavailable when data is stale",
           "rain_threshold": "Rain detection threshold (mm per hour)",
-          "start_end_mode": "Precipitation start/end sensor state"
+          "start_end_mode": "Precipitation start/end sensor state",
+          "dry_streak_threshold": "Rain reset threshold (mm)"
         },
         "data_description": {
           "rain_threshold": "A forecast intensity above this value counts as precipitation for the RV start/end sensors. 0 means any DWD-detected rain.",
-          "start_end_mode": "Whether the start/end sensors report the absolute time or the minutes until the event. The other value is exposed as an attribute."
+          "start_end_mode": "Whether the start/end sensors report the absolute time or the minutes until the event. The other value is exposed as an attribute.",
+          "dry_streak_threshold": "\"Precipitation now\" at or above this value resets the Days without rain counter."
         }
       }
     }

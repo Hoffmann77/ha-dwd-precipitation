@@ -95,6 +95,7 @@ After setup, open the integration's **Configure** dialog (**Settings > Devices &
 | Mark sensors unavailable when data is stale | On | Sensors become `unavailable` once cached data exceeds the product's release interval; prevents automations from acting on stale values |
 | Rain detection threshold (mm per hour) | 0.0 | An RV forecast intensity above this value counts as precipitation for the `start`/`end` and `rain expected` sensors. `0.0` means any DWD-detected rain; raise it to ignore drizzle/noise |
 | Precipitation start/end sensor state | Absolute time | Whether the `Precipitation start (next 2 h)`/`end (next 2 h)` sensors report the absolute time (device class *timestamp*) or the minutes until the event (device class *duration*). The unused representation is exposed as an attribute |
+| Rain reset threshold (mm) | 1.0 | `Precipitation now` at or above this value resets the `Days without rain` counter |
 
 When diagnostic state attributes are enabled, each sensor exposes:
 
@@ -124,6 +125,7 @@ All sensors belong to a single **DWD Precipitation** device per configured locat
 | `Precipitation last hour` | RADOLAN RW | mm | 1 h | Radar + station-blended analysis for the past hour |
 | `Precipitation last 24 hours` | RADOLAN SF | mm | 1 h | Radar + station-blended total for the rolling past 24 hours |
 | `Precipitation yesterday` | RADOLAN SF | mm | Daily (~00:18 UTC+1) | Previous calendar day's 24-hour accumulated total |
+| `Days without rain` | RADVOR RS | days | 5 min | Time since `Precipitation now` last reached the rain reset threshold; exposes `hours_without_rain` and `dry_since` attributes. Persists across restarts and is corrected on startup against the RW/SF totals for rain during downtime |
 
 ## Troubleshooting
 
