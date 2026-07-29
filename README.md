@@ -125,10 +125,10 @@ All sensors belong to a single **DWD Precipitation** device per configured locat
 | Entity | Data source | Unit | Update interval | Description |
 |--------|-------------|------|-----------------|-------------|
 | `Precipitation now` | RADVOR RS | mm | 5 min | Calibrated radar analysis for the current 5-minute window |
-| `Precipitation +0–1 h` | RADVOR RS | mm | 5 min | Calibrated radar forecast accumulation for the next 0–60 minutes |
-| `Precipitation +1–2 h` | RADVOR RS | mm | 5 min | Calibrated radar forecast accumulation for the 60–120 minute window |
-| `Max intensity +0–1 h` | RADVOR RV | mm/h | 5 min | Peak rain intensity in the next 0–60 minutes — the wettest 5-minute step extrapolated to an hourly rate |
-| `Max intensity +1–2 h` | RADVOR RV | mm/h | 5 min | Peak rain intensity in the 60–120 minute window |
+| `Precipitation next hour` | RADVOR RS | mm | 5 min | Calibrated radar forecast accumulation for the next 0–60 minutes |
+| `Precipitation second hour` | RADVOR RS | mm | 5 min | Calibrated radar forecast accumulation for the 60–120 minute window |
+| `Max precipitation intensity next hour` | RADVOR RV | mm/h | 5 min | Peak rain intensity in the next 0–60 minutes — the wettest 5-minute step extrapolated to an hourly rate |
+| `Max precipitation intensity second hour` | RADVOR RV | mm/h | 5 min | Peak rain intensity in the 60–120 minute window |
 | `Precipitation start +2h` | RADVOR RV | timestamp / min | 5 min | When precipitation begins at the location within the next 2 hours (`0` / now if already raining, `unknown` if none within 2 h). Reports the absolute time or the minutes-until value per the *start/end sensor state* option; the other form is the `minutes_until` / `at` attribute |
 | `Precipitation end +2h` | RADVOR RV | timestamp / min | 5 min | When precipitation ends (`unknown` if it continues beyond the 2 h horizon). The *Precipitation end algorithm* option chooses between ending at the first dry gap or when rain clears for the rest of the horizon. Same representation option as `Precipitation start +2h` |
 | `Precipitation expected +2h` | RADVOR RV | on / off | 5 min | `on` when precipitation is forecast within the next 2 hours. Exposes the forecast start time as `minutes_until` / `at` attributes so an automation can trigger on it and read the start time directly, and carries the full RV forecast curve in `forecast_5min` (excluded from recorder history) |
