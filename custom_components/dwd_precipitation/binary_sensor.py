@@ -86,9 +86,13 @@ class DwdBinarySensorEntity(DwdCoordinatorEntity, BinarySensorEntity):
         }
 
         # The full 25-point RV forecast series is exposed by default; it is kept
-        # out of the recorder history via _unrecorded_attributes.
-        metadata = self.entity_description.access_fn(self.coordinator.data.metadata)
-        if metadata is not None and getattr(metadata, "samples", None):
-            attrs["forecast_5min"] = metadata.samples
+        # out of the recorder history via _unrecorded_attributes. Guard the
+        # metadata lookup so a missing/empty metadata payload never crashes the
+        # attribute build (data can be present before metadata is populated).
+        metadata_map = self.coordinator.data.metadata
+        if metadata_map:
+            metadata = self.entity_description.access_fn(metadata_map)
+            if metadata is not None and getattr(metadata, "samples", None):
+                attrs["forecast_5min"] = metadata.samples
 
         return attrs
