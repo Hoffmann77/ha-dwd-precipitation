@@ -157,6 +157,7 @@ RADVOR_RV_SENSORS = (
 HYMECNG_SENSORS = (
     PrecipitationSensorEntityDescription(
         key="hymecng_precipitation_type",
+        name="Precipitation type now",
         translation_key="precipitation_type",
         icon="mdi:weather-snowy-rainy",
         device_class=SensorDeviceClass.ENUM,
