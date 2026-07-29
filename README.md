@@ -15,7 +15,7 @@ Real-time location based precipitation analysis, forecasts, and historical accum
 ## Features
 
 - 5-minute precipitation nowcast and 1-hour / 2-hour radar forecasts from **RADVOR RS**
-- High-resolution **RADVOR RV** nowcast: 1-hour / 2-hour totals (to compare against RS), peak-intensity forecasts (mm/h), *precipitation start*/*end* timing sensors, and a *rain expected* binary sensor — all derived from the 5-minute forecast series
+- High-resolution **RADVOR RV** nowcast: 1-hour / 2-hour peak-intensity forecasts (mm/h), *precipitation start*/*end* timing sensors, and a *rain expected* binary sensor — all derived from the 5-minute forecast series
 - Hourly and 24-hour precipitation accumulations from **RADOLAN RW/SF** (radar + weather station blend)
 - Yesterday's 24-hour total updated once daily — ideal for irrigation or energy automations
 - Per-location extraction: the nearest radar grid cell to your exact latitude/longitude
