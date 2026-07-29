@@ -15,6 +15,7 @@ Real-time location based precipitation analysis, forecasts, and historical accum
 ## Features
 
 - 5-minute precipitation nowcast and 1-hour / 2-hour radar forecasts from **RADVOR RS**
+- High-resolution **RADVOR RV** nowcast: 1-hour / 2-hour totals (to compare against RS), peak-intensity forecasts (mm/h), *precipitation start*/*end* timing sensors, and a *rain expected* binary sensor — all derived from the 5-minute forecast series
 - Hourly and 24-hour precipitation accumulations from **RADOLAN RW/SF** (radar + weather station blend)
 - Yesterday's 24-hour total updated once daily — ideal for irrigation or energy automations
 - Per-location extraction: the nearest radar grid cell to your exact latitude/longitude
@@ -92,6 +93,8 @@ After setup, open the integration's **Configure** dialog (**Settings > Devices &
 |--------|---------|-------------|
 | Enable diagnostic state attributes | Off | Adds per-sensor metadata attributes (see below) |
 | Mark sensors unavailable when data is stale | On | Sensors become `unavailable` once cached data exceeds the product's release interval; prevents automations from acting on stale values |
+| Rain detection threshold (mm per hour) | 0.0 | An RV forecast intensity above this value counts as precipitation for the `start`/`end` and `rain expected` sensors. `0.0` means any DWD-detected rain; raise it to ignore drizzle/noise |
+| Precipitation start/end sensor state | Absolute time | Whether the `Precipitation start (next 2 h)`/`end (next 2 h)` sensors report the absolute time (device class *timestamp*) or the minutes until the event (device class *duration*). The unused representation is exposed as an attribute |
 | Rain reset threshold (mm) | 1.0 | `Precipitation now` at or above this value resets the `Days without rain` counter |
 
 When diagnostic state attributes are enabled, each sensor exposes:
@@ -103,6 +106,7 @@ When diagnostic state attributes are enabled, each sensor exposes:
 | `lead_time_minutes` | Forecast lead time in minutes (`0` for the nowcast, `60` or `120` for RADVOR forecasts, `null` for RADOLAN products which have no lead time) |
 | `data_start` | ISO-8601 UTC start of the accumulation window (e.g. T−60 min for "last hour"); `null` for products without an accumulation window |
 | `data_end` | ISO-8601 UTC end of the accumulation window; for RADOLAN products this equals `source_timestamp` |
+| `forecast_5min` | `Rain expected next 2 hours` binary sensor only: the full 25-point RV forecast series (leads 0–120 min in 5-minute steps), each point a dict of `lead`, `start`, `end`, `value` in mm, `intensity` in mm/h. Excluded from recorder history |
 
 ## Entities
 
@@ -113,6 +117,11 @@ All sensors belong to a single **DWD Precipitation** device per configured locat
 | `Precipitation now` | RADVOR RS | mm | 5 min | Calibrated radar analysis for the current 5-minute window |
 | `Precipitation +1 hour` | RADVOR RS | mm | 5 min | Calibrated radar forecast for the next 0–60 minutes |
 | `Precipitation +2 hours` | RADVOR RS | mm | 5 min | Calibrated radar forecast for the 60–120 minute window |
+| `Max precipitation intensity +1 hour (RV)` | RADVOR RV | mm/h | 5 min | Peak rain intensity in the next 0–60 minutes — the wettest 5-minute step extrapolated to an hourly rate |
+| `Max precipitation intensity +2 hours (RV)` | RADVOR RV | mm/h | 5 min | Peak rain intensity in the 60–120 minute window |
+| `Precipitation start (next 2 h)` | RADVOR RV | timestamp / min | 5 min | When precipitation begins at the location within the next 2 hours (`0` / now if already raining, `unknown` if none within 2 h). Reports the absolute time or the minutes-until value per the *start/end sensor state* option; the other form is the `minutes_until` / `at` attribute |
+| `Precipitation end (next 2 h)` | RADVOR RV | timestamp / min | 5 min | When the current/next precipitation episode ends (`unknown` if it continues beyond the 2 h horizon). Same representation option as `Precipitation start (next 2 h)` |
+| `Rain expected next 2 hours` | RADVOR RV | on / off | 5 min | `on` when precipitation is forecast within the next 2 hours. Exposes the forecast start time as `minutes_until` / `at` attributes so an automation can trigger on it and read the start time directly. With diagnostic attributes enabled, also carries the full RV forecast curve in `forecast_5min` |
 | `Precipitation last hour` | RADOLAN RW | mm | 1 h | Radar + station-blended analysis for the past hour |
 | `Precipitation last 24 hours` | RADOLAN SF | mm | 1 h | Radar + station-blended total for the rolling past 24 hours |
 | `Precipitation yesterday` | RADOLAN SF | mm | Daily (~00:18 UTC+1) | Previous calendar day's 24-hour accumulated total |
