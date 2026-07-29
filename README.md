@@ -16,7 +16,7 @@ Real-time location based precipitation analysis, forecasts, and historical accum
 
 - 5-minute precipitation nowcast and 1-hour / 2-hour radar forecasts from **RADVOR RS**
 - High-resolution **RADVOR RV** nowcast: 1-hour / 2-hour totals (to compare against RS), peak-intensity forecasts (mm/h), *precipitation start*/*end* timing sensors, and a *rain expected* binary sensor — all derived from the 5-minute forecast series
-- **HymecNG** precipitation-*type* classification: an enum *Precipitation type* sensor telling rain from drizzle, snow, sleet, freezing rain/drizzle, graupel, and hail at your location
+- **HymecNG** precipitation-*type* classification: an enum *Current precipitation type* sensor telling rain from drizzle, snow, sleet, freezing rain/drizzle, graupel, and hail at your location
 - Hourly and 24-hour precipitation accumulations from **RADOLAN RW/SF** (radar + weather station blend)
 - Yesterday's 24-hour total updated once daily — ideal for irrigation or energy automations
 - Per-location extraction: the nearest radar grid cell to your exact latitude/longitude
@@ -124,7 +124,7 @@ All sensors belong to a single **DWD Precipitation** device per configured locat
 | `Precipitation start (next 2 h)` | RADVOR RV | timestamp / min | 5 min | When precipitation begins at the location within the next 2 hours (`0` / now if already raining, `unknown` if none within 2 h). Reports the absolute time or the minutes-until value per the *start/end sensor state* option; the other form is the `minutes_until` / `at` attribute |
 | `Precipitation end (next 2 h)` | RADVOR RV | timestamp / min | 5 min | When precipitation ends (`unknown` if it continues beyond the 2 h horizon). The *Precipitation end algorithm* option chooses between ending at the first dry gap or when rain clears for the rest of the horizon. Same representation option as `Precipitation start (next 2 h)` |
 | `Rain expected next 2 hours` | RADVOR RV | on / off | 5 min | `on` when precipitation is forecast within the next 2 hours. Exposes the forecast start time as `minutes_until` / `at` attributes so an automation can trigger on it and read the start time directly, and carries the full RV forecast curve in `forecast_5min` (excluded from recorder history) |
-| `Precipitation type` | HymecNG | enum | 5 min | Precipitation type at the location — one of `no_precipitation`, `not_classified`, `drizzle`, `rain`, `freezing_drizzle`, `freezing_rain`, `sleet`, `snow`, `graupel`, `hail`, `large_hail` (`unknown` outside radar coverage) |
+| `Current precipitation type` | HymecNG | enum | 5 min | Current precipitation type at the location — one of `no_precipitation`, `not_classified`, `drizzle`, `rain`, `freezing_drizzle`, `freezing_rain`, `sleet`, `snow`, `graupel`, `hail`, `large_hail` (`unknown` outside radar coverage) |
 | `Precipitation last hour` | RADOLAN RW | mm | 1 h | Radar + station-blended analysis for the past hour |
 | `Precipitation last 24 hours` | RADOLAN SF | mm | 1 h | Radar + station-blended total for the rolling past 24 hours |
 | `Precipitation yesterday` | RADOLAN SF | mm | Daily (~00:18 UTC+1) | Previous calendar day's 24-hour accumulated total |

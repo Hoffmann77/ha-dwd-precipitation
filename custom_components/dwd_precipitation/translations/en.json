@@ -52,7 +52,7 @@
   "entity": {
     "sensor": {
       "precipitation_type": {
-        "name": "Precipitation type",
+        "name": "Current precipitation type",
         "state": {
           "no_precipitation": "No precipitation",
           "not_classified": "Not classified",
