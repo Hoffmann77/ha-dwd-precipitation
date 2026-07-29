@@ -107,7 +107,7 @@ RADVOR_SENSORS = (
     ),
     PrecipitationSensorEntityDescription(
         key="radvor_rs_060",
-        name="Precipitation +0–1 h",
+        name="Precipitation next hour",
         native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
@@ -117,7 +117,7 @@ RADVOR_SENSORS = (
     ),
     PrecipitationSensorEntityDescription(
         key="radvor_rs_120",
-        name="Precipitation +1–2 h",
+        name="Precipitation second hour",
         native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
@@ -133,7 +133,7 @@ RADVOR_SENSORS = (
 RADVOR_RV_SENSORS = (
     PrecipitationSensorEntityDescription(
         key="radvor_rv_max_intensity_060",
-        name="Max intensity +0–1 h",
+        name="Max precipitation intensity next hour",
         native_unit_of_measurement=UnitOfVolumetricFlux.MILLIMETERS_PER_HOUR,
         device_class=SensorDeviceClass.PRECIPITATION_INTENSITY,
         suggested_display_precision=1,
@@ -143,7 +143,7 @@ RADVOR_RV_SENSORS = (
     ),
     PrecipitationSensorEntityDescription(
         key="radvor_rv_max_intensity_120",
-        name="Max intensity +1–2 h",
+        name="Max precipitation intensity second hour",
         native_unit_of_measurement=UnitOfVolumetricFlux.MILLIMETERS_PER_HOUR,
         device_class=SensorDeviceClass.PRECIPITATION_INTENSITY,
         suggested_display_precision=1,
