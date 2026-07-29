@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from custom_components.dwd_precipitation.products import (
+    HymecNG,
     RadolanRW,
     RadolanSF,
     RadvorRS,
@@ -32,7 +33,7 @@ UTC = timezone.utc
 # Drift guard: extractor must agree with the real integration constants
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("cls", [RadvorRS, RadolanRW, RadolanSF])
+@pytest.mark.parametrize("cls", [RadvorRS, RadolanRW, RadolanSF, HymecNG])
 def test_extract_timing_matches_integration(cls):
     """The ast extractor reproduces each class's resolved RELEASE_* constants."""
     timing = extract_timing(cls.__name__)

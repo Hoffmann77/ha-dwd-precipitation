@@ -22,6 +22,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.dwd_precipitation.const import DOMAIN
 from custom_components.dwd_precipitation.coordinator import ProductMetadata
 from custom_components.dwd_precipitation.products import (
+    HymecNG,
     RadolanRW,
     RadolanSF,
     RadolanSFLastYesterday,
@@ -54,6 +55,7 @@ async def test_entry_setup_creates_sensors_with_correct_values(
         "rain_within_2h": True,
     }
     rv_meta = {key: rv_timing for key in rv_data}
+    hymec_meta = ProductMetadata(source_product="HymecNG_top_view", source_timestamp=ts)
 
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -72,6 +74,11 @@ async def test_entry_setup_creates_sensors_with_correct_values(
             RadvorRV,
             "_fetch_and_parse",
             new=AsyncMock(return_value=(rv_data, rv_meta)),
+        ),
+        patch.object(
+            HymecNG,
+            "_fetch_and_parse",
+            new=AsyncMock(return_value=("snow", hymec_meta)),
         ),
         patch.object(
             RadolanRW,
@@ -93,10 +100,11 @@ async def test_entry_setup_creates_sensors_with_correct_values(
         await hass.async_block_till_done()
 
     coordinators = entry.runtime_data.coordinators
-    assert set(coordinators) == {"rs", "rv", "rw", "sf", "sf_2350"}
+    assert set(coordinators) == {"rs", "rv", "hymecng", "rw", "sf", "sf_2350"}
     assert coordinators["rw"].data.data == approx(3.2)
     assert coordinators["rs"].data.data == [1.5, 2.0, None]
     assert coordinators["rv"].data.data["max_060"] == approx(48.0)
+    assert coordinators["hymecng"].data.data == "snow"
 
     # Resolve entity_id via unique_id (avoids relying on HA's slug logic)
     ent_reg = er.async_get(hass)
@@ -137,3 +145,13 @@ async def test_entry_setup_creates_sensors_with_correct_values(
     state = hass.states.get(rain_entry.entity_id)
     assert state is not None
     assert state.state == "on"
+
+    # The HymecNG enum sensor reports the precipitation-type class label.
+    hymec_entry = next(
+        e
+        for e in ent_reg.entities.values()
+        if e.domain == "sensor" and e.unique_id.endswith("hymecng_precipitation_type")
+    )
+    state = hass.states.get(hymec_entry.entity_id)
+    assert state is not None
+    assert state.state == "snow"

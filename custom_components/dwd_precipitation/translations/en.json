@@ -48,5 +48,25 @@
         "clearing": "Rain clears within 2 h"
       }
     }
+  },
+  "entity": {
+    "sensor": {
+      "precipitation_type": {
+        "name": "Precipitation type",
+        "state": {
+          "no_precipitation": "No precipitation",
+          "not_classified": "Not classified",
+          "drizzle": "Drizzle",
+          "rain": "Rain",
+          "freezing_drizzle": "Freezing drizzle",
+          "freezing_rain": "Freezing rain",
+          "sleet": "Sleet",
+          "snow": "Snow",
+          "graupel": "Graupel",
+          "hail": "Hail",
+          "large_hail": "Large hail"
+        }
+      }
+    }
   }
 }

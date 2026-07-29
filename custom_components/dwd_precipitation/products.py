@@ -19,6 +19,7 @@ from .radar import (
     read_radolan_composite,
     get_radolan_grid,
     read_odim_composite,
+    read_odim_classification,
     get_rs_grid_index,
     RS_GRID_SHAPE,
 )
@@ -36,6 +37,7 @@ from .const import (
     DEFAULT_RAIN_THRESHOLD,
     CONF_RAIN_END_ALGORITHM,
     DEFAULT_RAIN_END_ALGORITHM,
+    PRECIP_TYPE_BY_INDEX,
     DWD_RADOLAN_URL,
     DWD_COMPOSITE_URL,
 )
@@ -299,6 +301,78 @@ class RadvorRV(BaseProductUpdateCoordinator):
             "rain_within_2h": rain_meta,
         }
         return data, metadata
+
+
+class HymecNG(BaseProductUpdateCoordinator):
+    """DWD HymecNG precipitation-type composite (ODIM_H5 classification).
+
+    Published every 5 minutes as one ODIM_H5 file (no tar) on the same
+    1200×1100 grid/projection as RS/RV. Each cell is a precipitation *type*
+    class index (rain, snow, freezing rain, hail, …) at 2 m above ground,
+    rather than an amount.
+
+    precipitation → str | None (the class label), metadata → ProductMetadata.
+    """
+
+    PRODUCT_KEY = "hymecng"
+
+    RELEASE_INTERVAL = timedelta(minutes=5)
+
+    # DWD publishes each file ~2 min after its nominal time; wait a little longer
+    # so the coordinator does not fetch before it appears (checked by
+    # scripts/check_release_delay.py).
+    RELEASE_DELAY = timedelta(minutes=3)
+
+    RELEASE_OFFSET = timedelta()
+
+    @cached_property
+    def index(self) -> tuple[int, int]:
+        """Return (row, col) in the HymecNG grid (identical to RS/RV)."""
+        return get_rs_grid_index(*self.coords)
+
+    def _get_url(self, ts: datetime) -> str:
+        """Return the URL for the single ODIM_H5 file."""
+        return (
+            f"{DWD_COMPOSITE_URL}/hymecng/"
+            f"composite_HymecNG_{ts.strftime('%Y%m%d_%H%M')}_000-hd5"
+        )
+
+    async def _fetch_and_parse(self, ts: datetime) -> tuple[str | None, ProductMetadata]:
+        """Fetch one ODIM_H5 file and return the cell's precipitation-type label."""
+        response = await async_get(self._get_url(ts), self.async_client)
+
+        raw, dataset_what, moment_what = read_odim_classification(
+            BytesIO(response.content), expected_shape=RS_GRID_SHAPE
+        )
+        row, col = self.index
+        value = int(raw[row, col])
+
+        nodata = int(round(float(moment_what.get("nodata", 255))))
+        undetect = int(round(float(moment_what.get("undetect", 254))))
+
+        if value == nodata:
+            precip_type: str | None = None          # outside radar coverage
+        elif value == undetect:
+            precip_type = PRECIP_TYPE_BY_INDEX[0]    # scanned, no precipitation
+        elif 0 <= value < len(PRECIP_TYPE_BY_INDEX):
+            precip_type = PRECIP_TYPE_BY_INDEX[value]
+        else:
+            _LOGGER.warning("HymecNG: unexpected class index %s", value)
+            precip_type = None
+
+        data_start = _parse_odim_ts(
+            dataset_what.get("startdate"), dataset_what.get("starttime")
+        )
+        data_end = _parse_odim_ts(
+            dataset_what.get("enddate"), dataset_what.get("endtime")
+        )
+
+        return precip_type, ProductMetadata(
+            source_product=dataset_what.get("prodname") or dataset_what.get("product"),
+            source_timestamp=data_end,
+            data_start=data_start,
+            data_end=data_end,
+        )
 
 
 class RadolanProduct(BaseProductUpdateCoordinator, ABC):

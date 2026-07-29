@@ -169,6 +169,44 @@ def read_odim_composite(
     return data, dataset_what
 
 
+def read_odim_classification(
+    fileobj,
+    dataset: str = "dataset1",
+    moment: str = "data1",
+    expected_shape=None,
+):
+    """Read a Cartesian ODIM_H5 *classification* composite (e.g. HymecNG).
+
+    Unlike :func:`read_odim_composite`, the payload holds a discrete class index
+    (a precipitation-type category) rather than a physical quantity, so it is
+    returned unscaled. Returns ``(raw, dataset_what, moment_what)``:
+
+    * ``raw`` — the integer class-index grid (as stored, dtype preserved),
+    * ``dataset_what`` — the ``/dataset/what`` attributes (validity window),
+    * ``moment_what`` — the ``/dataset/data/what`` attributes, including
+      ``nodata`` and ``undetect`` so the caller can distinguish "outside
+      coverage" from "scanned, no precipitation".
+
+    The file is treated as untrusted input with the same hard-link-only,
+    plain-dataset, shape-pinned checks as :func:`read_odim_composite`.
+    """
+    with h5py.File(fileobj, "r") as hf:
+        dataset_what = {
+            k: _normalise_attr_value(v)
+            for k, v in _resolve_hard(hf, f"{dataset}/what").attrs.items()
+        }
+        moment_what = {
+            k: _normalise_attr_value(v)
+            for k, v in _resolve_hard(hf, f"{dataset}/{moment}/what").attrs.items()
+        }
+        dset = _require_plain_dataset(
+            _resolve_hard(hf, f"{dataset}/{moment}/data"), expected_shape
+        )
+        raw = dset[:]
+
+    return raw, dataset_what, moment_what
+
+
 def get_rs_grid_index(lat: float, lon: float, where: dict | None = None):
     """Return (row, col) of the RS grid cell nearest to (lat, lon).
 

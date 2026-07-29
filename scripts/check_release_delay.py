@@ -213,6 +213,11 @@ PRODUCTS: dict[str, ProductSpec] = {
         "RadvorRS",
         lambda ts: f"{_OPENDATA}/composite/rs/composite_rs_{ts.strftime('%Y%m%d_%H%M')}.tar",
     ),
+    "hymecng": ProductSpec(
+        "hymecng",
+        "HymecNG",
+        lambda ts: f"{_OPENDATA}/composite/hymecng/composite_HymecNG_{ts.strftime('%Y%m%d_%H%M')}_000-hd5",
+    ),
     "rw": ProductSpec(
         "rw",
         "RadolanRW",

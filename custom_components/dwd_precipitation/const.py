@@ -50,6 +50,24 @@ CONF_DRY_STREAK_THRESHOLD = "dry_streak_threshold"
 # mm; "Precipitation now" at/above this value resets the dry streak counter.
 DEFAULT_DRY_STREAK_THRESHOLD = 1.0
 
+# HymecNG precipitation-type classes, indexed by the DWD class value (0..10) as
+# defined by the ODIM legend embedded in the composite. These are the possible
+# states of the "Precipitation type" enum sensor.
+PRECIP_TYPE_BY_INDEX = (
+    "no_precipitation",   # 0  NO_PRECIPITATION
+    "not_classified",     # 1  NOT_CLASSIFIED
+    "drizzle",            # 2  DRIZZLE
+    "rain",               # 3  RAIN
+    "freezing_drizzle",   # 4  FREEZING_DRIZZLE
+    "freezing_rain",      # 5  FREEZING_RAIN
+    "sleet",              # 6  SNOW_RAIN (Schneeregen)
+    "snow",               # 7  SNOW
+    "graupel",            # 8  GRAUPEL
+    "hail",               # 9  HAIL
+    "large_hail",         # 10 LARGE_HAIL
+)
+PRECIP_TYPE_OPTIONS = list(PRECIP_TYPE_BY_INDEX)
+
 DWD_OPENDATA_URL = "https://opendata.dwd.de"
 
 DWD_RADOLAN_URL = f"{DWD_OPENDATA_URL}/weather/radar/radolan"

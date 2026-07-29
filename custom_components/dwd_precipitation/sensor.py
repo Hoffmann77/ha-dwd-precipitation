@@ -34,6 +34,7 @@ from .const import (
     CONF_START_END_MODE,
     DEFAULT_START_END_MODE,
     START_END_MODE_DURATION,
+    PRECIP_TYPE_OPTIONS,
     DOMAIN,
 )
 from .coordinator import BaseProductUpdateCoordinator, ProductMetadata
@@ -153,6 +154,19 @@ RADVOR_RV_SENSORS = (
 )
 
 
+HYMECNG_SENSORS = (
+    PrecipitationSensorEntityDescription(
+        key="hymecng_precipitation_type",
+        translation_key="precipitation_type",
+        icon="mdi:weather-snowy-rainy",
+        device_class=SensorDeviceClass.ENUM,
+        options=PRECIP_TYPE_OPTIONS,
+        product_key="hymecng",
+        access_fn=lambda d: d,
+    ),
+)
+
+
 def _rv_timing_sensors(
     mode: str,
 ) -> tuple[PrecipitationSensorEntityDescription, ...]:
@@ -232,6 +246,7 @@ async def async_setup_entry(
         RADVOR_SENSORS
         + RADVOR_RV_SENSORS
         + _rv_timing_sensors(mode)
+        + HYMECNG_SENSORS
         + RADOLAN_SENSORS
     )
 
@@ -256,7 +271,7 @@ class PrecipitationSensorEntity(DwdCoordinatorEntity, SensorEntity):
     _unrecorded_attributes = frozenset({"forecast_5min"})
 
     @property
-    def native_value(self) -> float | datetime | None:
+    def native_value(self) -> float | datetime | str | None:
         """Return the state of the sensor."""
         if self.coordinator.data is None:
             return None

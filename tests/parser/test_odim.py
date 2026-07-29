@@ -10,9 +10,11 @@ from radar.odim import (
     _parse_proj_param,
     get_rs_grid_index,
     read_odim_composite,
+    read_odim_classification,
 )
 
 from tests.factories.odim import (
+    make_hymecng_h5,
     make_odim_external_link,
     make_odim_h5,
     make_odim_soft_link,
@@ -181,3 +183,36 @@ def test_matching_shape_accepted():
 
 def test_rs_grid_shape_constant():
     assert RS_GRID_SHAPE == (RS_WHERE["ysize"], RS_WHERE["xsize"]) == (1200, 1100)
+
+
+# ===========================================================================
+# Group 6 — read_odim_classification (HymecNG)
+# ===========================================================================
+
+def test_classification_returns_unscaled_class_indices():
+    """Class indices are returned as-is (no gain/offset scaling)."""
+    raw, dataset_what, moment_what = read_odim_classification(make_hymecng_h5(fill=7))
+    assert raw.shape == (5, 5)
+    assert int(raw[2, 2]) == 7  # SNOW, unscaled
+    assert moment_what["quantity"] == "CLASS"
+    assert int(round(moment_what["nodata"])) == 255
+    assert int(round(moment_what["undetect"])) == 254
+
+
+def test_classification_preserves_nodata_and_undetect_sentinels():
+    """nodata/undetect cells keep their sentinel values (not coerced to 0/NaN)."""
+    raw, _dataset_what, moment_what = read_odim_classification(make_hymecng_h5())
+    assert int(raw[0, 0]) == int(round(moment_what["nodata"]))
+    assert int(raw[0, 1]) == int(round(moment_what["undetect"]))
+
+
+def test_classification_returns_validity_window():
+    _raw, dataset_what, _moment_what = read_odim_classification(make_hymecng_h5())
+    assert dataset_what["enddate"] == "20260729"
+    assert dataset_what["endtime"] == "173000"
+    assert dataset_what.get("prodname") or dataset_what.get("product")
+
+
+def test_classification_shape_pinning_rejects_wrong_size():
+    with pytest.raises(ValueError, match="Unexpected composite shape"):
+        read_odim_classification(make_hymecng_h5(shape=(5, 5)), expected_shape=RS_GRID_SHAPE)
