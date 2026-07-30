@@ -5,6 +5,14 @@ requires-python = ">=3.14.2"
 
 [tool.uv]
 package = false  # not a distributable Python package; test in-place via pythonpath
+# Component only runs under HA (Linux/macOS/Windows x86_64); excluding the
+# niche Windows ARM64 slice avoids uv resolving unsatisfiable transitive
+# constraints (e.g. numpy) for a platform nobody targets.
+environments = [
+    "sys_platform == 'linux'",
+    "sys_platform == 'darwin'",
+    "sys_platform == 'win32' and platform_machine != 'ARM64'",
+]
 
 [dependency-groups]
 # Minimal deps for parser + live tests — no HA, no wradlib.
