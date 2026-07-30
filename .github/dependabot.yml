@@ -9,3 +9,9 @@ updates:
     directory: "/"
     schedule:
       interval: "daily"
+    ignore:
+      # 0.13.349 pins homeassistant==2026.8.0b0, a pre-release that uv won't
+      # resolve without --prerelease=allow. Blocks Dependabot's dependency
+      # file entirely until a follow-up release pins a stable HA version.
+      - dependency-name: "pytest-homeassistant-custom-component"
+        versions: ["0.13.349"]
