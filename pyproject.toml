@@ -15,6 +15,14 @@ environments = [
     "sys_platform == 'win32' and platform_machine != 'ARM64'",
 ]
 
+conflicts = [
+    [
+        { group = "unit-test" },
+        { group = "ha-test" },
+        { group = "wradlib-comparison" },
+    ],
+]
+
 [dependency-groups]
 # Minimal deps for parser + live tests — no HA, no wradlib.
 # numpy/aiohttp are pulled so radar/* and utils.py import without HA installed.
