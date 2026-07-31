@@ -6,6 +6,20 @@ requires-python = ">=3.14.2"
 [tool.uv]
 package = false  # not a distributable Python package; test in-place via pythonpath
 
+# The three test groups install conflicting versions of pytest (ha-test pins
+# pytest==9.0.3 via pytest-homeassistant-custom-component; the other groups
+# leave pytest unpinned and get the latest).  Declaring them as conflicts lets
+# uv resolve each group independently and store both versions in the lockfile,
+# which is fine because the CI only ever installs one group at a time
+# (uv sync --only-group <name>).
+conflicts = [
+    [
+        { group = "unit-test" },
+        { group = "ha-test" },
+        { group = "wradlib-comparison" },
+    ],
+]
+
 # Component only runs under HA (Linux/macOS/Windows x86_64); excluding the
 # niche Windows ARM64 slice avoids uv resolving unsatisfiable transitive
 # constraints (e.g. numpy) for a platform nobody targets.
