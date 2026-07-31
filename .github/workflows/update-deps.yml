@@ -1,0 +1,41 @@
+name: Update Python dependencies
+
+# Replaces Dependabot's uv ecosystem management. Dependabot bundles an older
+# uv that cannot resolve our conflicts + environments setup; this workflow
+# uses setup-uv (current uv) with Python 3.14 which handles both correctly.
+
+on:
+  schedule:
+    - cron: "0 4 * * *"   # Daily at 04:00 UTC
+  workflow_dispatch:
+
+jobs:
+  update-deps:
+    name: Upgrade uv.lock and open PR
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.14"
+
+      - name: Upgrade lockfile
+        run: uv lock --upgrade
+
+      - name: Open pull request if lockfile changed
+        uses: peter-evans/create-pull-request@v7
+        with:
+          commit-message: "chore: update uv.lock"
+          branch: deps/uv-lock-upgrade
+          title: "chore: update Python dependencies"
+          body: |
+            Automated dependency update via `uv lock --upgrade`.
+
+            Uses the current uv (via `astral-sh/setup-uv`) and Python 3.14 so that
+            our `conflicts` + `environments` configuration resolves correctly — the
+            uv version bundled in Dependabot cannot handle this setup.
+          labels: dependencies

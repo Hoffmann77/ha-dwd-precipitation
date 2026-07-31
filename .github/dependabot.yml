@@ -5,7 +5,5 @@ updates:
     schedule:
       interval: "weekly"
 
-  - package-ecosystem: "uv"
-    directory: "/"
-    schedule:
-      interval: "daily"
+  # uv ecosystem disabled: Dependabot bundles an older uv that cannot resolve
+  # our conflicts + environments setup. Replaced by .github/workflows/update-deps.yml.
