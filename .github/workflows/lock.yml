@@ -1,0 +1,47 @@
+name: Update uv lockfile
+
+# Regenerates uv.lock whenever pyproject.toml changes — including on
+# Dependabot PR branches — so that tests always run against a lockfile
+# that is consistent with the declared dependencies.
+#
+# Why this exists: Dependabot uses an older uv build to patch the
+# lockfile; that older build lacks Python 3.14.2 in its download index
+# and has known resolution bugs with conflicts + environments.  This
+# workflow reruns uv lock with the current uv (via setup-uv) and commits
+# the result back, so the subsequent test run sees a valid lockfile.
+
+on:
+  push:
+    paths:
+      - pyproject.toml
+
+jobs:
+  lock:
+    name: Regenerate uv.lock
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Check out the pushed branch so we can write back to it.
+          ref: ${{ github.ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          # Ensure a Python >= 3.14.2 is available so uv can resolve
+          # packages that require Python 3.14.2 (e.g. homeassistant).
+          python-version: "3.14"
+
+      - name: Regenerate lockfile
+        run: uv lock
+
+      - name: Commit updated lockfile if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add uv.lock
+          git diff --cached --quiet && exit 0
+          git commit -m "chore: regenerate uv.lock"
+          git push
