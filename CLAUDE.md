@@ -16,7 +16,7 @@ sensor.py             HA SensorEntity descriptors. value_fn pulls from
                       coordinator.data[product_key].
 dry_streak.py         Pure "days without rain" logic: the persisted anchor
                       payload + threshold/downtime-correction helpers used by
-                      the DaysWithoutPrecipitationSensor in sensor.py.
+                      the TimespanWithoutPrecipitationSensor in sensor.py.
 config_flow.py        UI config flow: collects name + lat/lon.
 const.py              DWD OpenData base URLs and HA constants.
 utils.py              async_get() HTTP helper; get_previous_multiple() for

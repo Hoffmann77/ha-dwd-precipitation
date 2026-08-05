@@ -30,7 +30,7 @@ from custom_components.dwd_precipitation.dry_streak import (
 )
 from homeassistant.components.sensor import SensorDeviceClass
 from custom_components.dwd_precipitation.sensor import (
-    DaysWithoutPrecipitationSensor,
+    TimespanWithoutPrecipitationSensor,
     PrecipitationSensorEntity,
     PrecipitationSensorEntityDescription,
     _rv_timing_sensors,
@@ -106,14 +106,14 @@ def test_native_value_uses_access_fn():
 
 
 # ===========================================================================
-# DaysWithoutPrecipitationSensor
+# TimespanWithoutPrecipitationSensor
 # ===========================================================================
 
 def _make_days_sensor(
     dry_since=None, rs_list=None, meta_list=None, threshold=1.0
-) -> DaysWithoutPrecipitationSensor:
-    """Build a DaysWithoutPrecipitationSensor with a stubbed rs coordinator."""
-    sensor = DaysWithoutPrecipitationSensor.__new__(DaysWithoutPrecipitationSensor)
+) -> TimespanWithoutPrecipitationSensor:
+    """Build a TimespanWithoutPrecipitationSensor with a stubbed rs coordinator."""
+    sensor = TimespanWithoutPrecipitationSensor.__new__(TimespanWithoutPrecipitationSensor)
     sensor._dry_since = dry_since
     data = None
     if rs_list is not None:

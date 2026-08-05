@@ -257,7 +257,7 @@ async def async_setup_entry(
         )
         for entity_description in entity_descriptions
     ]
-    entities.append(DaysWithoutPrecipitationSensor(coordinators["rs"]))
+    entities.append(TimespanWithoutPrecipitationSensor(coordinators["rs"]))
 
     async_add_entities(entities)
 
@@ -329,7 +329,7 @@ class PrecipitationSensorEntity(DwdCoordinatorEntity, SensorEntity):
         return attrs
 
 
-class DaysWithoutPrecipitationSensor(
+class TimespanWithoutPrecipitationSensor(
     CoordinatorEntity[BaseProductUpdateCoordinator], RestoreEntity, SensorEntity
 ):
     """Number of days since precipitation last reached the reset threshold.
@@ -342,7 +342,7 @@ class DaysWithoutPrecipitationSensor(
     """
 
     _attr_has_entity_name = True
-    _attr_translation_key = "days_without_precipitation"
+    _attr_translation_key = "timespan_without_precipitation"
     _attr_icon = "mdi:weather-sunny"
     _attr_device_class = SensorDeviceClass.DURATION
     _attr_native_unit_of_measurement = UnitOfTime.DAYS

@@ -30,7 +30,7 @@
           "precipitation_threshold": "A forecast intensity above this value counts as precipitation for the RV start/end sensors. 0 means any DWD-detected rain.",
           "start_end_mode": "Whether the start/end sensors report the absolute time or the minutes until the event. The other value is exposed as an attribute.",
           "precipitation_end_algorithm": "How the precipitation end is determined. \"First dry gap\" ends when the current precipitation episode first lets up; \"Precipitation clears\" ends when no more precipitation is forecast within the 2-hour horizon.",
-          "precipitation_reset_threshold": "\"Precipitation last 1h\" at or above this value resets the Days without precipitation counter."
+          "precipitation_reset_threshold": "\"Precipitation last 1h\" at or above this value resets the Timespan without precipitation counter."
         }
       }
     }
@@ -81,8 +81,8 @@
       "precipitation_end": {
         "name": "Precipitation end within 2h"
       },
-      "days_without_precipitation": {
-        "name": "Days without precipitation"
+      "timespan_without_precipitation": {
+        "name": "Timespan without precipitation"
       },
       "precipitation_type": {
         "name": "Precipitation type now",
