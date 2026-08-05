@@ -133,7 +133,7 @@ RADVOR_SENSORS = (
 RADVOR_RV_SENSORS = (
     PrecipitationSensorEntityDescription(
         key="radvor_rv_max_intensity_060",
-        translation_key="precipitation_peak_next_1h",
+        translation_key="peak_intensity_next_1h",
         native_unit_of_measurement=UnitOfVolumetricFlux.MILLIMETERS_PER_HOUR,
         device_class=SensorDeviceClass.PRECIPITATION_INTENSITY,
         suggested_display_precision=1,
@@ -143,7 +143,7 @@ RADVOR_RV_SENSORS = (
     ),
     PrecipitationSensorEntityDescription(
         key="radvor_rv_max_intensity_120",
-        translation_key="precipitation_peak_next_1_2h",
+        translation_key="peak_intensity_next_1_2h",
         native_unit_of_measurement=UnitOfVolumetricFlux.MILLIMETERS_PER_HOUR,
         device_class=SensorDeviceClass.PRECIPITATION_INTENSITY,
         suggested_display_precision=1,

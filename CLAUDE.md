@@ -41,7 +41,7 @@ radar/                Embedded parsers (no heavy external deps).
 |-------|-----|--------|--------|-------------|
 | `RadvorRS` | `rs` | ODIM_H5 (tar) | 5 min | RADVOR nowcast, 0/60/120 min lead; each grid is a 60-min accumulation (see "RS product specifics") |
 | `RadvorRV` | `rv` | ODIM_H5 (tar) | 5 min | RV nowcast, 25×5-min grids; derives +1h/+2h peak intensity (mm/h), precip start/end timing (episode/clearing end algorithm, user-selectable), and a rain-within-2h flag (whose metadata carries the raw 25-point forecast series, exposed by default) |
-| `HymecNG` | `hymecng` | ODIM_H5 (single .hd5) | 5 min | Precipitation-*type* composite (rain/snow/freezing rain/hail/…); one enum "Precipitation type now" sensor |
+| `HymecNG` | `hymecng` | ODIM_H5 (single .hd5) | 5 min | Precipitation-*type* composite (rain/snow/freezing rain/hail/…); one enum "Precipitation type" sensor |
 | `RadvorRQ` | `rq` | RADOLAN binary (.gz) | 15 min | RADVOR nowcast (deprecated) |
 | `RadolanRW` | `rw` | RADOLAN binary (.bz2) | 1 h | 1-hour precipitation analysis (gauge-adjusted; same window as RS `_000`) |
 | `RadolanSF` | `sf` | RADOLAN binary (.bz2) | 1 h | 24-hour precipitation analysis |
@@ -59,12 +59,24 @@ Names carry the time window in one of three forms, picked by what the value *is*
 | form | meaning | examples |
 |------|---------|----------|
 | `last <N>` | measured accumulation over a window ending now | `Precipitation last 1h`, `Precipitation last 24h` |
-| `next <N>` | forecast accumulation over a future window | `Precipitation next 1h`, `Precipitation next 1–2h` |
-| `within <N>` | event located inside a forecast horizon (not an accumulation) | `Precipitation start within 2h`, `Precipitation expected within 2h` |
+| `next <N>` | forecast value over a future window | `Precipitation next 1h`, `Precipitation next 1–2h`, `Peak intensity next 1h` |
+| `within <N>` | boolean scoped to a forecast horizon | `Precipitation expected within 2h` |
 
 `next 1–2h` is the 60–120 min window, *not* the coming two hours. RS and RW both
 cover the past 60 min, so RW — the slower, rain-gauge-blended product — carries
 the `adjusted` qualifier.
+
+Three entities deliberately carry no window, and should keep it that way:
+
+- `Precipitation start` / `Precipitation end` answer *when*, so the 2 h search
+  horizon is a property of the algorithm rather than of the value — outside the
+  horizon the state is simply `unknown`.
+- `Precipitation type` is the only instantaneous entity, so a `now` would
+  qualify nothing.
+
+`Peak intensity next 1h` / `next 1–2h` drop the `Precipitation` head noun on
+purpose: they are mm/h rather than mm, and the shorter head stops them reading
+as near-duplicates of `Precipitation next 1h` / `next 1–2h` in the entity list.
 
 Entity `key`s are separate from names: they are the unique-id suffix, stay
 product-prefixed (`radvor_*` / `radolan_*` / `hymecng_*`), and must not change
@@ -157,4 +169,4 @@ Current runtime deps: `numpy`, `h5py`
 - **Grid**: identical to RS/RV (1200×1100, same projection) → reuses `get_rs_grid_index` / `RS_GRID_SHAPE`
 - **Encoding**: `uint8` class index 0–10; `nodata=255` (outside coverage → sensor `unknown`), `undetect=254` (scanned, no echo → `no_precipitation`)
 - **Classes** (`PRECIP_TYPE_BY_INDEX` in `const.py`): 0 no_precipitation, 1 not_classified, 2 drizzle, 3 rain, 4 freezing_drizzle, 5 freezing_rain, 6 sleet, 7 snow, 8 graupel, 9 hail, 10 large_hail
-- **Sensor**: one `SensorDeviceClass.ENUM` "Precipitation type now" sensor; state labels are translated via the `precipitation_type` entity translation key
+- **Sensor**: one `SensorDeviceClass.ENUM` "Precipitation type" sensor; state labels are translated via the `precipitation_type` entity translation key
