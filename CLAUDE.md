@@ -41,7 +41,7 @@ radar/                Embedded parsers (no heavy external deps).
 |-------|-----|--------|--------|-------------|
 | `RadvorRS` | `rs` | ODIM_H5 (tar) | 5 min | RADVOR nowcast, 0/60/120 min lead; each grid is a 60-min accumulation (see "RS product specifics") |
 | `RadvorRV` | `rv` | ODIM_H5 (tar) | 5 min | RV nowcast, 25×5-min grids; derives +1h/+2h peak intensity (mm/h), precip start/end timing (episode/clearing end algorithm, user-selectable), and a rain-within-2h flag (whose metadata carries the raw 25-point forecast series, exposed by default) |
-| `HymecNG` | `hymecng` | ODIM_H5 (single .hd5) | 5 min | Precipitation-*type* composite (rain/snow/freezing rain/hail/…); one enum "Precipitation type now" sensor |
+| `HymecNG` | `hymecng` | ODIM_H5 (single .hd5) | 5 min | Precipitation-*type* composite (rain/snow/freezing rain/hail/…); one enum "Precipitation type" sensor |
 | `RadvorRQ` | `rq` | RADOLAN binary (.gz) | 15 min | RADVOR nowcast (deprecated) |
 | `RadolanRW` | `rw` | RADOLAN binary (.bz2) | 1 h | 1-hour precipitation analysis (gauge-adjusted; same window as RS `_000`) |
 | `RadolanSF` | `sf` | RADOLAN binary (.bz2) | 1 h | 24-hour precipitation analysis |
@@ -54,17 +54,40 @@ hardcoded `name=` / `_attr_name`. HA derives the entity id by slugifying the
 English name, so the name is also the id: `Precipitation next 1–2h` →
 `sensor.<device>_precipitation_next_1_2h`. Keep names slug-friendly.
 
-Names carry the time window in one of three forms, picked by what the value *is*:
+A name states a window only when the window is part of the *value*. Two forms:
 
 | form | meaning | examples |
 |------|---------|----------|
 | `last <N>` | measured accumulation over a window ending now | `Precipitation last 1h`, `Precipitation last 24h` |
-| `next <N>` | forecast accumulation over a future window | `Precipitation next 1h`, `Precipitation next 1–2h` |
-| `within <N>` | event located inside a forecast horizon (not an accumulation) | `Precipitation start within 2h`, `Precipitation expected within 2h` |
+| `next <N>` | forecast value over a future window | `Precipitation next 1h`, `Precipitation next 1–2h`, `Peak intensity next 1h` |
 
-`next 1–2h` is the 60–120 min window, *not* the coming two hours. RS and RW both
-cover the past 60 min, so RW — the slower, rain-gauge-blended product — carries
-the `adjusted` qualifier.
+`next 1–2h` is the 60–120 min window, *not* the coming two hours.
+
+`Precipitation now` (RS `_000`) is the deliberate exception. It is *also* a
+60-minute accumulation ending now — the same window as `Precipitation last 1h`
+(RW) — but it is named for its role, the live figure refreshed every 5 minutes,
+rather than for its window. Two consequences worth keeping in mind:
+
+- Because the two names no longer look alike, RW needs no distinguishing
+  qualifier and is plain `Precipitation last 1h`, consistent with the rest of
+  the RADOLAN family.
+- The name no longer states the window, so the README entity table has to. It is
+  mm accumulated over the past hour, **not** a mm/h rate — the reset-threshold
+  option compares against it, so 1.0 mm means "1 mm fell in the last hour".
+
+Everything else carries no window, and should keep it that way. The RV 2 h
+horizon in particular is a property of the *algorithm*, not of the value, so it
+belongs in the docs rather than in four entity names:
+
+- `Precipitation start` / `Precipitation end` answer *when*; outside the horizon
+  the state is simply `unknown`.
+- `Precipitation expected` is a flag; `off` already covers "not in the horizon".
+- `Precipitation type` is the only genuinely instantaneous value, so it needs no
+  qualifier (and `now` would collide with the RS sensor's name).
+
+`Peak intensity next 1h` / `next 1–2h` drop the `Precipitation` head noun on
+purpose: they are mm/h rather than mm, and the shorter head stops them reading
+as near-duplicates of `Precipitation next 1h` / `next 1–2h` in the entity list.
 
 Entity `key`s are separate from names: they are the unique-id suffix, stay
 product-prefixed (`radvor_*` / `radolan_*` / `hymecng_*`), and must not change
@@ -143,8 +166,9 @@ Current runtime deps: `numpy`, `h5py`
 - **Accumulation window**: each grid is a **60-minute** sum, *not* an instantaneous
   rate — `_000`'s `what/startdate..enddate` spans T−60 min to T (verified against
   `tests/fixtures/composite_rs_sample.hd5`: 06:50 → 07:50 for a 07:50 file). So
-  `_000` is "precipitation over the past hour" (hence the entity name
-  `Precipitation last 1h`), `_060` covers T→T+60, and `_120` covers T+60→T+120.
+  `_000` is "precipitation over the past hour" — exposed as `Precipitation now`,
+  which is named for its role rather than this window (see "Entity naming") —
+  `_060` covers T→T+60, and `_120` covers T+60→T+120.
 - **Grid**: `xsize=1100`, `ysize=1200`, `xscale=yscale=1000.0 m`
 - **Projection**: `+proj=stere +lat_ts=60 +lat_0=90 +lon_0=10 +x_0=543196.835... +y_0=3622588.861...` (WGS84)
 - **Fetching**: `RadvorRS.update()` downloads one tar and extracts the `_000`, `_060`, `_120` members using stdlib `tarfile`
@@ -157,4 +181,4 @@ Current runtime deps: `numpy`, `h5py`
 - **Grid**: identical to RS/RV (1200×1100, same projection) → reuses `get_rs_grid_index` / `RS_GRID_SHAPE`
 - **Encoding**: `uint8` class index 0–10; `nodata=255` (outside coverage → sensor `unknown`), `undetect=254` (scanned, no echo → `no_precipitation`)
 - **Classes** (`PRECIP_TYPE_BY_INDEX` in `const.py`): 0 no_precipitation, 1 not_classified, 2 drizzle, 3 rain, 4 freezing_drizzle, 5 freezing_rain, 6 sleet, 7 snow, 8 graupel, 9 hail, 10 large_hail
-- **Sensor**: one `SensorDeviceClass.ENUM` "Precipitation type now" sensor; state labels are translated via the `precipitation_type` entity translation key
+- **Sensor**: one `SensorDeviceClass.ENUM` "Precipitation type" sensor; state labels are translated via the `precipitation_type` entity translation key

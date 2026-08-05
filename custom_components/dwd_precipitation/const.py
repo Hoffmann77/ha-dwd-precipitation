@@ -47,7 +47,7 @@ DEFAULT_PRECIPITATION_END_ALGORITHM = DEFAULT_END_ALGO
 
 CONF_PRECIPITATION_RESET_THRESHOLD = "precipitation_reset_threshold"
 
-# mm; "Precipitation last 1h" at/above this value resets the dry streak counter.
+# mm; "Precipitation now" at/above this value resets the dry streak counter.
 DEFAULT_PRECIPITATION_RESET_THRESHOLD = 1.0
 
 # HymecNG precipitation-type classes, indexed by the DWD class value (0..10) as

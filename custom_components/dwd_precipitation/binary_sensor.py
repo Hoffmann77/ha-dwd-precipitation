@@ -27,7 +27,7 @@ class DwdBinarySensorEntityDescription(BinarySensorEntityDescription):
 
 BINARY_SENSORS = (
     DwdBinarySensorEntityDescription(
-        key="radvor_rv_precipitation_expected_2h",
+        key="radvor_rv_precipitation_expected_120",
         translation_key="precipitation_expected",
         icon="mdi:weather-rainy",
         product_key="rv",
