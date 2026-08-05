@@ -1,4 +1,4 @@
-"""Domain logic for the "days without rain" dry-streak sensor.
+"""Domain logic for the "Timespan without precipitation" dry-streak sensor.
 
 Holds the persisted-anchor payload and the pure helpers that decide where the
 dry-streak anchor should sit. Kept separate from ``sensor.py`` so the streak

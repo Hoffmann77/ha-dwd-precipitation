@@ -39,13 +39,36 @@ radar/                Embedded parsers (no heavy external deps).
 
 | Class | Key | Format | Update | Description |
 |-------|-----|--------|--------|-------------|
-| `RadvorRS` | `rs` | ODIM_H5 (tar) | 5 min | RADVOR nowcast, 0/60/120 min lead |
+| `RadvorRS` | `rs` | ODIM_H5 (tar) | 5 min | RADVOR nowcast, 0/60/120 min lead; each grid is a 60-min accumulation (see "RS product specifics") |
 | `RadvorRV` | `rv` | ODIM_H5 (tar) | 5 min | RV nowcast, 25×5-min grids; derives +1h/+2h peak intensity (mm/h), precip start/end timing (episode/clearing end algorithm, user-selectable), and a rain-within-2h flag (whose metadata carries the raw 25-point forecast series, exposed by default) |
 | `HymecNG` | `hymecng` | ODIM_H5 (single .hd5) | 5 min | Precipitation-*type* composite (rain/snow/freezing rain/hail/…); one enum "Precipitation type now" sensor |
 | `RadvorRQ` | `rq` | RADOLAN binary (.gz) | 15 min | RADVOR nowcast (deprecated) |
-| `RadolanRW` | `rw` | RADOLAN binary (.bz2) | 1 h | 1-hour precipitation analysis |
+| `RadolanRW` | `rw` | RADOLAN binary (.bz2) | 1 h | 1-hour precipitation analysis (gauge-adjusted; same window as RS `_000`) |
 | `RadolanSF` | `sf` | RADOLAN binary (.bz2) | 1 h | 24-hour precipitation analysis |
 | `RadolanSFLastYesterday` | `sf_2350` | same as SF | daily | Yesterday's 24 h total |
+
+## Entity naming
+
+Every entity name is set via `translation_key` + `translations/en.json` — never a
+hardcoded `name=` / `_attr_name`. HA derives the entity id by slugifying the
+English name, so the name is also the id: `Precipitation next 1–2h` →
+`sensor.<device>_precipitation_next_1_2h`. Keep names slug-friendly.
+
+Names carry the time window in one of three forms, picked by what the value *is*:
+
+| form | meaning | examples |
+|------|---------|----------|
+| `last <N>` | measured accumulation over a window ending now | `Precipitation last 1h`, `Precipitation last 24h` |
+| `next <N>` | forecast accumulation over a future window | `Precipitation next 1h`, `Precipitation next 1–2h` |
+| `within <N>` | event located inside a forecast horizon (not an accumulation) | `Precipitation start within 2h`, `Precipitation expected within 2h` |
+
+`next 1–2h` is the 60–120 min window, *not* the coming two hours. RS and RW both
+cover the past 60 min, so RW — the slower, rain-gauge-blended product — carries
+the `adjusted` qualifier.
+
+Entity `key`s are separate from names: they are the unique-id suffix, stay
+product-prefixed (`radvor_*` / `radolan_*` / `hymecng_*`), and must not change
+once released, since renaming one orphans the user's entity.
 
 ## Adding a new DWD product
 
@@ -55,7 +78,8 @@ radar/                Embedded parsers (no heavy external deps).
 4. Override `index` (cached_property) if the grid differs from RADOLAN 900×900
 5. Add sensor descriptors in `sensor.py` (new `*_SENSORS` tuple)
 6. Register the class in `__init__.py` `products` tuple
-7. Register sensors in `sensor.py` `async_setup_entry`
+7. Register sensors in `sensor.py` `async_setup_entry`, and add each
+   `translation_key`'s name to `translations/en.json`
 
 ## Release timing
 
@@ -116,6 +140,11 @@ Current runtime deps: `numpy`, `h5py`
 - **Archive**: one `.tar` per 5-minute release, containing 25 `.hd5` files (`_000-hd5` to `_120-hd5`)
 - **Format**: ODIM_H5 H5rad 2.3, `object=COMP` (Cartesian composite)
 - **Quantity**: `ACRR` (accumulated rainfall, mm), `gain=0.001`, `offset=-0.001`
+- **Accumulation window**: each grid is a **60-minute** sum, *not* an instantaneous
+  rate — `_000`'s `what/startdate..enddate` spans T−60 min to T (verified against
+  `tests/fixtures/composite_rs_sample.hd5`: 06:50 → 07:50 for a 07:50 file). So
+  `_000` is "precipitation over the past hour" (hence the entity name
+  `Precipitation last 1h`), `_060` covers T→T+60, and `_120` covers T+60→T+120.
 - **Grid**: `xsize=1100`, `ysize=1200`, `xscale=yscale=1000.0 m`
 - **Projection**: `+proj=stere +lat_ts=60 +lat_0=90 +lon_0=10 +x_0=543196.835... +y_0=3622588.861...` (WGS84)
 - **Fetching**: `RadvorRS.update()` downloads one tar and extracts the `_000`, `_060`, `_120` members using stdlib `tarfile`
