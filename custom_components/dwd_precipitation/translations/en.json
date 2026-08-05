@@ -103,7 +103,7 @@
     },
     "binary_sensor": {
       "precipitation_expected": {
-        "name": "Precipitation expected within 2h"
+        "name": "Precipitation expected"
       }
     }
   }

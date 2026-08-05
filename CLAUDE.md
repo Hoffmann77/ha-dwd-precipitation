@@ -54,23 +54,24 @@ hardcoded `name=` / `_attr_name`. HA derives the entity id by slugifying the
 English name, so the name is also the id: `Precipitation next 1–2h` →
 `sensor.<device>_precipitation_next_1_2h`. Keep names slug-friendly.
 
-Names carry the time window in one of three forms, picked by what the value *is*:
+A name states a window only when the window is part of the *value*. Two forms:
 
 | form | meaning | examples |
 |------|---------|----------|
 | `last <N>` | measured accumulation over a window ending now | `Precipitation last 1h`, `Precipitation last 24h` |
 | `next <N>` | forecast value over a future window | `Precipitation next 1h`, `Precipitation next 1–2h`, `Peak intensity next 1h` |
-| `within <N>` | boolean scoped to a forecast horizon | `Precipitation expected within 2h` |
 
 `next 1–2h` is the 60–120 min window, *not* the coming two hours. RS and RW both
 cover the past 60 min, so RW — the slower, rain-gauge-blended product — carries
 the `adjusted` qualifier.
 
-Three entities deliberately carry no window, and should keep it that way:
+Everything else carries no window, and should keep it that way. The RV 2 h
+horizon in particular is a property of the *algorithm*, not of the value, so it
+belongs in the docs rather than in four entity names:
 
-- `Precipitation start` / `Precipitation end` answer *when*, so the 2 h search
-  horizon is a property of the algorithm rather than of the value — outside the
-  horizon the state is simply `unknown`.
+- `Precipitation start` / `Precipitation end` answer *when*; outside the horizon
+  the state is simply `unknown`.
+- `Precipitation expected` is a flag; `off` already covers "not in the horizon".
 - `Precipitation type` is the only instantaneous entity, so a `now` would
   qualify nothing.
 
