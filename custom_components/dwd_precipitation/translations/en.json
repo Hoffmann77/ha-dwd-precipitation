@@ -30,7 +30,7 @@
           "precipitation_threshold": "A forecast intensity above this value counts as precipitation for the RV start/end sensors. 0 means any DWD-detected rain.",
           "start_end_mode": "Whether the start/end sensors report the absolute time or the minutes until the event. The other value is exposed as an attribute.",
           "precipitation_end_algorithm": "How the precipitation end is determined. \"First dry gap\" ends when the current precipitation episode first lets up; \"Precipitation clears\" ends when no more precipitation is forecast within the 2-hour horizon.",
-          "precipitation_reset_threshold": "\"Precipitation now\" at or above this value resets the Timespan without precipitation counter."
+          "precipitation_reset_threshold": "\"Precipitation last 1h\" at or above this value resets the Days without precipitation counter."
         }
       }
     }
@@ -51,6 +51,39 @@
   },
   "entity": {
     "sensor": {
+      "precipitation_last_1h": {
+        "name": "Precipitation last 1h"
+      },
+      "precipitation_last_1h_adjusted": {
+        "name": "Precipitation last 1h adjusted"
+      },
+      "precipitation_last_24h": {
+        "name": "Precipitation last 24h"
+      },
+      "precipitation_yesterday": {
+        "name": "Precipitation yesterday"
+      },
+      "precipitation_next_1h": {
+        "name": "Precipitation next 1h"
+      },
+      "precipitation_next_1_2h": {
+        "name": "Precipitation next 1–2h"
+      },
+      "precipitation_peak_next_1h": {
+        "name": "Precipitation peak next 1h"
+      },
+      "precipitation_peak_next_1_2h": {
+        "name": "Precipitation peak next 1–2h"
+      },
+      "precipitation_start": {
+        "name": "Precipitation start within 2h"
+      },
+      "precipitation_end": {
+        "name": "Precipitation end within 2h"
+      },
+      "days_without_precipitation": {
+        "name": "Days without precipitation"
+      },
       "precipitation_type": {
         "name": "Precipitation type now",
         "state": {
@@ -66,6 +99,11 @@
           "hail": "Hail",
           "large_hail": "Large hail"
         }
+      }
+    },
+    "binary_sensor": {
+      "precipitation_expected": {
+        "name": "Precipitation expected within 2h"
       }
     }
   }

@@ -63,7 +63,7 @@ class PrecipitationSensorEntityDescription(SensorEntityDescription):
 RADOLAN_SENSORS = (
     PrecipitationSensorEntityDescription(
         key="radolan_rw",
-        name="Precipitation last hour",
+        translation_key="precipitation_last_1h_adjusted",
         native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
@@ -73,7 +73,7 @@ RADOLAN_SENSORS = (
     ),
     PrecipitationSensorEntityDescription(
         key="radolan_sf",
-        name="Precipitation last 24 hours",
+        translation_key="precipitation_last_24h",
         native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
@@ -83,7 +83,7 @@ RADOLAN_SENSORS = (
     ),
     PrecipitationSensorEntityDescription(
         key="radolan_sf_yesterday",
-        name="Precipitation yesterday",
+        translation_key="precipitation_yesterday",
         native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
@@ -97,7 +97,7 @@ RADOLAN_SENSORS = (
 RADVOR_SENSORS = (
     PrecipitationSensorEntityDescription(
         key="radvor_rs_000",
-        name="Precipitation now",
+        translation_key="precipitation_last_1h",
         native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
@@ -107,7 +107,7 @@ RADVOR_SENSORS = (
     ),
     PrecipitationSensorEntityDescription(
         key="radvor_rs_060",
-        name="Precipitation next hour",
+        translation_key="precipitation_next_1h",
         native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
@@ -117,7 +117,7 @@ RADVOR_SENSORS = (
     ),
     PrecipitationSensorEntityDescription(
         key="radvor_rs_120",
-        name="Precipitation second hour",
+        translation_key="precipitation_next_1_2h",
         native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
@@ -133,7 +133,7 @@ RADVOR_SENSORS = (
 RADVOR_RV_SENSORS = (
     PrecipitationSensorEntityDescription(
         key="radvor_rv_max_intensity_060",
-        name="Max precipitation intensity next hour",
+        translation_key="precipitation_peak_next_1h",
         native_unit_of_measurement=UnitOfVolumetricFlux.MILLIMETERS_PER_HOUR,
         device_class=SensorDeviceClass.PRECIPITATION_INTENSITY,
         suggested_display_precision=1,
@@ -143,7 +143,7 @@ RADVOR_RV_SENSORS = (
     ),
     PrecipitationSensorEntityDescription(
         key="radvor_rv_max_intensity_120",
-        name="Max precipitation intensity second hour",
+        translation_key="precipitation_peak_next_1_2h",
         native_unit_of_measurement=UnitOfVolumetricFlux.MILLIMETERS_PER_HOUR,
         device_class=SensorDeviceClass.PRECIPITATION_INTENSITY,
         suggested_display_precision=1,
@@ -157,7 +157,6 @@ RADVOR_RV_SENSORS = (
 HYMECNG_SENSORS = (
     PrecipitationSensorEntityDescription(
         key="hymecng_precipitation_type",
-        name="Precipitation type now",
         translation_key="precipitation_type",
         icon="mdi:weather-snowy-rainy",
         device_class=SensorDeviceClass.ENUM,
@@ -181,7 +180,7 @@ def _rv_timing_sensors(
         return (
             PrecipitationSensorEntityDescription(
                 key="radvor_rv_precipitation_start",
-                name="Precipitation start +2h",
+                translation_key="precipitation_start",
                 native_unit_of_measurement=UnitOfTime.MINUTES,
                 device_class=SensorDeviceClass.DURATION,
                 state_class=SensorStateClass.MEASUREMENT,
@@ -191,7 +190,7 @@ def _rv_timing_sensors(
             ),
             PrecipitationSensorEntityDescription(
                 key="radvor_rv_precipitation_end",
-                name="Precipitation end +2h",
+                translation_key="precipitation_end",
                 native_unit_of_measurement=UnitOfTime.MINUTES,
                 device_class=SensorDeviceClass.DURATION,
                 state_class=SensorStateClass.MEASUREMENT,
@@ -205,7 +204,7 @@ def _rv_timing_sensors(
     return (
         PrecipitationSensorEntityDescription(
             key="radvor_rv_precipitation_start",
-            name="Precipitation start +2h",
+            translation_key="precipitation_start",
             device_class=SensorDeviceClass.TIMESTAMP,
             product_key="rv",
             access_fn=lambda d: d["start_at"],
@@ -213,7 +212,7 @@ def _rv_timing_sensors(
         ),
         PrecipitationSensorEntityDescription(
             key="radvor_rv_precipitation_end",
-            name="Precipitation end +2h",
+            translation_key="precipitation_end",
             device_class=SensorDeviceClass.TIMESTAMP,
             product_key="rv",
             access_fn=lambda d: d["end_at"],
@@ -258,7 +257,7 @@ async def async_setup_entry(
         )
         for entity_description in entity_descriptions
     ]
-    entities.append(TimespanWithoutPrecipitationSensor(coordinators["rs"]))
+    entities.append(DaysWithoutPrecipitationSensor(coordinators["rs"]))
 
     async_add_entities(entities)
 
@@ -330,20 +329,20 @@ class PrecipitationSensorEntity(DwdCoordinatorEntity, SensorEntity):
         return attrs
 
 
-class TimespanWithoutPrecipitationSensor(
+class DaysWithoutPrecipitationSensor(
     CoordinatorEntity[BaseProductUpdateCoordinator], RestoreEntity, SensorEntity
 ):
     """Number of days since precipitation last reached the reset threshold.
 
     Counts elapsed time since an anchor (``dry_since``). The anchor is re-set
-    whenever "precipitation now" reaches the configurable threshold, and stands
+    whenever "Precipitation last 1h" reaches the configurable threshold, and stands
     otherwise, so the value grows continuously while it stays dry and drops back
     to ~0 when it rains. The anchor is persisted across restarts and corrected on
     startup against the RW/SF accumulation products to catch rain during downtime.
     """
 
     _attr_has_entity_name = True
-    _attr_name = "Timespan without precipitation"
+    _attr_translation_key = "days_without_precipitation"
     _attr_icon = "mdi:weather-sunny"
     _attr_device_class = SensorDeviceClass.DURATION
     _attr_native_unit_of_measurement = UnitOfTime.DAYS
@@ -351,7 +350,7 @@ class TimespanWithoutPrecipitationSensor(
     _attr_suggested_display_precision = 2
 
     def __init__(self, coordinator: BaseProductUpdateCoordinator) -> None:
-        """Initialize the sensor, bound to the RS ("precipitation now") coordinator."""
+        """Initialize the sensor, bound to the RS ("Precipitation last 1h") coordinator."""
         super().__init__(coordinator)
         entry = coordinator.config_entry
         self._attr_unique_id = f"{entry.entry_id}_timespan_without_precipitation"
@@ -370,12 +369,12 @@ class TimespanWithoutPrecipitationSensor(
         )
 
     def _precip_now(self) -> float | None:
-        """Return the current "precipitation now" value (mm), or None if unavailable."""
+        """Return the latest RS hourly total (mm), or None if unavailable."""
         cdata = self.coordinator.data
         if cdata is None or cdata.data is None:
             return None
 
-        value = cdata.data[0]  # rs lead time [0] == "precipitation now"
+        value = cdata.data[0]  # rs lead time [0] == the past hour's total
         if value is None:
             return None
 
