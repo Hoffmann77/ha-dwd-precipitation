@@ -61,9 +61,19 @@ A name states a window only when the window is part of the *value*. Two forms:
 | `last <N>` | measured accumulation over a window ending now | `Precipitation last 1h`, `Precipitation last 24h` |
 | `next <N>` | forecast value over a future window | `Precipitation next 1h`, `Precipitation next 1–2h`, `Peak intensity next 1h` |
 
-`next 1–2h` is the 60–120 min window, *not* the coming two hours. RS and RW both
-cover the past 60 min, so RW — the slower, rain-gauge-blended product — carries
-the `adjusted` qualifier.
+`next 1–2h` is the 60–120 min window, *not* the coming two hours.
+
+`Precipitation now` (RS `_000`) is the deliberate exception. It is *also* a
+60-minute accumulation ending now — the same window as `Precipitation last 1h`
+(RW) — but it is named for its role, the live figure refreshed every 5 minutes,
+rather than for its window. Two consequences worth keeping in mind:
+
+- Because the two names no longer look alike, RW needs no distinguishing
+  qualifier and is plain `Precipitation last 1h`, consistent with the rest of
+  the RADOLAN family.
+- The name no longer states the window, so the README entity table has to. It is
+  mm accumulated over the past hour, **not** a mm/h rate — the reset-threshold
+  option compares against it, so 1.0 mm means "1 mm fell in the last hour".
 
 Everything else carries no window, and should keep it that way. The RV 2 h
 horizon in particular is a property of the *algorithm*, not of the value, so it
@@ -72,8 +82,8 @@ belongs in the docs rather than in four entity names:
 - `Precipitation start` / `Precipitation end` answer *when*; outside the horizon
   the state is simply `unknown`.
 - `Precipitation expected` is a flag; `off` already covers "not in the horizon".
-- `Precipitation type` is the only instantaneous entity, so a `now` would
-  qualify nothing.
+- `Precipitation type` is the only genuinely instantaneous value, so it needs no
+  qualifier (and `now` would collide with the RS sensor's name).
 
 `Peak intensity next 1h` / `next 1–2h` drop the `Precipitation` head noun on
 purpose: they are mm/h rather than mm, and the shorter head stops them reading
@@ -156,8 +166,9 @@ Current runtime deps: `numpy`, `h5py`
 - **Accumulation window**: each grid is a **60-minute** sum, *not* an instantaneous
   rate — `_000`'s `what/startdate..enddate` spans T−60 min to T (verified against
   `tests/fixtures/composite_rs_sample.hd5`: 06:50 → 07:50 for a 07:50 file). So
-  `_000` is "precipitation over the past hour" (hence the entity name
-  `Precipitation last 1h`), `_060` covers T→T+60, and `_120` covers T+60→T+120.
+  `_000` is "precipitation over the past hour" — exposed as `Precipitation now`,
+  which is named for its role rather than this window (see "Entity naming") —
+  `_060` covers T→T+60, and `_120` covers T+60→T+120.
 - **Grid**: `xsize=1100`, `ysize=1200`, `xscale=yscale=1000.0 m`
 - **Projection**: `+proj=stere +lat_ts=60 +lat_0=90 +lon_0=10 +x_0=543196.835... +y_0=3622588.861...` (WGS84)
 - **Fetching**: `RadvorRS.update()` downloads one tar and extracts the `_000`, `_060`, `_120` members using stdlib `tarfile`

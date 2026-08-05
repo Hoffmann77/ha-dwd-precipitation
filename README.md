@@ -97,7 +97,7 @@ After setup, open the integration's **Configure** dialog (**Settings > Devices &
 | Precipitation detection threshold (mm per hour) | 0.0 | An RV forecast intensity above this value counts as precipitation for the `Precipitation start` / `Precipitation end` and `Precipitation expected` sensors. `0.0` means any DWD-detected rain; raise it to ignore drizzle/noise |
 | Precipitation start/end sensor state | Absolute time | Whether the `Precipitation start`/`end` sensors report the absolute time (device class *timestamp*) or the minutes until the event (device class *duration*). The unused representation is exposed as an attribute |
 | Precipitation end algorithm | First dry gap | How `Precipitation end` is derived from the forecast series. *First dry gap* ends the current rain episode at the first dry 5-minute window after it starts. *Precipitation clears within 2 h* looks past any lull to the last forecast precipitation, reporting when precipitation is gone for the rest of the horizon. They agree for a single uninterrupted episode and differ when rain arrives in separate waves |
-| Precipitation reset threshold (mm) | 1.0 | `Precipitation last 1h` at or above this value resets the `Timespan without precipitation` counter |
+| Precipitation reset threshold (mm) | 1.0 | `Precipitation now` at or above this value resets the `Timespan without precipitation` counter |
 
 Some entities expose **companion attributes at all times** — these are a feature, not gated behind any option:
 
@@ -127,16 +127,21 @@ Entity names follow one rule, so the window is always readable from the name:
 - **`last …`** — a measured accumulation over a window *ending now*
 - **`next …`** — a forecast value over a *future* window (`next 1–2h` is the 60–120 minute window, not the coming two hours)
 
+`Precipitation now` is the exception: it is named for its role — the live figure,
+refreshed every 5 minutes — rather than its window. It is still **millimetres
+accumulated over the past 60 minutes**, not a rate, and covers the same period as
+`Precipitation last 1h`; the difference is how fast it updates and how it is
+computed (see the table below).
+
 The RV sensors carry no window: their 2-hour horizon is a property of the search,
 not of the value. `Precipitation start` / `end` answer *when* and report
 `unknown` outside the horizon, `Precipitation expected` is a flag whose `off`
-already means "not in the horizon", and `Precipitation type` is the one
-instantaneous value.
+already means "not in the horizon", and `Precipitation type` is instantaneous.
 
 | Entity | Data source | Unit | Update interval | Description |
 |--------|-------------|------|-----------------|-------------|
-| `Precipitation last 1h` | RADVOR RS | mm | 5 min | Radar-only total for the past 60 minutes, refreshed every 5 minutes — the responsive counterpart to `Precipitation last 1h adjusted` |
-| `Precipitation last 1h adjusted` | RADOLAN RW | mm | 1 h | Same 60-minute window, radar + rain-gauge blended. Slower to arrive but the more accurate of the two |
+| `Precipitation now` | RADVOR RS | mm | 5 min | Radar-only total **for the past 60 minutes** (mm, not mm/h), refreshed every 5 minutes — the live counterpart to `Precipitation last 1h`. Use this one when you want the value to move promptly |
+| `Precipitation last 1h` | RADOLAN RW | mm | 1 h | The same 60-minute window, radar + rain-gauge blended. Arrives once an hour, but is the more accurate of the two |
 | `Precipitation last 24h` | RADOLAN SF | mm | 1 h | Radar + station-blended total for the rolling past 24 hours |
 | `Precipitation yesterday` | RADOLAN SF | mm | Daily (~00:18 UTC+1) | Previous calendar day's 24-hour accumulated total |
 | `Precipitation type` | HymecNG | enum | 5 min | Current precipitation type at the location — one of `no_precipitation`, `not_classified`, `drizzle`, `rain`, `freezing_drizzle`, `freezing_rain`, `sleet`, `snow`, `graupel`, `hail`, `large_hail` (`unknown` outside radar coverage) |
@@ -147,7 +152,7 @@ instantaneous value.
 | `Precipitation start` | RADVOR RV | timestamp / min | 5 min | When precipitation begins at the location within the next 2 hours (`0` / now if already raining, `unknown` if none within 2 h). Reports the absolute time or the minutes-until value per the *start/end sensor state* option; the other form is the `minutes_until` / `at` attribute |
 | `Precipitation end` | RADVOR RV | timestamp / min | 5 min | When precipitation ends (`unknown` if it continues beyond the 2 h horizon). The *Precipitation end algorithm* option chooses between ending at the first dry gap or when rain clears for the rest of the horizon. Same representation option as `Precipitation start` |
 | `Precipitation expected` | RADVOR RV | on / off | 5 min | `on` when precipitation is forecast within the next 2 hours. Exposes the forecast start time as `minutes_until` / `at` attributes so an automation can trigger on it and read the start time directly, and carries the full RV forecast curve in `forecast_5min` (excluded from recorder history) |
-| `Timespan without precipitation` | RADVOR RS | days | 5 min | Time since `Precipitation last 1h` last reached the rain reset threshold; exposes `hours_without_precipitation` and `dry_since` attributes. Persists across restarts and is corrected on startup against the RW/SF totals for rain during downtime |
+| `Timespan without precipitation` | RADVOR RS | days | 5 min | Time since `Precipitation now` last reached the rain reset threshold; exposes `hours_without_precipitation` and `dry_since` attributes. Persists across restarts and is corrected on startup against the RW/SF totals for rain during downtime |
 
 ## Troubleshooting
 

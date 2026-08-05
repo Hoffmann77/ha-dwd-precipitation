@@ -63,7 +63,7 @@ class PrecipitationSensorEntityDescription(SensorEntityDescription):
 RADOLAN_SENSORS = (
     PrecipitationSensorEntityDescription(
         key="radolan_rw",
-        translation_key="precipitation_last_1h_adjusted",
+        translation_key="precipitation_last_1h",
         native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
@@ -97,7 +97,7 @@ RADOLAN_SENSORS = (
 RADVOR_SENSORS = (
     PrecipitationSensorEntityDescription(
         key="radvor_rs_000",
-        translation_key="precipitation_last_1h",
+        translation_key="precipitation_now",
         native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
@@ -335,7 +335,7 @@ class TimespanWithoutPrecipitationSensor(
     """Number of days since precipitation last reached the reset threshold.
 
     Counts elapsed time since an anchor (``dry_since``). The anchor is re-set
-    whenever "Precipitation last 1h" reaches the configurable threshold, and stands
+    whenever "Precipitation now" reaches the configurable threshold, and stands
     otherwise, so the value grows continuously while it stays dry and drops back
     to ~0 when it rains. The anchor is persisted across restarts and corrected on
     startup against the RW/SF accumulation products to catch rain during downtime.
@@ -350,7 +350,7 @@ class TimespanWithoutPrecipitationSensor(
     _attr_suggested_display_precision = 2
 
     def __init__(self, coordinator: BaseProductUpdateCoordinator) -> None:
-        """Initialize the sensor, bound to the RS ("Precipitation last 1h") coordinator."""
+        """Initialize the sensor, bound to the RS ("Precipitation now") coordinator."""
         super().__init__(coordinator)
         entry = coordinator.config_entry
         self._attr_unique_id = f"{entry.entry_id}_timespan_without_precipitation"
