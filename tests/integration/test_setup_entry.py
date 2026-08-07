@@ -140,7 +140,8 @@ async def test_entry_setup_creates_sensors_with_correct_values(
     rain_entry = next(
         e
         for e in ent_reg.entities.values()
-        if e.domain == "binary_sensor" and e.unique_id.endswith("rv_rain_within_2h")
+        if e.domain == "binary_sensor"
+        and e.unique_id.endswith("radvor_rv_precipitation_expected_120")
     )
     state = hass.states.get(rain_entry.entity_id)
     assert state is not None
