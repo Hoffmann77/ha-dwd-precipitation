@@ -92,7 +92,7 @@ After setup, open the integration's **Configure** dialog (**Settings > Devices &
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| Enable diagnostic state attributes | Off | Adds per-sensor metadata attributes (see below) |
+| Show sensor source metadata | Off | Adds per-sensor metadata attributes (see below) |
 | Mark sensors unavailable when data is stale | On | Sensors become `unavailable` once cached data exceeds the product's release interval; prevents automations from acting on stale values |
 | Precipitation detection threshold (mm per hour) | 0.0 | An RV forecast intensity above this value counts as precipitation for the `Precipitation start` / `Precipitation end` and `Precipitation expected` sensors. `0.0` means any DWD-detected rain; raise it to ignore drizzle/noise |
 | Precipitation start/end sensor state | Absolute time | Whether the `Precipitation start`/`end` sensors report the absolute time (device class *timestamp*) or the minutes until the event (device class *duration*). The unused representation is exposed as an attribute |
@@ -108,7 +108,7 @@ Some entities expose **companion attributes at all times** — these are a featu
 | `hours_without_precipitation` | `Timespan without precipitation` | The dry streak expressed in hours (the state itself is in days); `null` until the first anchor is set |
 | `dry_since` | `Timespan without precipitation` | ISO-8601 UTC timestamp of the last precipitation that reset the counter |
 
-When the **Enable diagnostic state attributes** option is on, every DWD-product sensor additionally exposes its source metadata:
+When the **Show sensor source metadata** option is on, every DWD-product sensor additionally exposes its source metadata:
 
 | Attribute | Description |
 |-----------|-------------|

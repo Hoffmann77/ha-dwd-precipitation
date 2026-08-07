@@ -19,7 +19,7 @@
       "init": {
         "title": "DWD Precipitation Options",
         "data": {
-          "extra_state_attributes": "Enable diagnostic state attributes",
+          "extra_state_attributes": "Show sensor source metadata",
           "unavailable_when_stale": "Mark sensors unavailable when data is stale",
           "precipitation_threshold": "Precipitation detection threshold (mm per hour)",
           "start_end_mode": "Precipitation start/end sensor state",
