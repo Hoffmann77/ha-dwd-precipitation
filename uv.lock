@@ -1247,7 +1247,7 @@ wradlib-comparison = [
     { name = "h5py", specifier = "==3.16.0" },
     { name = "pytest" },
     { name = "requests", specifier = "==2.34.2" },
-    { name = "wradlib", specifier = "==2.9.5" },
+    { name = "wradlib", specifier = "==2.9.6" },
 ]
 
 [[package]]
@@ -3173,7 +3173,7 @@ wheels = [
 
 [[package]]
 name = "wradlib"
-version = "2.9.5"
+version = "2.9.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "deprecation" },
@@ -3185,9 +3185,9 @@ dependencies = [
     { name = "xarray" },
     { name = "xradar" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/31/85/ccf27dc1b44de73c43b65e0184496ce73dfc43019be2f2562454841d9f2b/wradlib-2.9.5.tar.gz", hash = "sha256:1df56626ee5445932c51c83723c71ea37216e151e46dafde40c42493fb531e11", size = 593858, upload-time = "2026-07-15T07:04:24.882Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/36/3f/3746be41931be5b2e39883bdbc32831f450334f9c09db4b40559ee1d13ba/wradlib-2.9.6.tar.gz", hash = "sha256:90ce7c16d5b8f6b8fb5b7f5916c4d57fc54c716232f5cb3de310ec792ea13c85", size = 594654, upload-time = "2026-09-03T10:08:05.518Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/93/84/059f1226d9f8c9539c301cbd90f15c4652357d42fcd018389ac34a15c6c4/wradlib-2.9.5-py3-none-any.whl", hash = "sha256:821d7a76f9cddef15ac0400cc5500ff3482d865c3ce1497df21edb9d4c0fea27", size = 273384, upload-time = "2026-07-15T07:04:23.313Z" },
+    { url = "https://files.pythonhosted.org/packages/f7/11/e7b5a8659022fde8e58d07ae5e7daeeb1f2dfcdfd20bba7759ca523f0554/wradlib-2.9.6-py3-none-any.whl", hash = "sha256:fda74f8e0ac8778ea240369f8297d79f69a346c48a444ea2577f5566660864d6", size = 274119, upload-time = "2026-09-03T10:08:04.171Z" },
 ]
 
 [[package]]

@@ -45,7 +45,7 @@ ha-test = [
 # Kept separate because wradlib's heavy deps are not part of the HA ecosystem.
 wradlib-comparison = [
     "pytest",
-    "wradlib==2.9.5",
+    "wradlib==2.9.6",
     "requests==2.34.2",
     "h5py==3.16.0",
 ]
