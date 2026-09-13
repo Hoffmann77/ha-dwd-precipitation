@@ -116,12 +116,17 @@ latest = floor((now - RELEASE_DELAY) / RELEASE_INTERVAL) * RELEASE_INTERVAL + RE
 `scripts/check_release_delay.py` (run by `.github/workflows/release-delay.yml`,
 scheduled) averages the *observed* availability delay across a rolling window of
 recent files — for each file, its `Last-Modified` header (authoritative GMT)
-minus the nominal timestamp in its name — and flags (opens a tracking issue for)
-any product the instant its mean lag exceeds its configured `RELEASE_DELAY` —
-the harmful direction, where the coordinator fetches before DWD has published
-(`--grace` defaults to 0). It reads the
-constants straight from the source with `ast` (no HA import), so the configured
-value is the single source of truth.
+minus the nominal timestamp in its name — and flags any product the instant its
+mean lag exceeds its configured `RELEASE_DELAY` — the harmful direction, where
+the coordinator fetches before DWD has published (`--grace` defaults to 0). It
+reads the constants straight from the source with `ast` (no HA import), so the
+configured value is the single source of truth.
+
+The workflow only opens/updates a tracking issue (and fails the job) once a
+product is flagged on **two consecutive scheduled runs** — a single flagged run
+just records the streak (via `actions/cache`) without notifying, so one-off
+measurement noise doesn't page anyone. The streak resets to zero as soon as a
+run comes back clean.
 
 ## Grid lookup
 
