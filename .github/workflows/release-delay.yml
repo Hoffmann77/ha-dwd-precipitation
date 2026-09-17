@@ -28,7 +28,7 @@ jobs:
         run: uv sync --only-group unit-test
 
       - name: Restore consecutive-drift streak
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: .release-delay-streak
           key: release-delay-streak-${{ github.run_id }}
@@ -60,7 +60,7 @@ jobs:
 
       - name: Save consecutive-drift streak
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: .release-delay-streak
           key: release-delay-streak-${{ github.run_id }}
