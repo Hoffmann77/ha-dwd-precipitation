@@ -267,3 +267,71 @@ async def test_every_product_failing_leaves_the_entry_not_ready(
         await hass.async_block_till_done()
 
     assert entry.state is ConfigEntryState.SETUP_RETRY
+
+
+@pytest.mark.asyncio
+async def test_local_time_product_is_scheduled_in_local_time(
+    hass: HomeAssistant,
+) -> None:
+    """sf_2350's release grid is local wall-clock, so its tracker must be too.
+
+    Registering it in UTC fetches it an offset's worth of hours late every day,
+    which leaves the sensor past its staleness deadline in the meantime.
+    """
+    entry = _entry(hass)
+    ts = datetime(2025, 6, 1, 12, 0, tzinfo=timezone.utc)
+    rv_timing = ProductMetadata(source_product="RV", source_timestamp=ts)
+    rv_data = {
+        "max_060": 48.0,
+        "max_120": 12.0,
+        "start_in": 0,
+        "start_at": ts,
+        "end_in": 30,
+        "end_at": ts,
+        "rain_within_2h": True,
+    }
+
+    with (
+        patch(
+            "custom_components.dwd_precipitation.async_track_time_change"
+        ) as local_track,
+        patch(
+            "custom_components.dwd_precipitation.async_track_utc_time_change"
+        ) as utc_track,
+        patch.object(
+            RadvorRS,
+            "_fetch_and_parse",
+            new=AsyncMock(return_value=([1.5, 2.0, None], [{}, {}, {}])),
+        ),
+        patch.object(
+            RadvorRV,
+            "_fetch_and_parse",
+            new=AsyncMock(return_value=(rv_data, {k: rv_timing for k in rv_data})),
+        ),
+        patch.object(
+            HymecNG, "_fetch_and_parse", new=AsyncMock(return_value=("snow", {}))
+        ),
+        patch.object(
+            RadolanRW, "_fetch_and_parse", new=AsyncMock(return_value=(3.2, {}))
+        ),
+        patch.object(
+            RadolanSF, "_fetch_and_parse", new=AsyncMock(return_value=(12.5, {}))
+        ),
+        patch.object(
+            RadolanSFLastYesterday,
+            "_fetch_and_parse",
+            new=AsyncMock(return_value=(24.0, {})),
+        ),
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    # Exactly one product uses local time, and it registers one tracker.
+    assert local_track.call_count == 1
+    assert local_track.call_args.kwargs == {"hour": [0], "minute": [18], "second": 0}
+
+    # Everything else stays on UTC.
+    assert utc_track.call_count == sum(
+        len(cls.track_time_change_args)
+        for cls in (RadvorRS, RadvorRV, HymecNG, RadolanRW, RadolanSF)
+    )

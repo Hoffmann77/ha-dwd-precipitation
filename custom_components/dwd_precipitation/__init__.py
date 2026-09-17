@@ -9,7 +9,10 @@ from dataclasses import dataclass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
-from homeassistant.helpers.event import async_track_utc_time_change
+from homeassistant.helpers.event import (
+    async_track_time_change,
+    async_track_utc_time_change,
+)
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .coordinator import BaseProductUpdateCoordinator
@@ -96,8 +99,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: MyConfigEntry) -> bool:
     for coordinator in product_coordinators:
         refresh_callback = _make_refresh_callback(coordinator)
 
+        # track_time_change_args describes the product's own release grid, so
+        # it has to be registered in the same time reference the product uses
+        # to pick a release. sf_2350's grid is local wall-clock; scheduling it
+        # in UTC would fetch it an offset's worth of hours late every day.
+        track = (
+            async_track_time_change
+            if coordinator.USE_LOCAL_TIME
+            else async_track_utc_time_change
+        )
+
         for arg in coordinator.track_time_change_args:
-            unsub = async_track_utc_time_change(
+            unsub = track(
                 hass,
                 refresh_callback,
                 hour=arg["hour"],
