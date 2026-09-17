@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from pytest import approx
@@ -156,3 +157,113 @@ async def test_entry_setup_creates_sensors_with_correct_values(
     state = hass.states.get(hymec_entry.entity_id)
     assert state is not None
     assert state.state == "snow"
+
+
+def _entry(hass: HomeAssistant) -> MockConfigEntry:
+    """Return a config entry added to hass."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"name": "Home", "latitude": 51.05, "longitude": 13.73},
+        options={},
+    )
+    entry.add_to_hass(hass)
+
+    return entry
+
+
+@pytest.mark.parametrize("expected_lingering_timers", [True])
+@pytest.mark.asyncio
+async def test_one_failing_product_does_not_block_the_entry(
+    hass: HomeAssistant,
+    expected_lingering_timers: bool,
+) -> None:
+    """A dead product loses only its own entities; the rest of the entry loads."""
+    entry = _entry(hass)
+
+    ts = datetime(2025, 6, 1, 12, 0, tzinfo=timezone.utc)
+    rv_timing = ProductMetadata(source_product="RV", source_timestamp=ts)
+    rv_data = {
+        "max_060": 48.0,
+        "max_120": 12.0,
+        "start_in": 0,
+        "start_at": ts,
+        "end_in": 30,
+        "end_at": ts,
+        "rain_within_2h": True,
+    }
+
+    with (
+        patch.object(
+            RadvorRS,
+            "_fetch_and_parse",
+            new=AsyncMock(return_value=([1.5, 2.0, None], [{}, {}, {}])),
+        ),
+        patch.object(
+            RadvorRV,
+            "_fetch_and_parse",
+            new=AsyncMock(return_value=(rv_data, {k: rv_timing for k in rv_data})),
+        ),
+        patch.object(
+            HymecNG,
+            "_fetch_and_parse",
+            new=AsyncMock(side_effect=OSError("DWD retired this product")),
+        ),
+        patch.object(
+            RadolanRW, "_fetch_and_parse", new=AsyncMock(return_value=(3.2, {}))
+        ),
+        patch.object(
+            RadolanSF, "_fetch_and_parse", new=AsyncMock(return_value=(12.5, {}))
+        ),
+        patch.object(
+            RadolanSFLastYesterday,
+            "_fetch_and_parse",
+            new=AsyncMock(return_value=(24.0, {})),
+        ),
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    assert entry.state is ConfigEntryState.LOADED
+
+    coordinators = entry.runtime_data.coordinators
+    assert coordinators["hymecng"].last_update_success is False
+    assert coordinators["rw"].last_update_success is True
+
+    ent_reg = er.async_get(hass)
+    hymec_entry = next(
+        e
+        for e in ent_reg.entities.values()
+        if e.domain == "sensor" and e.unique_id.endswith("hymecng_precipitation_type")
+    )
+    assert hass.states.get(hymec_entry.entity_id).state == "unavailable"
+
+    rw_entry = next(
+        e
+        for e in ent_reg.entities.values()
+        if e.domain == "sensor" and e.unique_id.endswith("radolan_rw")
+    )
+    assert float(hass.states.get(rw_entry.entity_id).state) == approx(3.2)
+
+
+@pytest.mark.parametrize("expected_lingering_timers", [True])
+@pytest.mark.asyncio
+async def test_every_product_failing_leaves_the_entry_not_ready(
+    hass: HomeAssistant,
+    expected_lingering_timers: bool,
+) -> None:
+    """A total outage still puts the entry into HA's own setup-retry loop."""
+    entry = _entry(hass)
+    boom = AsyncMock(side_effect=OSError("DWD OpenData is down"))
+
+    with (
+        patch.object(RadvorRS, "_fetch_and_parse", new=boom),
+        patch.object(RadvorRV, "_fetch_and_parse", new=boom),
+        patch.object(HymecNG, "_fetch_and_parse", new=boom),
+        patch.object(RadolanRW, "_fetch_and_parse", new=boom),
+        patch.object(RadolanSF, "_fetch_and_parse", new=boom),
+        patch.object(RadolanSFLastYesterday, "_fetch_and_parse", new=boom),
+    ):
+        assert not await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    assert entry.state is ConfigEntryState.SETUP_RETRY
