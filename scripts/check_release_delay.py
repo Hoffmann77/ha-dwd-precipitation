@@ -24,10 +24,18 @@ there is no timezone ambiguity). The observed delay of one file is
 
     Last-Modified − nominal_timestamp
 
-and we average that over the last ``--samples`` published files — DWD keeps a
-rolling window of them, so this is a stable central estimate rather than a
-single noisy probe. No polling or waiting: every sample is an exact, already
+and we average that over the most recent published files — DWD keeps a rolling
+window of them, so this is a stable central estimate rather than a single
+noisy probe. No polling or waiting: every sample is an exact, already
 published fact.
+
+The workflow now runs once every 24h, so the sample count per product is
+sized to cover a fixed real-world window rather than a fixed file count
+(``--samples``, when passed explicitly, overrides this per-product sizing for
+every product): RS/HymecNG (5 min interval) sample ``TARGET_WINDOW_HOURS``
+worth of files (12h) so a slow drift is still visible within one run; RW/SF
+(1h interval) sample 24h, unchanged from before — for those, catching a drift
+now takes two consecutive daily runs (48h) instead of two runs 12h apart.
 
 A product is flagged the instant the mean observed delay exceeds the configured
 ``RELEASE_DELAY`` (``--grace`` defaults to 0): that is the harmful direction —
@@ -230,6 +238,17 @@ PRODUCTS: dict[str, ProductSpec] = {
     ),
 }
 
+# Real-world span the rolling window should cover, per product — sized so a
+# slow drift is visible within a single (now once-daily) run rather than
+# needing several days to accumulate enough samples. Converted to a sample
+# count via each product's actual RELEASE_INTERVAL in main().
+TARGET_WINDOW_HOURS: dict[str, float] = {
+    "rs": 12,
+    "hymecng": 12,
+    "rw": 24,
+    "sf": 24,
+}
+
 
 def http_last_modified(url: str, timeout: float = 60.0, attempts: int = 3) -> datetime | None:
     """Return the file's ``Last-Modified`` time (UTC), or None if it is absent.
@@ -423,8 +442,9 @@ def main(argv: list[str] | None = None) -> int:
              "before flagging (default: 0 — flag the instant it is exceeded)",
     )
     parser.add_argument(
-        "--samples", type=int, default=24,
-        help="number of recent files to average per product (default: 24)",
+        "--samples", type=int, default=None,
+        help="number of recent files to average per product (default: sized "
+             "per product from TARGET_WINDOW_HOURS via its RELEASE_INTERVAL)",
     )
     parser.add_argument(
         "--min-samples", type=int, default=3,
@@ -440,8 +460,13 @@ def main(argv: list[str] | None = None) -> int:
     for key in args.products:
         spec = PRODUCTS[key]
         configured = extract_timing(spec.class_name, registry)
+        if args.samples is not None:
+            samples = args.samples
+        else:
+            window = timedelta(hours=TARGET_WINDOW_HOURS[key])
+            samples = max(1, int(window / configured["RELEASE_INTERVAL"]))
         measurements.append(
-            measure(spec, configured, now, samples=args.samples, min_samples=args.min_samples)
+            measure(spec, configured, now, samples=samples, min_samples=args.min_samples)
         )
 
     report = "\n".join(_report_lines(measurements, grace))
