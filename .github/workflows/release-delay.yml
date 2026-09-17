@@ -7,10 +7,14 @@ name: DWD release-delay drift check
 # drifts too far from what the integration assumes on two consecutive runs, so
 # a single noisy measurement doesn't page anyone. The averaging reads a rolling
 # window of already-published files, so the schedule time does not matter.
+#
+# Runs once daily: RS/HymecNG's rolling window (5 min interval) is sized to
+# 12h so a slow drift is still visible within one run, while RW/SF (1h
+# interval, 24h window) now need two consecutive daily runs — 48h apart — to
+# confirm a drift.
 on:
   schedule:
     - cron: "0 6 * * *"    # daily 06:00 UTC
-    - cron: "0 18 * * *"   # daily 18:00 UTC
   workflow_dispatch:
 
 permissions:
