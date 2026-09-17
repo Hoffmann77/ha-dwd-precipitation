@@ -7,11 +7,14 @@ A HomeAssistant custom component that pulls DWD (German Weather Service) radar c
 ## Architecture
 
 ```
-__init__.py           Entry point. Instantiates products and coordinator.
-coordinator.py        HA DataUpdateCoordinator. Polls every 90s; calls
-                      product.update() when product.requires_update is True.
-products.py           One class per DWD product. Each class handles its own
-                      URL, fetch, parse, and grid lookup.
+__init__.py           Entry point. Builds one coordinator per product and
+                      wires each to its release schedule.
+coordinator.py        BaseProductUpdateCoordinator: the per-product HA
+                      DataUpdateCoordinator. Owns release timing and the
+                      fetch/stale/retry lifecycle.
+products.py           One BaseProductUpdateCoordinator subclass per DWD
+                      product. Each handles its own URL, fetch, parse, and
+                      grid lookup.
 sensor.py             HA SensorEntity descriptors. value_fn pulls from
                       coordinator.data[product_key].
 dry_streak.py         Pure "days without rain" logic: the persisted anchor
@@ -29,11 +32,20 @@ radar/                Embedded parsers (no heavy external deps).
 
 ## Data flow
 
-1. `coordinator._async_update_data()` iterates `products`
-2. Each `product.update()` fetches the DWD file, parses it, extracts
-   `data[product.index]`, stores result in `product.data`
-3. Coordinator builds `data = {product.PRODUCT_KEY: product.data, ...}`
-4. `PrecipitationSensorEntity.native_value` calls `description.value_fn(data)`
+One coordinator per product, each on its own schedule — there is no shared
+poll loop.
+
+1. A time-change tracker (`track_time_change_args`) fires at the product's
+   release time and calls `coordinator.async_refresh()`
+2. `_async_update_data()` computes `latest_release`, and returns the cached
+   payload untouched if that release was already fetched
+3. `_fetch_and_parse(latest_release)` downloads and parses the file, extracts
+   `data[self.index]`, and returns `(precipitation, metadata)`
+4. The coordinator wraps those in a `CoordinatorData` — its `data`/`metadata`
+   are a scalar for RADOLAN products, parallel lists for RS, parallel dicts
+   for RV
+5. `PrecipitationSensorEntity.native_value` calls
+   `description.value_fn(coordinator.data.data)`
 
 ## DWD products
 
@@ -42,7 +54,6 @@ radar/                Embedded parsers (no heavy external deps).
 | `RadvorRS` | `rs` | ODIM_H5 (tar) | 5 min | RADVOR nowcast, 0/60/120 min lead; each grid is a 60-min accumulation (see "RS product specifics") |
 | `RadvorRV` | `rv` | ODIM_H5 (tar) | 5 min | RV nowcast, 25×5-min grids; derives +1h/+2h peak intensity (mm/h), precip start/end timing (episode/clearing end algorithm, user-selectable), and a rain-within-2h flag (whose metadata carries the raw 25-point forecast series, exposed by default) |
 | `HymecNG` | `hymecng` | ODIM_H5 (single .hd5) | 5 min | Precipitation-*type* composite (rain/snow/freezing rain/hail/…); one enum "Precipitation type" sensor |
-| `RadvorRQ` | `rq` | RADOLAN binary (.gz) | 15 min | RADVOR nowcast (deprecated) |
 | `RadolanRW` | `rw` | RADOLAN binary (.bz2) | 1 h | 1-hour precipitation analysis (gauge-adjusted; same window as RS `_000`) |
 | `RadolanSF` | `sf` | RADOLAN binary (.bz2) | 1 h | 24-hour precipitation analysis |
 | `RadolanSFLastYesterday` | `sf_2350` | same as SF | daily | Yesterday's 24 h total |
@@ -95,9 +106,9 @@ once released, since renaming one orphans the user's entity.
 
 ## Adding a new DWD product
 
-1. Subclass `Product` in `products.py`
+1. Subclass `BaseProductUpdateCoordinator` in `products.py`
 2. Set `PRODUCT_KEY`, `RELEASE_INTERVAL`, `RELEASE_DELAY`, `RELEASE_OFFSET`
-3. Implement `get_url(ts)` and `async update(async_client)`
+3. Implement `_get_url(ts)` and `async _fetch_and_parse(ts)`
 4. Override `index` (cached_property) if the grid differs from RADOLAN 900×900
 5. Add sensor descriptors in `sensor.py` (new `*_SENSORS` tuple)
 6. Register the class in `__init__.py` `products` tuple
@@ -106,7 +117,8 @@ once released, since renaming one orphans the user's entity.
 
 ## Release timing
 
-`get_latest_release()` in `Product` computes the most-recent valid release:
+`_get_latest_release()` in `BaseProductUpdateCoordinator` computes the
+most-recent valid release:
 ```
 latest = floor((now - RELEASE_DELAY) / RELEASE_INTERVAL) * RELEASE_INTERVAL + RELEASE_OFFSET
 ```
@@ -130,8 +142,8 @@ run comes back clean.
 
 ## Grid lookup
 
-### RADOLAN (RQ, RW, SF)
-`Product.index` (base class): calls `get_radolan_grid(wgs84=True)` to get the full
+### RADOLAN (RW, SF)
+`RadolanProduct.index`: calls `get_radolan_grid(wgs84=True)` to get the full
 900×900 WGS84 lon/lat grid, then finds the nearest cell via minimum squared distance.
 Grid is in `radar/georef.py` (spherical polar-stereographic, Earth radius 6370.040 km).
 
