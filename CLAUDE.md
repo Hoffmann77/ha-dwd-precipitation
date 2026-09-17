@@ -7,11 +7,12 @@ A HomeAssistant custom component that pulls DWD (German Weather Service) radar c
 ## Architecture
 
 ```
-__init__.py           Entry point. Builds one coordinator per product and
-                      wires each to its release schedule.
+__init__.py           Entry point. Builds one coordinator per product from
+                      PRODUCT_CLASSES, refreshes them concurrently, and wires
+                      each to its release schedule.
 coordinator.py        BaseProductUpdateCoordinator: the per-product HA
-                      DataUpdateCoordinator. Owns release timing and the
-                      fetch/stale/retry lifecycle.
+                      DataUpdateCoordinator. Owns release timing, the
+                      fetch/stale/retry lifecycle, and the backoff ramp.
 products.py           One BaseProductUpdateCoordinator subclass per DWD
                       product. Each handles its own URL, fetch, parse, and
                       grid lookup.
@@ -46,6 +47,96 @@ poll loop.
    for RV
 5. `PrecipitationSensorEntity.native_value` calls
    `description.value_fn(coordinator.data.data)`
+
+## Failure handling
+
+Fetches fail routinely — DWD publishes a few minutes late often enough that a
+404 on the first attempt is the normal case, not an incident. Three rules keep
+that from turning into noise:
+
+- **Retry with a per-product backoff.** The first failure arms a 60 s retry,
+  and each further consecutive failure adds 10 s, capped at the product's
+  `MAX_FAST_POLL_INTERVAL` (5 min; 15 min for the daily `sf_2350`). Only a
+  successful fetch resets the ramp — a newly-due release does not, so a long
+  DWD outage settles at the cap instead of hammering OpenData every minute.
+  The ramp runs whether or not the entity is currently available; it is
+  cancelled only on success or config-entry unload.
+- **Nothing is scheduled on a bare constant.** Every install would otherwise
+  fetch on the same second and, after a shared DWD outage, retry in lockstep
+  forever. Each coordinator takes a whole-second `_fetch_jitter` in
+  `[0, MAX_FETCH_JITTER]` (30 s) from `fetch_jitter_for(entry_id, product_key)`
+  and exposes `release_delay = RELEASE_DELAY + _fetch_jitter`. That offset is
+  *derived*, not drawn, so an install keeps it across restarts and reloads: the
+  schedule in a user's log is the one they saw last week, and changing an
+  unrelated option does not move their fetch times. It is a sha256 digest
+  rather than `hash()` or `random.seed()`, since str hashing is salted per
+  process and only a digest is contractually stable across runs; a test pins
+  one value, because changing the derivation reschedules every existing
+  install. Retries are the opposite case and get a fresh +/-`RETRY_JITTER`
+  (15%) each attempt: a fixed offset would preserve the lockstep a shared
+  outage creates rather than break it.
+
+  The fetch jitter belongs in the *delay*, not in a sleep before the request.
+  The schedule, the release lookup and the staleness deadline are all derived
+  from `release_delay`, so adding it there shifts them together and the margin
+  between the fetch grid and the deadline is untouched — a test asserts the
+  margin is identical for every jitter value. Delaying the fetch on its own
+  would eat that margin instead, and the tightest one is only 60 s. The offset
+  is whole seconds because `track_time_change_args` is built from a whole-second
+  grid, and never negative, so a fetch is never earlier than the calibrated
+  publication lag. `RELEASE_DELAY` stays the pristine class constant that
+  `scripts/check_release_delay.py` reads out of the source.
+
+- **Staleness is a deadline on the overdue release, not an age limit on the
+  cached one.** `_stale_deadline()` starts its clock when the release *after*
+  the cached one should have been on OpenData, and runs for
+  `OVERDUE_GRACE` — so the tolerance answers "how long do we go on trying
+  for a release that is already due", a property of the retrying rather than of
+  the publication cadence. Entities read `coordinator.data_is_stale` for their
+  availability (together with the `unavailable_when_stale` option), so a value
+  that ages out stops being reported even if no further fetch is attempted;
+  `_schedule_stale_check()` arms a callback on the deadline after each success
+  so HA looks again when nothing else would make it.
+
+  Anchoring matters. Measure the tolerance from the *cached* release and it has
+  to be expressed in release intervals, so it expires exactly when some later
+  fetch is due: the value is written off at the very instant of the attempt
+  that might have restored it, and which of the two happens first comes down to
+  event-loop latency. That is what made a routinely late file blank the sensors
+  and log an ERROR every single time. Anchored on the overdue release, the
+  deadline only collides with the fetch grid if `OVERDUE_GRACE` is a whole
+  multiple of `RELEASE_INTERVAL` — a rule a test enforces per product. Landing
+  on a *retry* is harmless by contrast: a retry is itself the attempt whose
+  failure decides the verdict.
+
+  Every product spells out its own `OVERDUE_GRACE`, most of them as
+  `DEFAULT_OVERDUE_GRACE` (6 min, defined next to the fast-poll constants);
+  `sf_2350` uses 30 min, because a daily total will not be replaced today
+  anyway. Note this does not scale with
+  `RELEASE_INTERVAL` — the hourly and daily products give up on a missed release
+  just as promptly as the 5-minute ones, because the question is how long DWD is
+  given to publish, not how stale the value is allowed to be.
+
+  `_next_release_after()` walks the release grid in the product's *own* time
+  reference. `sf_2350` is `USE_LOCAL_TIME`, so its releases are 23 or 25 hours
+  apart on DST changeover days; adding `RELEASE_INTERVAL` to a UTC timestamp
+  would put the autumn deadline before the file it is waiting for could exist.
+
+  For the same reason `async_setup_entry` registers a `USE_LOCAL_TIME` product
+  with `async_track_time_change` rather than `async_track_utc_time_change`.
+  `track_time_change_args` describes the product's own grid, so registering
+  `sf_2350` in UTC fetched it an offset's worth of hours late every day — in
+  summer, 1.5 h after its own staleness deadline had already passed.
+- **One failing product must not take the entry down.** `async_setup_entry`
+  refreshes all products concurrently and raises `ConfigEntryNotReady` only if
+  *every* one fails. A single dead product (DWD retiring one, say) leaves its
+  own entities unavailable and logs a warning, while the rest keep working.
+
+`_describe_fetch_error()` writes the message a user actually sees. HA logs it
+once per run of failures, so it is the only explanation they get: it must name
+what DWD did, say whether the user's configuration is implicated (usually it is
+not), and state that retries continue. Keep these strings plain ASCII — log
+viewers and Windows consoles mangle typographic punctuation.
 
 ## DWD products
 
@@ -107,11 +198,14 @@ once released, since renaming one orphans the user's entity.
 ## Adding a new DWD product
 
 1. Subclass `BaseProductUpdateCoordinator` in `products.py`
-2. Set `PRODUCT_KEY`, `RELEASE_INTERVAL`, `RELEASE_DELAY`, `RELEASE_OFFSET`
+2. Set `PRODUCT_KEY`, `PRODUCT_LABEL`, `RELEASE_INTERVAL`, `RELEASE_DELAY`,
+   `RELEASE_OFFSET` and `OVERDUE_GRACE` (spelled out even when it is just
+   `DEFAULT_OVERDUE_GRACE` — a test enforces this), plus
+   `MAX_FAST_POLL_INTERVAL` if the default does not fit
 3. Implement `_get_url(ts)` and `async _fetch_and_parse(ts)`
 4. Override `index` (cached_property) if the grid differs from RADOLAN 900×900
 5. Add sensor descriptors in `sensor.py` (new `*_SENSORS` tuple)
-6. Register the class in `__init__.py` `products` tuple
+6. Register the class in `__init__.py` `PRODUCT_CLASSES` tuple
 7. Register sensors in `sensor.py` `async_setup_entry`, and add each
    `translation_key`'s name to `translations/en.json`
 
