@@ -87,6 +87,8 @@ class RadvorRS(BaseProductUpdateCoordinator):
 
     PRODUCT_KEY = "rs"
 
+    PRODUCT_LABEL = "RS precipitation nowcast"
+
     RELEASE_INTERVAL = timedelta(minutes=5)
 
     RELEASE_DELAY = timedelta(minutes=4, seconds=10)
@@ -174,6 +176,8 @@ class RadvorRV(BaseProductUpdateCoordinator):
     """
 
     PRODUCT_KEY = "rv"
+
+    PRODUCT_LABEL = "RV precipitation forecast"
 
     RELEASE_INTERVAL = timedelta(minutes=5)
 
@@ -329,6 +333,8 @@ class HymecNG(BaseProductUpdateCoordinator):
 
     PRODUCT_KEY = "hymecng"
 
+    PRODUCT_LABEL = "HymecNG precipitation type"
+
     RELEASE_INTERVAL = timedelta(minutes=5)
 
     # DWD publishes each file ~2 min after its nominal time; wait a little longer
@@ -445,6 +451,8 @@ class RadolanRW(RadolanProduct):
 
     PRODUCT_KEY = "rw"
 
+    PRODUCT_LABEL = "RW hourly precipitation"
+
     RELEASE_INTERVAL = timedelta(hours=1)
 
     RELEASE_DELAY = timedelta(minutes=28)
@@ -468,6 +476,8 @@ class RadolanSF(RadolanProduct):
 
     PRODUCT_KEY = "sf"
 
+    PRODUCT_LABEL = "SF 24-hour precipitation"
+
     RELEASE_INTERVAL = timedelta(hours=1)
 
     RELEASE_DELAY = timedelta(minutes=28)
@@ -489,6 +499,8 @@ class RadolanSFLastYesterday(RadolanSF):
     """DWD RADOLAN SF: yesterday's 24-hour total (daily, local time)."""
 
     PRODUCT_KEY = "sf_2350"
+
+    PRODUCT_LABEL = "SF daily precipitation total"
 
     RELEASE_INTERVAL = timedelta(hours=24)
 

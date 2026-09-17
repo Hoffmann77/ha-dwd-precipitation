@@ -36,34 +36,64 @@ FAST_POLL_STEP = timedelta(seconds=10)
 # written off (see BaseProductUpdateCoordinator.OVERDUE_GRACE).
 DEFAULT_OVERDUE_GRACE = timedelta(minutes=6)
 
-def _describe_fetch_error(err: Exception, release: datetime) -> str:
+def _format_duration(delta: timedelta) -> str:
+    """Return a short human-readable duration: "60 s", "5 min", "1 h 10 min"."""
+    seconds = max(int(delta.total_seconds()), 0)
+
+    if seconds < 60:
+        return f"{seconds} s"
+
+    minutes, _ = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes} min"
+
+    hours, minutes = divmod(minutes, 60)
+
+    return f"{hours} h" if minutes == 0 else f"{hours} h {minutes} min"
+
+
+def _describe_fetch_error(
+    err: Exception, release: datetime, next_retry: timedelta
+) -> str:
     """Return a human-readable explanation of a failed product update.
 
-    Home Assistant logs this as ``Error fetching <name> data: <message>``,
-    where ``<name>`` already identifies the location and product (e.g.
-    "Zuhause rs"), so this message only needs to explain *why* the update
-    failed — without repeating the product key or dumping a raw exception.
+    Home Assistant logs this as ``Error fetching <name> data: <message>``, where
+    ``<name>`` already identifies the location and product (e.g. "Zuhause RS
+    precipitation nowcast" — see PRODUCT_LABEL),
+    and only logs it once per run of failures — so this one message is all the
+    reader gets. That reader is someone scanning their log wondering what they
+    broke, so it answers three things: what DWD did, whether it is their fault,
+    and what happens next, in as few words as will carry that. Almost every
+    occurrence is DWD publishing late, so it must not read like a user error.
+
+    Kept to plain ASCII: log viewers and Windows consoles mangle typographic
+    punctuation.
     """
     release_str = release.strftime("%Y-%m-%d %H:%M UTC")
 
     if isinstance(err, aiohttp.ClientResponseError):
         if err.status == HTTPStatus.NOT_FOUND:
-            return (
-                f"DWD has not published the {release_str} release yet "
-                "(HTTP 404). This is normal near release time; it will be "
-                "retried automatically."
+            cause = (
+                f"DWD has not published the {release_str} release yet (HTTP 404). "
+                "DWD OpenData is late; nothing is wrong with your setup."
             )
-        return (
-            f"DWD OpenData returned HTTP {err.status} ({err.message}) for the "
-            f"{release_str} release."
+        else:
+            cause = (
+                f"DWD OpenData returned HTTP {err.status} ({err.message}) for the "
+                f"{release_str} release."
+            )
+    elif isinstance(err, aiohttp.ClientConnectionError):
+        cause = (
+            f"Could not reach DWD OpenData for the {release_str} release ({err}). "
+            "Check this machine's internet access."
+        )
+    else:
+        cause = (
+            f"Could not read the {release_str} release ({err}). The download was "
+            "probably incomplete."
         )
 
-    if isinstance(err, aiohttp.ClientConnectionError):
-        return (
-            f"Could not reach DWD OpenData for the {release_str} release: {err}"
-        )
-
-    return f"Could not process the {release_str} release: {err}"
+    return f"{cause} Retrying in {_format_duration(next_retry)}."
 
 
 @dataclass
@@ -104,6 +134,11 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
 
     PRODUCT_KEY: ClassVar[str] = ""
 
+    # Plain-language name for this product, used in Home Assistant's own
+    # coordinator log lines ("Error fetching <entry> <label> data: ..."), so it
+    # has to read naturally with "data" appended. Falls back to PRODUCT_KEY.
+    PRODUCT_LABEL: ClassVar[str] = ""
+
     RELEASE_INTERVAL: ClassVar[timedelta] = timedelta(minutes=15)
 
     RELEASE_DELAY: ClassVar[timedelta] = timedelta(minutes=5)
@@ -135,7 +170,7 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
         super().__init__(
             hass,
             _LOGGER,
-            name=f"{entry.data[CONF_NAME]} {self.PRODUCT_KEY}",
+            name=f"{entry.data[CONF_NAME]} {self.PRODUCT_LABEL or self.PRODUCT_KEY}",
             update_interval=None,  # event-driven via track_time_change_args
         )
         self.config_entry = entry
@@ -327,7 +362,7 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
         return min(delay, self.MAX_FAST_POLL_INTERVAL)
 
     @callback
-    def _schedule_fast_poll(self) -> None:
+    def _schedule_fast_poll(self) -> timedelta:
         """Arm the next fast-poll retry, backing off on consecutive failures.
 
         The ramp spans release boundaries: only a successful fetch resets it, so
@@ -353,6 +388,8 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
             self._fast_poll_failures,
         )
         self._fast_poll_unsub = async_call_later(self.hass, delay, _trigger)
+
+        return delay
 
     @callback
     def _stop_fast_polling(self) -> None:
@@ -398,13 +435,15 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
         except Exception as err:
             # Keep retrying regardless of availability: the backoff governs the
             # retry cadence, _data_is_stale() governs what HA shows.
-            self._schedule_fast_poll()
+            next_retry = self._schedule_fast_poll()
 
             unavailable_when_stale = self.config_entry.options.get(
                 CONF_UNAVAILABLE_WHEN_STALE, True
             )
             if self.data is None or (unavailable_when_stale and self._data_is_stale(now)):
-                raise UpdateFailed(_describe_fetch_error(err, latest_release)) from err
+                raise UpdateFailed(
+                    _describe_fetch_error(err, latest_release, next_retry)
+                ) from err
 
             # Data is still fresh enough — retry silently
             return self.data

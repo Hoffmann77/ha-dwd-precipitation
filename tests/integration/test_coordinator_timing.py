@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 from zoneinfo import ZoneInfo
 
+import aiohttp
 import pytest
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
@@ -353,6 +354,84 @@ async def test_first_ever_failure_starts_fast_polling():
     assert delays == [60]
     assert coord._fast_poll_unsub is not None
 
+
+
+# ----------------------------------------------------------------------
+# Fetch-error messages
+# ----------------------------------------------------------------------
+
+
+def _response_error(status: int, message: str) -> aiohttp.ClientResponseError:
+    """Build a ClientResponseError without needing a real request context."""
+    err = aiohttp.ClientResponseError.__new__(aiohttp.ClientResponseError)
+    err.status = status
+    err.message = message
+
+    return err
+
+
+@pytest.mark.parametrize(
+    ("delta", "expected"),
+    [
+        (timedelta(seconds=45), "45 s"),
+        (timedelta(seconds=60), "1 min"),
+        (timedelta(minutes=5), "5 min"),
+        (timedelta(minutes=70), "1 h 10 min"),
+        (timedelta(hours=2), "2 h"),
+        (timedelta(seconds=-5), "0 s"),
+    ],
+)
+def test_format_duration(delta, expected):
+    assert coordinator_mod._format_duration(delta) == expected
+
+
+def test_not_found_message_does_not_blame_the_user():
+    """The common case is DWD being late; the message must say so."""
+    message = coordinator_mod._describe_fetch_error(
+        _response_error(404, "Not Found"),
+        datetime(2026, 9, 17, 6, 40, tzinfo=UTC),
+        timedelta(seconds=60),
+    )
+
+    assert "HTTP 404" in message
+    assert "2026-09-17 06:40 UTC" in message
+    assert "nothing is wrong with your setup" in message
+    assert message.endswith("Retrying in 1 min.")
+
+
+@pytest.mark.parametrize(
+    ("err", "expected"),
+    [
+        (_response_error(503, "Service Unavailable"), "HTTP 503"),
+        (aiohttp.ClientConnectionError("DNS failure"), "internet access"),
+        (ValueError("Unexpected RADOLAN grid shape"), "Could not read"),
+    ],
+)
+def test_every_message_states_the_retry(err, expected):
+    """Whatever went wrong, the reader is told retries continue on their own."""
+    message = coordinator_mod._describe_fetch_error(
+        err, datetime(2026, 9, 17, 6, 40, tzinfo=UTC), timedelta(minutes=5)
+    )
+
+    assert expected in message
+    assert message.endswith("Retrying in 5 min.")
+    # Log viewers mangle typographic punctuation.
+    assert message.isascii()
+
+
+def test_every_product_has_a_readable_log_label():
+    """HA logs "Error fetching <entry> <label> data", so <label> must read well."""
+    for cls in (RadvorRS, RadvorRV, HymecNG, RadolanRW, RadolanSF, RadolanSFLastYesterday):
+        label = cls.PRODUCT_LABEL
+        assert label, f"{cls.__name__} has no PRODUCT_LABEL"
+        assert label.isascii()
+        assert not label.endswith("data")  # HA appends " data" itself
+
+    labels = [
+        cls.PRODUCT_LABEL
+        for cls in (RadvorRS, RadvorRV, HymecNG, RadolanRW, RadolanSF, RadolanSFLastYesterday)
+    ]
+    assert len(set(labels)) == len(labels), "labels must identify the product"
 
 
 def test_daily_deadline_follows_the_local_release_grid():
