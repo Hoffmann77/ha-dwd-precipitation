@@ -186,6 +186,9 @@ def _capture_scheduled_delays():
             "async_track_point_in_time",
             Mock(return_value=Mock(name="unsub")),
         ),
+        # Retry jitter is asserted on its own below; switching it off here keeps
+        # the ramp assertions exact.
+        patch.object(coordinator_mod, "_apply_retry_jitter", lambda delay: delay),
     ):
         yield delays
 
@@ -465,3 +468,114 @@ def test_every_product_states_its_own_grace():
     """
     for cls in (RadvorRS, RadvorRV, HymecNG, RadolanRW, RadolanSF, RadolanSFLastYesterday):
         assert "OVERDUE_GRACE" in vars(cls), f"{cls.__name__} inherits its grace"
+
+
+# ----------------------------------------------------------------------
+# Jitter
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "cls", [RadvorRS, RadvorRV, HymecNG, RadolanRW, RadolanSF, RadolanSFLastYesterday]
+)
+def test_fetch_jitter_shifts_the_schedule_and_the_deadline_together(cls):
+    """Jitter lives in the delay, so it must not eat into the deadline margin.
+
+    Everything that decides when a release is ours to fetch derives from
+    release_delay, so adding the offset there moves the fetch grid and the
+    staleness deadline by the same amount. Delaying the fetch on its own
+    instead would close the gap between them.
+    """
+    release = datetime(2025, 6, 1, 0, 0, tzinfo=UTC)
+    margins = set()
+
+    for seconds in (0, 7, 15, 23, 30):
+        coord = cls.__new__(cls)
+        coord._fetch_jitter = timedelta(seconds=seconds)
+        coord.curr_release = release
+
+        assert coord.release_delay == cls.RELEASE_DELAY + timedelta(seconds=seconds)
+
+        deadline = coord._stale_deadline()
+        fetches = [
+            release + n * cls.RELEASE_INTERVAL + coord.release_delay for n in range(60)
+        ]
+        margins.add(deadline - max(f for f in fetches if f < deadline))
+
+    assert len(margins) == 1, f"jitter changed the margin: {margins}"
+
+
+def test_fetch_jitter_is_stable_for_an_entry():
+    """The same entry must get the same offset after a restart or a reload.
+
+    Derived from the entry id, not drawn at random, so a user's fetch times are
+    the ones they saw last week and an unrelated options change does not move
+    them. hashlib rather than hash(), whose str salt changes per process.
+    """
+    entry_id = "01JABCDEF0123456789XYZ"
+
+    first = coordinator_mod.fetch_jitter_for(entry_id, "rs")
+    assert coordinator_mod.fetch_jitter_for(entry_id, "rs") == first
+    # Pinned: a change here silently reschedules every existing install.
+    assert first == timedelta(seconds=6)
+
+    # Different products of one entry do not all sit on the same second.
+    per_product = {
+        coordinator_mod.fetch_jitter_for(entry_id, key)
+        for key in ("rs", "rv", "hymecng", "rw", "sf", "sf_2350")
+    }
+    assert len(per_product) > 1
+
+    # Different entries land differently.
+    assert coordinator_mod.fetch_jitter_for("a-different-entry", "rs") != first
+
+
+def test_fetch_jitter_covers_the_whole_range():
+    """Offsets must spread across the population, not cluster."""
+    seen = {
+        coordinator_mod.fetch_jitter_for(f"entry-{n}", "rs").total_seconds()
+        for n in range(3000)
+    }
+
+    assert seen == set(range(31))
+
+
+def test_fetch_jitter_stays_well_inside_one_release():
+    """A whole-second offset that could skip a release would be a bug."""
+    assert coordinator_mod.MAX_FETCH_JITTER == timedelta(seconds=30)
+    assert coordinator_mod.MAX_FETCH_JITTER.total_seconds() % 1 == 0
+
+    for cls in (RadvorRS, RadvorRV, HymecNG, RadolanRW, RadolanSF, RadolanSFLastYesterday):
+        assert coordinator_mod.MAX_FETCH_JITTER < cls.RELEASE_INTERVAL
+
+
+def test_fetch_jitter_keeps_the_schedule_on_whole_seconds():
+    """track_time_change_args is built from whole seconds; jitter must be too."""
+    for seconds in (0, 17, 30):
+        coord = RadvorRS.__new__(RadvorRS)
+        coord._fetch_jitter = timedelta(seconds=seconds)
+        args = coord.track_time_change_args
+
+        assert len(args) == 1
+        assert args[0]["second"] == 10 + seconds
+
+
+def test_retry_jitter_stays_within_bounds():
+    """Each retry is spread, but never far enough to distort the ramp."""
+    delays = [
+        coordinator_mod._apply_retry_jitter(timedelta(seconds=n)).total_seconds()
+        for n in (60, 70, 300, 900)
+        for _ in range(50)
+    ]
+
+    for nominal, got in zip(
+        [n for n in (60, 70, 300, 900) for _ in range(50)], delays
+    ):
+        assert (
+            nominal * (1 - coordinator_mod.RETRY_JITTER)
+            <= got
+            <= nominal * (1 + coordinator_mod.RETRY_JITTER)
+        )
+
+    # It really varies — a constant would defeat the point.
+    assert len(set(delays)) > 1

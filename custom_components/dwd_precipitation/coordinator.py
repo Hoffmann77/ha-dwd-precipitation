@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import random
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from dataclasses import dataclass
@@ -35,6 +37,47 @@ FAST_POLL_STEP = timedelta(seconds=10)
 # How long an overdue release is given to turn up before the cached value is
 # written off (see BaseProductUpdateCoordinator.OVERDUE_GRACE).
 DEFAULT_OVERDUE_GRACE = timedelta(minutes=6)
+
+# Every install of this integration would otherwise fetch on the same second,
+# so each coordinator takes a whole-second offset in [0, MAX_FETCH_JITTER] and
+# adds it to RELEASE_DELAY. Adding it *there* rather than delaying the fetch on
+# its own is what keeps the timing invariants intact: the scheduled fetches and
+# the staleness deadline are both derived from the same delay, so they shift
+# together and the gap between them is untouched. The offset is never negative,
+# so a jittered fetch is never earlier than the calibrated publication lag and
+# can only reduce 404s.
+MAX_FETCH_JITTER = timedelta(seconds=30)
+
+# Retries are jittered differently: a fresh +/-15% on every attempt, because
+# the point there is to pull instances *out* of the lockstep a shared outage
+# puts them in, which a fixed per-install offset would preserve.
+RETRY_JITTER = 0.15
+
+
+def fetch_jitter_for(entry_id: str, product_key: str) -> timedelta:
+    """Return the stable fetch offset for one product of one config entry.
+
+    Derived from the entry id rather than drawn at random, so an install keeps
+    the same offset across restarts and reloads: the schedule a user observes
+    in their logs stays the one they observed last week, and changing an
+    unrelated option does not quietly move their fetch times. Spread across the
+    population is just as uniform either way.
+
+    hashlib rather than hash() or random.seed(): str hashing is salted per
+    process, and only a digest is contractually stable across interpreter runs.
+    The product key is mixed in so one install's products do not all sit at the
+    same offset.
+    """
+    digest = hashlib.sha256(f"{entry_id}:{product_key}".encode()).digest()
+    steps = int(MAX_FETCH_JITTER.total_seconds()) + 1
+
+    return timedelta(seconds=int.from_bytes(digest[:8], "big") % steps)
+
+
+def _apply_retry_jitter(delay: timedelta) -> timedelta:
+    """Return the retry delay spread by +/-RETRY_JITTER."""
+    return delay * random.uniform(1 - RETRY_JITTER, 1 + RETRY_JITTER)
+
 
 def _format_duration(delta: timedelta) -> str:
     """Return a short human-readable duration: "60 s", "5 min", "1 h 10 min"."""
@@ -153,6 +196,10 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
     # instant (there is a test for this). See _stale_deadline.
     OVERDUE_GRACE: ClassVar[timedelta] = DEFAULT_OVERDUE_GRACE
 
+    # Per-instance fetch offset, set in __init__. Defaults to zero so that a
+    # coordinator built without it (tests) keeps the exact nominal schedule.
+    _fetch_jitter: timedelta = timedelta()
+
     USE_LOCAL_TIME: ClassVar[bool] = False
 
     # Upper bound for the fast-poll retry interval (see _fast_poll_delay).
@@ -180,6 +227,7 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
         self._fast_poll_unsub = None
         self._fast_poll_failures = 0
         self._stale_unsub = None
+        self._fetch_jitter = fetch_jitter_for(entry.entry_id, self.PRODUCT_KEY)
         entry.async_on_unload(self._stop_fast_polling)
         entry.async_on_unload(self._cancel_stale_check)
 
@@ -187,10 +235,22 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
     # Concrete helpers
     # ------------------------------------------------------------------
 
+    @cached_property
+    def release_delay(self) -> timedelta:
+        """Return RELEASE_DELAY plus this instance's fetch jitter.
+
+        RELEASE_DELAY is what DWD does — the calibrated lag between a product's
+        nominal time and the file appearing, checked by
+        scripts/check_release_delay.py. This is what *we* do, and everything
+        that has to agree on when a release is ours to fetch uses it: the
+        schedule, the release lookup, and the staleness deadline alike.
+        """
+        return self.RELEASE_DELAY + self._fetch_jitter
+
     def _get_latest_release(self, now: datetime) -> datetime:
         """Return the most recent valid release timestamp."""
         prev = get_previous_multiple(
-            now - self.RELEASE_DELAY,
+            now - self.release_delay,
             self.RELEASE_INTERVAL,
             self.RELEASE_OFFSET,
         )
@@ -220,7 +280,7 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
 
         return (
             self._next_release_after(self.curr_release)
-            + self.RELEASE_DELAY
+            + self.release_delay
             + self.OVERDUE_GRACE
         )
 
@@ -305,7 +365,7 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
 
         """
         release_interval = self.RELEASE_INTERVAL
-        release_delay = self.RELEASE_DELAY
+        release_delay = self.release_delay
         release_offset = self.RELEASE_OFFSET
 
         seconds_per_day = int(timedelta(days=1).total_seconds())
@@ -369,7 +429,7 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
         a prolonged outage settles at MAX_FAST_POLL_INTERVAL instead of being
         pulled back to FAST_POLL_START every time a new release falls due.
         """
-        delay = self._fast_poll_delay()
+        delay = _apply_retry_jitter(self._fast_poll_delay())
         self._fast_poll_failures += 1
 
         if self._fast_poll_unsub is not None:
