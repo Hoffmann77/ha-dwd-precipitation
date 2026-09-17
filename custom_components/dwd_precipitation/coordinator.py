@@ -17,7 +17,7 @@ import aiohttp
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_NAME
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.event import async_call_later, async_track_point_in_time
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
@@ -26,6 +26,15 @@ from .utils import get_previous_multiple
 
 _LOGGER = logging.getLogger(__name__)
 
+# Fast-poll retry cadence: the first retry fires after FAST_POLL_START, and each
+# further consecutive failure adds FAST_POLL_STEP, until the product's
+# MAX_FAST_POLL_INTERVAL caps it.
+FAST_POLL_START = timedelta(seconds=60)
+FAST_POLL_STEP = timedelta(seconds=10)
+
+# How long an overdue release is given to turn up before the cached value is
+# written off (see BaseProductUpdateCoordinator.OVERDUE_GRACE).
+DEFAULT_OVERDUE_GRACE = timedelta(minutes=6)
 
 def _describe_fetch_error(err: Exception, release: datetime) -> str:
     """Return a human-readable explanation of a failed product update.
@@ -101,10 +110,18 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
 
     RELEASE_OFFSET: ClassVar[timedelta] = timedelta()
 
-    # falls back to RELEASE_INTERVAL when not set.
-    STALE_AFTER: ClassVar[timedelta] = timedelta()
+    # How long a release that has fallen due is given to turn up before the
+    # cached value is written off. Measured from the moment that release should
+    # have been on OpenData, so it says how late DWD is allowed to be rather
+    # than how old the held value may get. It must never be a whole multiple of
+    # RELEASE_INTERVAL: that would put the deadline exactly on a later fetch
+    # instant (there is a test for this). See _stale_deadline.
+    OVERDUE_GRACE: ClassVar[timedelta] = DEFAULT_OVERDUE_GRACE
 
     USE_LOCAL_TIME: ClassVar[bool] = False
+
+    # Upper bound for the fast-poll retry interval (see _fast_poll_delay).
+    MAX_FAST_POLL_INTERVAL: ClassVar[timedelta] = timedelta(minutes=5)
 
     def __init__(
         self,
@@ -126,6 +143,10 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
         self.coords = (lat, lon)
         self.curr_release: datetime | None = None
         self._fast_poll_unsub = None
+        self._fast_poll_failures = 0
+        self._stale_unsub = None
+        entry.async_on_unload(self._stop_fast_polling)
+        entry.async_on_unload(self._cancel_stale_check)
 
     # ------------------------------------------------------------------
     # Concrete helpers
@@ -141,15 +162,96 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
 
         return dt_util.as_utc(prev)
 
-    def _data_is_stale(self, now: datetime) -> bool:
-        """Return True if cached data has aged beyond the tolerance window."""
+    def _stale_deadline(self) -> datetime | None:
+        """Return when the cached value is written off, or None if it is fresh.
+
+        The clock starts when the release *after* the cached one should have
+        been on OpenData, and runs for OVERDUE_GRACE. So the question the
+        deadline answers is "how long may we go on trying for a release that is
+        already due", which is a property of the retrying and has nothing to do
+        with how often the product is published.
+
+        That framing is what keeps the deadline away from the fetch schedule.
+        Anchor the tolerance on the cached release instead and it has to be
+        expressed in release intervals, so it expires exactly when some later
+        fetch is due — and the value is written off at the very instant of the
+        attempt that might have restored it, with event-loop latency deciding
+        which of the two happens first. Anchored here, the deadline only lands
+        on a fetch instant if OVERDUE_GRACE is a whole multiple of
+        RELEASE_INTERVAL, which is a rule a test can hold us to.
+        """
         if self.curr_release is None:
-            return True
+            return None
 
-        tolerance = self.STALE_AFTER or self.RELEASE_INTERVAL
-        threshold = self.curr_release + self.RELEASE_DELAY + tolerance
+        return (
+            self._next_release_after(self.curr_release)
+            + self.RELEASE_DELAY
+            + self.OVERDUE_GRACE
+        )
 
-        return now > threshold
+    def _next_release_after(self, release: datetime) -> datetime:
+        """Return the first scheduled release after the given one.
+
+        Done in the product's own time reference rather than by adding
+        RELEASE_INTERVAL to a UTC timestamp: for USE_LOCAL_TIME products the
+        release grid is a local wall-clock one, so consecutive releases are 23
+        or 25 hours apart on the two DST changeover days. Adding 24 h there
+        would put the deadline an hour off — on the autumn one, before the file
+        it is waiting for could even exist.
+        """
+        reference = dt_util.as_local(release) if self.USE_LOCAL_TIME else release
+
+        return dt_util.as_utc(reference + self.RELEASE_INTERVAL)
+
+    def _data_is_stale(self, now: datetime) -> bool:
+        """Return True if the overdue release has gone unfetched for too long."""
+        deadline = self._stale_deadline()
+
+        return deadline is None or now > deadline
+
+    @property
+    def data_is_stale(self) -> bool:
+        """Return True if the cached value is past its deadline right now.
+
+        Entities read this for their availability, so "stale" is a fact about
+        the clock rather than the outcome of the last fetch. It stays true even
+        if no further fetch is ever attempted.
+        """
+        now = dt_util.now() if self.USE_LOCAL_TIME else dt_util.utcnow()
+
+        return self._data_is_stale(now)
+
+    @callback
+    def _cancel_stale_check(self) -> None:
+        """Cancel the pending deadline callback."""
+        if self._stale_unsub is not None:
+            self._stale_unsub()
+            self._stale_unsub = None
+
+    @callback
+    def _schedule_stale_check(self) -> None:
+        """Wake the entities up when the cached value falls due.
+
+        Availability is derived from the clock, but Home Assistant only re-reads
+        it when the entity writes state. During an outage the fast-poll ramp
+        provides that on its own; after a success nothing else would, so arm one
+        callback on the deadline. It never competes with a fetch: the deadline
+        cannot fall on a fetch instant (see _stale_deadline), and any fetch that
+        happens first re-arms it.
+        """
+        self._cancel_stale_check()
+
+        deadline = self._stale_deadline()
+        if deadline is None:
+            return
+
+        @callback
+        def _expire(_now) -> None:
+            self._stale_unsub = None
+            _LOGGER.debug("%s: cached value reached its deadline", self.PRODUCT_KEY)
+            self.async_update_listeners()
+
+        self._stale_unsub = async_track_point_in_time(self.hass, _expire, deadline)
 
     @cached_property
     def track_time_change_args(self) -> list[dict]:
@@ -218,26 +320,48 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
     # Fast-poll retry
     # ------------------------------------------------------------------
 
-    def _start_fast_polling(self) -> None:
-        """Begin 60-second retry polling if not already running."""
-        if self._fast_poll_unsub is not None:
-            return
+    def _fast_poll_delay(self) -> timedelta:
+        """Return the retry delay for the next fast-poll attempt."""
+        delay = FAST_POLL_START + self._fast_poll_failures * FAST_POLL_STEP
 
-        async def _trigger(_now) -> None:
-            _LOGGER.debug("%s: fast-poll retry firing", self.PRODUCT_KEY)
-            await self.async_refresh()
-
-        self._fast_poll_unsub = async_track_time_interval(
-            self.hass, _trigger, timedelta(seconds=60)
-        )
-        self.config_entry.async_on_unload(self._stop_fast_polling)
+        return min(delay, self.MAX_FAST_POLL_INTERVAL)
 
     @callback
-    def _stop_fast_polling(self) -> None:
-        """Cancel fast polling."""
+    def _schedule_fast_poll(self) -> None:
+        """Arm the next fast-poll retry, backing off on consecutive failures.
+
+        The ramp spans release boundaries: only a successful fetch resets it, so
+        a prolonged outage settles at MAX_FAST_POLL_INTERVAL instead of being
+        pulled back to FAST_POLL_START every time a new release falls due.
+        """
+        delay = self._fast_poll_delay()
+        self._fast_poll_failures += 1
+
         if self._fast_poll_unsub is not None:
             self._fast_poll_unsub()
             self._fast_poll_unsub = None
+
+        async def _trigger(_now) -> None:
+            self._fast_poll_unsub = None
+            _LOGGER.debug("%s: fast-poll retry firing", self.PRODUCT_KEY)
+            await self.async_refresh()
+
+        _LOGGER.debug(
+            "%s: scheduling fast-poll retry in %ss (attempt %s)",
+            self.PRODUCT_KEY,
+            int(delay.total_seconds()),
+            self._fast_poll_failures,
+        )
+        self._fast_poll_unsub = async_call_later(self.hass, delay, _trigger)
+
+    @callback
+    def _stop_fast_polling(self) -> None:
+        """Cancel fast polling and reset the backoff ramp."""
+        if self._fast_poll_unsub is not None:
+            self._fast_poll_unsub()
+            self._fast_poll_unsub = None
+
+        self._fast_poll_failures = 0
 
     # ------------------------------------------------------------------
     # Abstract interface — subclasses implement these
@@ -266,23 +390,27 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
         latest_release = self._get_latest_release(now)
 
         if self.curr_release is not None and self.curr_release >= latest_release:
+            self._stop_fast_polling()
             return self.data
 
         try:
             data, metadata = await self._fetch_and_parse(latest_release)
         except Exception as err:
+            # Keep retrying regardless of availability: the backoff governs the
+            # retry cadence, _data_is_stale() governs what HA shows.
+            self._schedule_fast_poll()
+
             unavailable_when_stale = self.config_entry.options.get(
                 CONF_UNAVAILABLE_WHEN_STALE, True
             )
             if self.data is None or (unavailable_when_stale and self._data_is_stale(now)):
-                self._stop_fast_polling()
                 raise UpdateFailed(_describe_fetch_error(err, latest_release)) from err
 
             # Data is still fresh enough — retry silently
-            self._start_fast_polling()
             return self.data
 
         self._stop_fast_polling()
         self.curr_release = latest_release
+        self._schedule_stale_check()
 
         return CoordinatorData(data, metadata)

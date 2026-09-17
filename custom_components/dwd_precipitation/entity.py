@@ -6,7 +6,7 @@ from homeassistant.helpers.entity import EntityDescription
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import CONF_UNAVAILABLE_WHEN_STALE, DOMAIN
 from .coordinator import BaseProductUpdateCoordinator
 
 
@@ -31,3 +31,22 @@ class DwdCoordinatorEntity(CoordinatorEntity[BaseProductUpdateCoordinator]):
             identifiers={(DOMAIN, coordinator.config_entry.entry_id)},
             name=coordinator.config_entry.title or "DWD Precipitation",
         )
+
+    @property
+    def available(self) -> bool:
+        """Return True if the coordinator holds a value recent enough to show.
+
+        Asking the coordinator for the age of what it holds, rather than taking
+        last_update_success at face value, means a value that quietly ages out
+        stops being reported even if no further fetch is attempted.
+        """
+        if self.coordinator.data is None:
+            return False
+
+        if not self.coordinator.config_entry.options.get(
+            CONF_UNAVAILABLE_WHEN_STALE, True
+        ):
+            return True
+
+        return not self.coordinator.data_is_stale
+
