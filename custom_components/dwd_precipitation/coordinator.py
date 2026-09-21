@@ -23,7 +23,7 @@ from homeassistant.helpers.event import async_call_later, async_track_point_in_t
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
-from .const import CONF_UNAVAILABLE_WHEN_STALE
+from .const import CONF_UNAVAILABLE_WHEN_STALE, DEFAULT_UNAVAILABLE_WHEN_STALE
 from .utils import get_previous_multiple
 
 _LOGGER = logging.getLogger(__name__)
@@ -308,13 +308,43 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
     def data_is_stale(self) -> bool:
         """Return True if the cached value is past its deadline right now.
 
-        Entities read this for their availability, so "stale" is a fact about
-        the clock rather than the outcome of the last fetch. It stays true even
-        if no further fetch is ever attempted.
+        "Stale" is a fact about the clock rather than the outcome of the last
+        fetch, so it stays true even if no further fetch is ever attempted.
+        Entities do not read this directly -- they ask data_is_reportable,
+        which weighs it against the user's unavailable_when_stale option.
         """
         now = dt_util.now() if self.USE_LOCAL_TIME else dt_util.utcnow()
 
         return self._data_is_stale(now)
+
+    @property
+    def unavailable_when_stale(self) -> bool:
+        """Return whether a value past its deadline should be hidden."""
+        return self.config_entry.options.get(
+            CONF_UNAVAILABLE_WHEN_STALE, DEFAULT_UNAVAILABLE_WHEN_STALE
+        )
+
+    def _data_is_reportable(self, now: datetime) -> bool:
+        """Return True if what we hold may still be shown to the user.
+
+        The one place the "do we still report this" policy lives. Both sides of
+        it read from here: entities for their availability, and the failure path
+        of _async_update_data to decide whether a failed fetch is worth an
+        UpdateFailed. They are exact complements, so writing them out separately
+        is an invitation for the entity to report a value the coordinator has
+        already given up on.
+        """
+        if self.data is None:
+            return False
+
+        return not (self.unavailable_when_stale and self._data_is_stale(now))
+
+    @property
+    def data_is_reportable(self) -> bool:
+        """Return whether the cached value may be shown right now."""
+        now = dt_util.now() if self.USE_LOCAL_TIME else dt_util.utcnow()
+
+        return self._data_is_reportable(now)
 
     @callback
     def _cancel_stale_check(self) -> None:
@@ -494,13 +524,10 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
             data, metadata = await self._fetch_and_parse(latest_release)
         except Exception as err:
             # Keep retrying regardless of availability: the backoff governs the
-            # retry cadence, _data_is_stale() governs what HA shows.
+            # retry cadence, _data_is_reportable() governs what HA shows.
             next_retry = self._schedule_fast_poll()
 
-            unavailable_when_stale = self.config_entry.options.get(
-                CONF_UNAVAILABLE_WHEN_STALE, True
-            )
-            if self.data is None or (unavailable_when_stale and self._data_is_stale(now)):
+            if not self._data_is_reportable(now):
                 raise UpdateFailed(
                     _describe_fetch_error(err, latest_release, next_retry)
                 ) from err

@@ -92,11 +92,17 @@ that from turning into noise:
   the cached one should have been on OpenData, and runs for
   `OVERDUE_GRACE` — so the tolerance answers "how long do we go on trying
   for a release that is already due", a property of the retrying rather than of
-  the publication cadence. Entities read `coordinator.data_is_stale` for their
-  availability (together with the `unavailable_when_stale` option), so a value
-  that ages out stops being reported even if no further fetch is attempted;
-  `_schedule_stale_check()` arms a callback on the deadline after each success
-  so HA looks again when nothing else would make it.
+  the publication cadence. Entities read `coordinator.data_is_reportable` for
+  their availability, so a value that ages out stops being reported even if no
+  further fetch is attempted; `_schedule_stale_check()` arms a callback on the
+  deadline after each success so HA looks again when nothing else would make it.
+
+  `data_is_reportable` folds the deadline together with the
+  `unavailable_when_stale` option, and is the *only* place that decision is
+  made. `_async_update_data` asks it the same question to decide whether a
+  failed fetch is worth an `UpdateFailed`: the two are exact complements, and
+  spelling them out separately is how an entity ends up reporting a value the
+  coordinator has already given up on.
 
   Anchoring matters. Measure the tolerance from the *cached* release and it has
   to be expressed in release intervals, so it expires exactly when some later

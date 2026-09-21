@@ -19,6 +19,11 @@ CONF_EXTRA_ATTRIBUTES = "extra_state_attributes"
 
 CONF_UNAVAILABLE_WHEN_STALE = "unavailable_when_stale"
 
+# Whether a value that is past its staleness deadline is hidden rather than
+# reported as-is. Hiding it is the safer default: a wrong number reads as a
+# fact, while an unavailable entity reads as a gap.
+DEFAULT_UNAVAILABLE_WHEN_STALE = True
+
 CONF_PRECIPITATION_THRESHOLD = "precipitation_threshold"
 
 # Rain intensity (mm/h) above which a cell counts as raining for the RV
