@@ -9,10 +9,6 @@ from dataclasses import dataclass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
-from homeassistant.helpers.event import (
-    async_track_time_change,
-    async_track_utc_time_change,
-)
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .coordinator import BaseProductUpdateCoordinator
@@ -47,15 +43,6 @@ class MyData:
     coordinators: dict[str, BaseProductUpdateCoordinator]
 
 
-def _make_refresh_callback(coordinator: BaseProductUpdateCoordinator):
-    """Return a time-change callback that refreshes the given coordinator."""
-
-    async def _callback(_now) -> None:
-        await coordinator.async_refresh()
-
-    return _callback
-
-
 async def async_setup_entry(hass: HomeAssistant, entry: MyConfigEntry) -> bool:
     """Set up DWD Precipitation from a config entry."""
     client = async_get_clientsession(hass)
@@ -76,7 +63,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: MyConfigEntry) -> bool:
         *(coordinator.async_refresh() for coordinator in product_coordinators)
     )
 
-    failed = [c.PRODUCT_KEY for c in product_coordinators if not c.last_update_success]
+    failed = [
+        c.PRODUCT_LABEL or c.PRODUCT_KEY
+        for c in product_coordinators
+        if not c.last_update_success
+    ]
 
     if len(failed) == len(product_coordinators):
         raise ConfigEntryNotReady(
@@ -94,34 +85,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: MyConfigEntry) -> bool:
             ", ".join(sorted(failed)),
         )
 
-    keyed: dict[str, BaseProductUpdateCoordinator] = {}
-
     for coordinator in product_coordinators:
-        refresh_callback = _make_refresh_callback(coordinator)
+        coordinator.async_track_releases()
 
-        # track_time_change_args describes the product's own release grid, so
-        # it has to be registered in the same time reference the product uses
-        # to pick a release. sf_2350's grid is local wall-clock; scheduling it
-        # in UTC would fetch it an offset's worth of hours late every day.
-        track = (
-            async_track_time_change
-            if coordinator.USE_LOCAL_TIME
-            else async_track_utc_time_change
-        )
-
-        for arg in coordinator.track_time_change_args:
-            unsub = track(
-                hass,
-                refresh_callback,
-                hour=arg["hour"],
-                minute=arg["minute"],
-                second=arg["second"],
-            )
-            entry.async_on_unload(unsub)
-
-        keyed[coordinator.PRODUCT_KEY] = coordinator
-
-    entry.runtime_data = MyData(keyed)
+    entry.runtime_data = MyData({c.PRODUCT_KEY: c for c in product_coordinators})
     entry.async_on_unload(entry.add_update_listener(update_listener))
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -137,4 +104,3 @@ async def update_listener(hass: HomeAssistant, entry: MyConfigEntry) -> None:
 async def async_unload_entry(hass: HomeAssistant, entry: MyConfigEntry) -> bool:
     """Unload a config entry."""
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-

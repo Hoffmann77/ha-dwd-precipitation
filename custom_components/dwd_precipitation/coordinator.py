@@ -18,8 +18,13 @@ from typing import Any, ClassVar
 import aiohttp
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_NAME
-from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.event import async_call_later, async_track_point_in_time
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
+from homeassistant.helpers.event import (
+    async_call_later,
+    async_track_point_in_time,
+    async_track_time_change,
+    async_track_utc_time_change,
+)
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
@@ -370,13 +375,46 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
         if deadline is None:
             return
 
-        @callback
-        def _expire(_now) -> None:
-            self._stale_unsub = None
-            _LOGGER.debug("%s: cached value reached its deadline", self.PRODUCT_KEY)
-            self.async_update_listeners()
+        self._stale_unsub = async_track_point_in_time(
+            self.hass, self._stale_reached, deadline
+        )
 
-        self._stale_unsub = async_track_point_in_time(self.hass, _expire, deadline)
+    @callback
+    def _stale_reached(self, _now) -> None:
+        """Make the entities look at the clock again once the deadline passes."""
+        self._stale_unsub = None
+        _LOGGER.debug("%s: cached value reached its deadline", self.PRODUCT_KEY)
+        self.async_update_listeners()
+
+    @callback
+    def async_track_releases(self) -> list[CALLBACK_TYPE]:
+        """Register the time-change trackers that drive this product's fetches.
+
+        The coordinator registers its own schedule rather than handing the
+        pieces to async_setup_entry, because both halves of it — the release
+        grid, and the time reference that grid is expressed in — are knowledge
+        this class already owns. Splitting them apart is what once had sf_2350
+        registered in UTC while its grid was local wall-clock, fetching it an
+        offset's worth of hours late every day.
+        """
+        track = (
+            async_track_time_change
+            if self.USE_LOCAL_TIME
+            else async_track_utc_time_change
+        )
+
+        unsubs = [
+            track(self.hass, self._async_release_due, **args)
+            for args in self.track_time_change_args
+        ]
+        for unsub in unsubs:
+            self.config_entry.async_on_unload(unsub)
+
+        return unsubs
+
+    async def _async_release_due(self, _now) -> None:
+        """Refresh because a new release should now be on OpenData."""
+        await self.async_refresh()
 
     @cached_property
     def track_time_change_args(self) -> list[dict]:
@@ -466,20 +504,23 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
             self._fast_poll_unsub()
             self._fast_poll_unsub = None
 
-        async def _trigger(_now) -> None:
-            self._fast_poll_unsub = None
-            _LOGGER.debug("%s: fast-poll retry firing", self.PRODUCT_KEY)
-            await self.async_refresh()
-
         _LOGGER.debug(
             "%s: scheduling fast-poll retry in %ss (attempt %s)",
             self.PRODUCT_KEY,
             int(delay.total_seconds()),
             self._fast_poll_failures,
         )
-        self._fast_poll_unsub = async_call_later(self.hass, delay, _trigger)
+        self._fast_poll_unsub = async_call_later(
+            self.hass, delay, self._async_fast_poll_due
+        )
 
         return delay
+
+    async def _async_fast_poll_due(self, _now) -> None:
+        """Re-attempt the fetch a failure armed this retry for."""
+        self._fast_poll_unsub = None
+        _LOGGER.debug("%s: fast-poll retry firing", self.PRODUCT_KEY)
+        await self.async_refresh()
 
     @callback
     def _stop_fast_polling(self) -> None:

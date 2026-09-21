@@ -293,10 +293,10 @@ async def test_local_time_product_is_scheduled_in_local_time(
 
     with (
         patch(
-            "custom_components.dwd_precipitation.async_track_time_change"
+            "custom_components.dwd_precipitation.coordinator.async_track_time_change"
         ) as local_track,
         patch(
-            "custom_components.dwd_precipitation.async_track_utc_time_change"
+            "custom_components.dwd_precipitation.coordinator.async_track_utc_time_change"
         ) as utc_track,
         patch.object(
             RadvorRS,
