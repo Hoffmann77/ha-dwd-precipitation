@@ -16,15 +16,15 @@ import aiohttp
 import pytest
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from custom_components.dwd_precipitation import coordinator as coordinator_mod
+from custom_components.dwd_precipitation import (
+    PRODUCT_CLASSES,
+    coordinator as coordinator_mod,
+)
 from custom_components.dwd_precipitation.coordinator import CoordinatorData
 from custom_components.dwd_precipitation.products import (
-    HymecNG,
     RadolanRW,
-    RadolanSF,
     RadolanSFLastYesterday,
     RadvorRS,
-    RadvorRV,
 )
 
 UTC = timezone.utc
@@ -90,9 +90,7 @@ def test_rs_rides_out_one_late_release():
     assert coord._data_is_stale(datetime(2026, 9, 17, 6, 54, 10, tzinfo=UTC)) is True
 
 
-@pytest.mark.parametrize(
-    "cls", [RadvorRS, RadvorRV, HymecNG, RadolanRW, RadolanSF, RadolanSFLastYesterday]
-)
+@pytest.mark.parametrize("cls", PRODUCT_CLASSES)
 def test_stale_deadline_never_lands_on_a_fetch(cls):
     """The deadline must not coincide with a scheduled fetch.
 
@@ -425,16 +423,13 @@ def test_every_message_states_the_retry(err, expected):
 
 def test_every_product_has_a_readable_log_label():
     """HA logs "Error fetching <entry> <label> data", so <label> must read well."""
-    for cls in (RadvorRS, RadvorRV, HymecNG, RadolanRW, RadolanSF, RadolanSFLastYesterday):
+    for cls in PRODUCT_CLASSES:
         label = cls.PRODUCT_LABEL
         assert label, f"{cls.__name__} has no PRODUCT_LABEL"
         assert label.isascii()
         assert not label.endswith("data")  # HA appends " data" itself
 
-    labels = [
-        cls.PRODUCT_LABEL
-        for cls in (RadvorRS, RadvorRV, HymecNG, RadolanRW, RadolanSF, RadolanSFLastYesterday)
-    ]
+    labels = [cls.PRODUCT_LABEL for cls in PRODUCT_CLASSES]
     assert len(set(labels)) == len(labels), "labels must identify the product"
 
 
@@ -467,7 +462,7 @@ def test_every_product_states_its_own_grace():
     that product, so it belongs next to its other timing constants where it can
     be read and argued with.
     """
-    for cls in (RadvorRS, RadvorRV, HymecNG, RadolanRW, RadolanSF, RadolanSFLastYesterday):
+    for cls in PRODUCT_CLASSES:
         assert "OVERDUE_GRACE" in vars(cls), f"{cls.__name__} inherits its grace"
 
 
@@ -476,9 +471,7 @@ def test_every_product_states_its_own_grace():
 # ----------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "cls", [RadvorRS, RadvorRV, HymecNG, RadolanRW, RadolanSF, RadolanSFLastYesterday]
-)
+@pytest.mark.parametrize("cls", PRODUCT_CLASSES)
 def test_fetch_jitter_shifts_the_schedule_and_the_deadline_together(cls):
     """Jitter lives in the delay, so it must not eat into the deadline margin.
 
@@ -546,7 +539,7 @@ def test_fetch_jitter_stays_well_inside_one_release():
     assert coordinator_mod.MAX_FETCH_JITTER == timedelta(seconds=30)
     assert coordinator_mod.MAX_FETCH_JITTER.total_seconds() % 1 == 0
 
-    for cls in (RadvorRS, RadvorRV, HymecNG, RadolanRW, RadolanSF, RadolanSFLastYesterday):
+    for cls in PRODUCT_CLASSES:
         assert coordinator_mod.MAX_FETCH_JITTER < cls.RELEASE_INTERVAL
 
 
