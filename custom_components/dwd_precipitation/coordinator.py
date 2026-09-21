@@ -18,12 +18,17 @@ from typing import Any, ClassVar
 import aiohttp
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_NAME
-from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.event import async_call_later, async_track_point_in_time
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
+from homeassistant.helpers.event import (
+    async_call_later,
+    async_track_point_in_time,
+    async_track_time_change,
+    async_track_utc_time_change,
+)
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
-from .const import CONF_UNAVAILABLE_WHEN_STALE
+from .const import CONF_UNAVAILABLE_WHEN_STALE, DEFAULT_UNAVAILABLE_WHEN_STALE
 from .utils import get_previous_multiple
 
 _LOGGER = logging.getLogger(__name__)
@@ -247,6 +252,17 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
         """
         return self.RELEASE_DELAY + self._fetch_jitter
 
+    def _now(self) -> datetime:
+        """Return the current time in this product's own time reference.
+
+        USE_LOCAL_TIME products sit on a local wall-clock release grid, so
+        everything that asks "which release is ours by now" has to ask in the
+        same reference. One helper rather than the ternary at each site: the
+        cost of getting this wrong is a product fetched hours off its schedule
+        (see _next_release_after), and a missed branch is the way that happens.
+        """
+        return dt_util.now() if self.USE_LOCAL_TIME else dt_util.utcnow()
+
     def _get_latest_release(self, now: datetime) -> datetime:
         """Return the most recent valid release timestamp."""
         prev = get_previous_multiple(
@@ -308,13 +324,39 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
     def data_is_stale(self) -> bool:
         """Return True if the cached value is past its deadline right now.
 
-        Entities read this for their availability, so "stale" is a fact about
-        the clock rather than the outcome of the last fetch. It stays true even
-        if no further fetch is ever attempted.
+        "Stale" is a fact about the clock rather than the outcome of the last
+        fetch, so it stays true even if no further fetch is ever attempted.
+        Entities do not read this directly -- they ask data_is_reportable,
+        which weighs it against the user's unavailable_when_stale option.
         """
-        now = dt_util.now() if self.USE_LOCAL_TIME else dt_util.utcnow()
+        return self._data_is_stale(self._now())
 
-        return self._data_is_stale(now)
+    @property
+    def unavailable_when_stale(self) -> bool:
+        """Return whether a value past its deadline should be hidden."""
+        return self.config_entry.options.get(
+            CONF_UNAVAILABLE_WHEN_STALE, DEFAULT_UNAVAILABLE_WHEN_STALE
+        )
+
+    def _data_is_reportable(self, now: datetime) -> bool:
+        """Return True if what we hold may still be shown to the user.
+
+        The one place the "do we still report this" policy lives. Both sides of
+        it read from here: entities for their availability, and the failure path
+        of _async_update_data to decide whether a failed fetch is worth an
+        UpdateFailed. They are exact complements, so writing them out separately
+        is an invitation for the entity to report a value the coordinator has
+        already given up on.
+        """
+        if self.data is None:
+            return False
+
+        return not (self.unavailable_when_stale and self._data_is_stale(now))
+
+    @property
+    def data_is_reportable(self) -> bool:
+        """Return whether the cached value may be shown right now."""
+        return self._data_is_reportable(self._now())
 
     @callback
     def _cancel_stale_check(self) -> None:
@@ -340,13 +382,46 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
         if deadline is None:
             return
 
-        @callback
-        def _expire(_now) -> None:
-            self._stale_unsub = None
-            _LOGGER.debug("%s: cached value reached its deadline", self.PRODUCT_KEY)
-            self.async_update_listeners()
+        self._stale_unsub = async_track_point_in_time(
+            self.hass, self._stale_reached, deadline
+        )
 
-        self._stale_unsub = async_track_point_in_time(self.hass, _expire, deadline)
+    @callback
+    def _stale_reached(self, _now) -> None:
+        """Make the entities look at the clock again once the deadline passes."""
+        self._stale_unsub = None
+        _LOGGER.debug("%s: cached value reached its deadline", self.PRODUCT_KEY)
+        self.async_update_listeners()
+
+    @callback
+    def async_track_releases(self) -> list[CALLBACK_TYPE]:
+        """Register the time-change trackers that drive this product's fetches.
+
+        The coordinator registers its own schedule rather than handing the
+        pieces to async_setup_entry, because both halves of it — the release
+        grid, and the time reference that grid is expressed in — are knowledge
+        this class already owns. Splitting them apart is what once had sf_2350
+        registered in UTC while its grid was local wall-clock, fetching it an
+        offset's worth of hours late every day.
+        """
+        track = (
+            async_track_time_change
+            if self.USE_LOCAL_TIME
+            else async_track_utc_time_change
+        )
+
+        unsubs = [
+            track(self.hass, self._async_release_due, **args)
+            for args in self.track_time_change_args
+        ]
+        for unsub in unsubs:
+            self.config_entry.async_on_unload(unsub)
+
+        return unsubs
+
+    async def _async_release_due(self, _now) -> None:
+        """Refresh because a new release should now be on OpenData."""
+        await self.async_refresh()
 
     @cached_property
     def track_time_change_args(self) -> list[dict]:
@@ -432,14 +507,7 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
         delay = _apply_retry_jitter(self._fast_poll_delay())
         self._fast_poll_failures += 1
 
-        if self._fast_poll_unsub is not None:
-            self._fast_poll_unsub()
-            self._fast_poll_unsub = None
-
-        async def _trigger(_now) -> None:
-            self._fast_poll_unsub = None
-            _LOGGER.debug("%s: fast-poll retry firing", self.PRODUCT_KEY)
-            await self.async_refresh()
+        self._cancel_fast_poll()
 
         _LOGGER.debug(
             "%s: scheduling fast-poll retry in %ss (attempt %s)",
@@ -447,17 +515,33 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
             int(delay.total_seconds()),
             self._fast_poll_failures,
         )
-        self._fast_poll_unsub = async_call_later(self.hass, delay, _trigger)
+        self._fast_poll_unsub = async_call_later(
+            self.hass, delay, self._async_fast_poll_due
+        )
 
         return delay
 
+    async def _async_fast_poll_due(self, _now) -> None:
+        """Re-attempt the fetch a failure armed this retry for."""
+        self._fast_poll_unsub = None
+        _LOGGER.debug("%s: fast-poll retry firing", self.PRODUCT_KEY)
+        await self.async_refresh()
+
     @callback
-    def _stop_fast_polling(self) -> None:
-        """Cancel fast polling and reset the backoff ramp."""
+    def _cancel_fast_poll(self) -> None:
+        """Cancel the pending retry, leaving the backoff ramp where it is.
+
+        Separate from _stop_fast_polling because re-arming must not reset the
+        ramp: only a success does that.
+        """
         if self._fast_poll_unsub is not None:
             self._fast_poll_unsub()
             self._fast_poll_unsub = None
 
+    @callback
+    def _stop_fast_polling(self) -> None:
+        """Cancel fast polling and reset the backoff ramp."""
+        self._cancel_fast_poll()
         self._fast_poll_failures = 0
 
     # ------------------------------------------------------------------
@@ -481,9 +565,22 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
     # Template method — do not override in subclasses
     # ------------------------------------------------------------------
 
+    @callback
+    def _record_success(self, release: datetime) -> None:
+        """Adopt a freshly fetched release as the cached one.
+
+        One method rather than three statements at each success site: the
+        deadline callback is derived from curr_release, so it can only be armed
+        after the assignment, and that ordering is easier to hold in one place
+        than to remember at every caller.
+        """
+        self._stop_fast_polling()
+        self.curr_release = release
+        self._schedule_stale_check()
+
     async def _async_update_data(self) -> CoordinatorData:
         """HA coordinator hook — owns the full update lifecycle."""
-        now = dt_util.now() if self.USE_LOCAL_TIME else dt_util.utcnow()
+        now = self._now()
         latest_release = self._get_latest_release(now)
 
         if self.curr_release is not None and self.curr_release >= latest_release:
@@ -494,13 +591,10 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
             data, metadata = await self._fetch_and_parse(latest_release)
         except Exception as err:
             # Keep retrying regardless of availability: the backoff governs the
-            # retry cadence, _data_is_stale() governs what HA shows.
+            # retry cadence, _data_is_reportable() governs what HA shows.
             next_retry = self._schedule_fast_poll()
 
-            unavailable_when_stale = self.config_entry.options.get(
-                CONF_UNAVAILABLE_WHEN_STALE, True
-            )
-            if self.data is None or (unavailable_when_stale and self._data_is_stale(now)):
+            if not self._data_is_reportable(now):
                 raise UpdateFailed(
                     _describe_fetch_error(err, latest_release, next_retry)
                 ) from err
@@ -508,8 +602,6 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
             # Data is still fresh enough — retry silently
             return self.data
 
-        self._stop_fast_polling()
-        self.curr_release = latest_release
-        self._schedule_stale_check()
+        self._record_success(latest_release)
 
         return CoordinatorData(data, metadata)

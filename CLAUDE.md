@@ -8,8 +8,8 @@ A HomeAssistant custom component that pulls DWD (German Weather Service) radar c
 
 ```
 __init__.py           Entry point. Builds one coordinator per product from
-                      PRODUCT_CLASSES, refreshes them concurrently, and wires
-                      each to its release schedule.
+                      PRODUCT_CLASSES, refreshes them concurrently, and asks
+                      each to register its own release schedule.
 coordinator.py        BaseProductUpdateCoordinator: the per-product HA
                       DataUpdateCoordinator. Owns release timing, the
                       fetch/stale/retry lifecycle, and the backoff ramp.
@@ -92,11 +92,17 @@ that from turning into noise:
   the cached one should have been on OpenData, and runs for
   `OVERDUE_GRACE` — so the tolerance answers "how long do we go on trying
   for a release that is already due", a property of the retrying rather than of
-  the publication cadence. Entities read `coordinator.data_is_stale` for their
-  availability (together with the `unavailable_when_stale` option), so a value
-  that ages out stops being reported even if no further fetch is attempted;
-  `_schedule_stale_check()` arms a callback on the deadline after each success
-  so HA looks again when nothing else would make it.
+  the publication cadence. Entities read `coordinator.data_is_reportable` for
+  their availability, so a value that ages out stops being reported even if no
+  further fetch is attempted; `_schedule_stale_check()` arms a callback on the
+  deadline after each success so HA looks again when nothing else would make it.
+
+  `data_is_reportable` folds the deadline together with the
+  `unavailable_when_stale` option, and is the *only* place that decision is
+  made. `_async_update_data` asks it the same question to decide whether a
+  failed fetch is worth an `UpdateFailed`: the two are exact complements, and
+  spelling them out separately is how an entity ends up reporting a value the
+  coordinator has already given up on.
 
   Anchoring matters. Measure the tolerance from the *cached* release and it has
   to be expressed in release intervals, so it expires exactly when some later
@@ -122,11 +128,15 @@ that from turning into noise:
   apart on DST changeover days; adding `RELEASE_INTERVAL` to a UTC timestamp
   would put the autumn deadline before the file it is waiting for could exist.
 
-  For the same reason `async_setup_entry` registers a `USE_LOCAL_TIME` product
-  with `async_track_time_change` rather than `async_track_utc_time_change`.
-  `track_time_change_args` describes the product's own grid, so registering
-  `sf_2350` in UTC fetched it an offset's worth of hours late every day — in
-  summer, 1.5 h after its own staleness deadline had already passed.
+  For the same reason `async_track_releases()` registers a `USE_LOCAL_TIME`
+  product with `async_track_time_change` rather than
+  `async_track_utc_time_change`. `track_time_change_args` describes the
+  product's own grid, so registering `sf_2350` in UTC fetched it an offset's
+  worth of hours late every day — in summer, 1.5 h after its own staleness
+  deadline had already passed. The registration lives on the coordinator rather
+  than in `async_setup_entry` precisely because that pairing is the thing that
+  broke: the grid and the clock it is read in are one decision, and the entry
+  point had only half of it.
 - **One failing product must not take the entry down.** `async_setup_entry`
   refreshes all products concurrently and raises `ConfigEntryNotReady` only if
   *every* one fails. A single dead product (DWD retiring one, say) leaves its
