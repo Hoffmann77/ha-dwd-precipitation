@@ -326,12 +326,21 @@ async def test_local_time_product_is_scheduled_in_local_time(
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
-    # Exactly one product uses local time, and it registers one tracker.
-    assert local_track.call_count == 1
-    assert local_track.call_args.kwargs == {"hour": [0], "minute": [18], "second": 0}
+    coordinators = entry.runtime_data.coordinators
 
-    # Everything else stays on UTC.
+    # Exactly one product uses local time, and it registers its own grid --
+    # which carries this entry's fetch jitter, so read the expected kwargs off
+    # the coordinator rather than restating a second here.
+    assert local_track.call_count == 1
+    assert (
+        local_track.call_args.kwargs
+        == coordinators["sf_2350"].track_time_change_args[0]
+    )
+
+    # Everything else stays on UTC. track_time_change_args is a cached_property,
+    # so it has to be read off an instance -- off the class it is the descriptor.
     assert utc_track.call_count == sum(
-        len(cls.track_time_change_args)
-        for cls in (RadvorRS, RadvorRV, HymecNG, RadolanRW, RadolanSF)
+        len(c.track_time_change_args)
+        for c in coordinators.values()
+        if not c.USE_LOCAL_TIME
     )

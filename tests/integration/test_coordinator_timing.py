@@ -266,6 +266,7 @@ def test_stop_fast_polling_cancels_and_resets():
 def test_timers_are_registered_for_entry_unload():
     """Both timers are hooked to unload once, at construction."""
     entry = SimpleNamespace(
+        entry_id="01JABCDEF0123456789XYZ",
         data={"name": "Home"},
         options={},
         unload_callbacks=[],
