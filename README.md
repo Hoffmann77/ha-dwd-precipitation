@@ -36,7 +36,7 @@ Names ending in **`last <N>`** are measured totals over the window ending now; *
 - **Precipitation next 1–2h** (mm): forecast total for 60–120 min from now
 - **Timespan without precipitation** (days): time since `Precipitation now` last reached the reset threshold. Survives restarts.
 
-**RADVOR RV: high-resolution nowcast · updated every 5 min · 2 h horizon**
+**RADVOR RV: nowcast in 5-min steps · updated every 5 min · 2 h horizon**
 
 - **Peak intensity next 1h** (mm/h): heaviest expected rain rate in the next 0–60 min
 - **Peak intensity next 1–2h** (mm/h): the same for 60–120 min
@@ -131,7 +131,7 @@ For the full two-hour forecast total, add `Precipitation next 1h` and `Precipita
 - **Precipitation next 1–2h** (mm): forecast total for 60–120 min from now.
 - **Timespan without precipitation** (days): time since `Precipitation now` last reached the reset threshold. Survives restarts; rain during downtime is caught up from the RADOLAN totals on startup.
 
-### RADVOR RV: high-resolution nowcast · every 5 min · 2 h horizon
+### RADVOR RV: nowcast in 5-min steps · every 5 min · 2 h horizon
 
 - **Peak intensity next 1h** (mm/h): heaviest expected rain rate in the next 0–60 min. Tells drizzle from a downpour; `Precipitation next 1h` gives the amount.
 - **Peak intensity next 1–2h** (mm/h): the same for 60–120 min from now.
