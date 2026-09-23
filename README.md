@@ -18,16 +18,49 @@ Radar-based precipitation measurements and forecasts from the German Weather Ser
 - **Precipitation type:** rain, drizzle, snow, sleet, graupel, hail, freezing rain
 - **Measured totals:** past hour, past 24 hours, yesterday, and a days-without-rain counter
 
+## Limitations
+
+> [!IMPORTANT]
+> This integration only works for locations **within Germany** and areas immediately adjacent to the German border. The DWD radar composites do not cover other countries.
+
+## Entities
+
+All entities belong to one **DWD Precipitation** device per configured location.
+
+Names ending in **`last <N>`** are measured totals over the window ending now; **`next <N>`** are forecasts. **`next 1–2h`** is the *second* hour ahead (60–120 min), not the coming two hours.
+
+**RADVOR RS: radar nowcast · updated every 5 min**
+
+- **Precipitation now** (mm): rain that fell in the past 60 minutes. This is a total, not a mm/h rate.
+- **Precipitation next 1h** (mm): forecast total for the next 0–60 min
+- **Precipitation next 1–2h** (mm): forecast total for 60–120 min from now
+- **Timespan without precipitation** (days): time since `Precipitation now` last reached the reset threshold. Survives restarts.
+
+**RADVOR RV: high-resolution nowcast · updated every 5 min · 2 h horizon**
+
+- **Peak intensity next 1h** (mm/h): heaviest expected rain rate in the next 0–60 min
+- **Peak intensity next 1–2h** (mm/h): the same for 60–120 min
+- **Precipitation start** (time or min): when rain begins; `unknown` if none within 2 h
+- **Precipitation end** (time or min): when rain stops; `unknown` if it lasts beyond 2 h
+- **Precipitation expected** (binary sensor): `on` if rain is forecast within 2 h
+
+**HymecNG: precipitation type · updated every 5 min**
+
+- **Precipitation type**: what is falling right now: rain, drizzle, snow, sleet, graupel, hail, freezing rain, …
+
+**RADOLAN RW / SF: radar + rain-gauge analysis · updated hourly / daily**
+
+- **Precipitation last 1h** (mm): past 60 min. Arrives once an hour but is more accurate than `Precipitation now`.
+- **Precipitation last 24h** (mm): rolling past 24 hours
+- **Precipitation yesterday** (mm): the previous calendar day's total, available around 00:20 local time
+
+See [Entity details](#entity-details) for the full behaviour of each sensor and its attributes.
+
 ## Screenshots
 
 <img src="docs/assets/screenshot_config_flow.png" alt="Setup dialog — name field and location selector map." height="400"/>
 
 <img src="docs/assets/screenshot_entities_2026-8-0.png" alt="Device page — the precipitation sensors and their current values." height="400"/>
-
-## Limitations
-
-> [!IMPORTANT]
-> This integration only works for locations **within Germany** and areas immediately adjacent to the German border. The DWD radar composites do not cover other countries.
 
 ## Installation
 
@@ -87,11 +120,9 @@ Open **Settings > Devices & Services > DWD Precipitation > Configure**. None of 
 - **When "Precipitation end" counts rain as over** (default: first dry gap): see `Precipitation end` below.
 - **Rain needed to reset the dry-streak counter (mm)** (default: 1.0): `Precipitation now` at or above this value resets `Timespan without precipitation`.
 
-## Entities
+## Entity details
 
-All entities belong to one **DWD Precipitation** device per configured location.
-
-Names ending in **`last <N>`** are measured totals over the window ending now. Names ending in **`next <N>`** are forecasts. **`next 1–2h`** is the *second* hour ahead (60–120 min from now), not the coming two hours: add `next 1h` and `next 1–2h` for the full two-hour total.
+For the full two-hour forecast total, add `Precipitation next 1h` and `Precipitation next 1–2h`.
 
 ### RADVOR RS: radar nowcast · every 5 min
 
