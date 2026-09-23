@@ -2,17 +2,27 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.event import async_track_utc_time_change
+from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .coordinator import BaseProductUpdateCoordinator
 from .const import PLATFORMS
 from .products import (
+    RadvorRS,
+    RadvorRV,
+    HymecNG,
+    RadolanRW,
+    RadolanSF,
+    RadolanSFLastYesterday,
+)
+
+PRODUCT_CLASSES: tuple[type[BaseProductUpdateCoordinator], ...] = (
     RadvorRS,
     RadvorRV,
     HymecNG,
@@ -33,15 +43,6 @@ class MyData:
     coordinators: dict[str, BaseProductUpdateCoordinator]
 
 
-def _make_refresh_callback(coordinator: BaseProductUpdateCoordinator):
-    """Return a time-change callback that refreshes the given coordinator."""
-
-    async def _callback(_now) -> None:
-        await coordinator.async_refresh()
-
-    return _callback
-
-
 async def async_setup_entry(hass: HomeAssistant, entry: MyConfigEntry) -> bool:
     """Set up DWD Precipitation from a config entry."""
     client = async_get_clientsession(hass)
@@ -50,33 +51,44 @@ async def async_setup_entry(hass: HomeAssistant, entry: MyConfigEntry) -> bool:
     lon = entry.data["longitude"]
 
     product_coordinators: list[BaseProductUpdateCoordinator] = [
-        RadvorRS(hass, entry, client, lat, lon),
-        RadvorRV(hass, entry, client, lat, lon),
-        HymecNG(hass, entry, client, lat, lon),
-        RadolanRW(hass, entry, client, lat, lon),
-        RadolanSF(hass, entry, client, lat, lon),
-        RadolanSFLastYesterday(hass, entry, client, lat, lon),
+        cls(hass, entry, client, lat, lon) for cls in PRODUCT_CLASSES
     ]
 
-    keyed: dict[str, BaseProductUpdateCoordinator] = {}
+    # Refresh every product concurrently. async_refresh() records a failure on
+    # the coordinator instead of raising, so one dead product cannot veto the
+    # whole entry — each failed coordinator keeps its own fast-poll retry ramp
+    # running and its entities simply start out unavailable. Only a clean sweep
+    # of failures means the entry itself is not ready.
+    await asyncio.gather(
+        *(coordinator.async_refresh() for coordinator in product_coordinators)
+    )
+
+    failed = [
+        c.PRODUCT_LABEL or c.PRODUCT_KEY
+        for c in product_coordinators
+        if not c.last_update_success
+    ]
+
+    if len(failed) == len(product_coordinators):
+        raise ConfigEntryNotReady(
+            "No data could be fetched from DWD OpenData. Either this Home "
+            "Assistant has no internet access right now, or DWD OpenData is "
+            "down; setup will be retried automatically."
+        )
+
+    if failed:
+        _LOGGER.warning(
+            "Started without the DWD %s product(s): DWD OpenData did not serve "
+            "them just now. Every other product is working, and the missing "
+            "ones are retried automatically in the background; no action is "
+            "needed unless their sensors stay unavailable",
+            ", ".join(sorted(failed)),
+        )
 
     for coordinator in product_coordinators:
-        await coordinator.async_config_entry_first_refresh()
+        coordinator.async_track_releases()
 
-        refresh_callback = _make_refresh_callback(coordinator)
-        for arg in coordinator.track_time_change_args:
-            unsub = async_track_utc_time_change(
-                hass,
-                refresh_callback,
-                hour=arg["hour"],
-                minute=arg["minute"],
-                second=arg["second"],
-            )
-            entry.async_on_unload(unsub)
-
-        keyed[coordinator.PRODUCT_KEY] = coordinator
-
-    entry.runtime_data = MyData(keyed)
+    entry.runtime_data = MyData({c.PRODUCT_KEY: c for c in product_coordinators})
     entry.async_on_unload(entry.add_update_listener(update_listener))
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)

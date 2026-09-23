@@ -2,9 +2,14 @@
   "config": {
     "step": {
       "user": {
+        "description": "Pick the location to report precipitation for. DWD's radar only covers Germany and a narrow band beyond its borders.",
         "data": {
           "name": "Name",
           "coordinates": "Location"
+        },
+        "data_description": {
+          "name": "Used for the device and as the prefix of every entity id.",
+          "coordinates": "The sensors report the radar grid cell containing this point, roughly 1 km across."
         }
       }
     },
@@ -17,20 +22,23 @@
   "options": {
     "step": {
       "init": {
-        "title": "DWD Precipitation Options",
+        "title": "DWD Precipitation options",
+        "description": "These settings change how the sensors present DWD's data. None of them affect how often it is fetched — each product is refreshed as soon as DWD publishes it, and failed fetches are retried automatically.",
         "data": {
-          "extra_state_attributes": "Show sensor source metadata",
-          "unavailable_when_stale": "Mark sensors unavailable when data is stale",
-          "precipitation_threshold": "Precipitation detection threshold (mm per hour)",
-          "start_end_mode": "Precipitation start/end sensor state",
-          "precipitation_end_algorithm": "Precipitation end algorithm",
-          "precipitation_reset_threshold": "Precipitation reset threshold (mm)"
+          "extra_state_attributes": "Add technical details to each sensor",
+          "unavailable_when_stale": "Show sensors as unavailable when the data is out of date",
+          "precipitation_threshold": "Rain detection threshold (mm per hour)",
+          "start_end_mode": "How “Precipitation start” and “Precipitation end” report",
+          "precipitation_end_algorithm": "When “Precipitation end” counts rain as over",
+          "precipitation_reset_threshold": "Rain needed to reset the dry-streak counter (mm)"
         },
         "data_description": {
-          "precipitation_threshold": "A forecast intensity above this value counts as precipitation for the RV start/end sensors. 0 means any DWD-detected rain.",
-          "start_end_mode": "Whether the start/end sensors report the absolute time or the minutes until the event. The other value is exposed as an attribute.",
-          "precipitation_end_algorithm": "How the precipitation end is determined. \"First dry gap\" ends when the current precipitation episode first lets up; \"Precipitation clears\" ends when no more precipitation is forecast within the 2-hour horizon.",
-          "precipitation_reset_threshold": "\"Precipitation now\" at or above this value resets the Timespan without precipitation counter."
+          "extra_state_attributes": "Attaches the DWD product name, the measurement time and the period each value covers to every sensor as attributes. Useful in templates or when reporting a problem; leave it off otherwise.",
+          "unavailable_when_stale": "If DWD does not publish a new file in time, the affected sensors report “unavailable” instead of keeping the last value. Turn this off to always keep the most recent reading, accepting that it may be hours old. Either way the missing file keeps being retried in the background.",
+          "precipitation_threshold": "How much forecast rain counts as precipitation for the “Precipitation start”, “Precipitation end” and “Precipitation expected” sensors. 0 means any amount DWD detects; raise it to around 0.5 to ignore drizzle.",
+          "start_end_mode": "Whether those two sensors show a clock time (“14:25”) or the minutes until the event (“20”). Whichever you do not pick stays available as an attribute on the same sensor.",
+          "precipitation_end_algorithm": "“First dry gap” reports the end of the current burst, so it moves around during showers. “Precipitation clears within 2 h” waits until no further rain is forecast, which is steadier but stays unknown longer. DWD forecasts only two hours ahead, so beyond that the sensor is “unknown” either way.",
+          "precipitation_reset_threshold": "How much rain resets “Timespan without precipitation” to zero. It is compared against “Precipitation now”, which is millimetres accumulated over the past hour — so 1 mm means 1 mm fell in the last hour, not a rate."
         }
       }
     }
@@ -38,8 +46,8 @@
   "selector": {
     "start_end_mode": {
       "options": {
-        "timestamp": "Absolute time",
-        "duration": "Minutes until"
+        "timestamp": "Clock time",
+        "duration": "Minutes from now"
       }
     },
     "precipitation_end_algorithm": {

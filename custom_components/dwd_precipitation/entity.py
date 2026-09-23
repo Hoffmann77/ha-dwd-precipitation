@@ -31,3 +31,15 @@ class DwdCoordinatorEntity(CoordinatorEntity[BaseProductUpdateCoordinator]):
             identifiers={(DOMAIN, coordinator.config_entry.entry_id)},
             name=coordinator.config_entry.title or "DWD Precipitation",
         )
+
+    @property
+    def available(self) -> bool:
+        """Return True if the coordinator holds a value recent enough to show.
+
+        Asking the coordinator what it is willing to report, rather than taking
+        last_update_success at face value, means a value that quietly ages out
+        stops being reported even if no further fetch is attempted. The rule
+        itself lives on the coordinator so the entity and the update loop cannot
+        answer this question differently.
+        """
+        return self.coordinator.data_is_reportable
