@@ -10,6 +10,10 @@
 
 Radar-based precipitation measurements and forecasts from the German Weather Service (DWD), for your exact location, directly in Home Assistant.
 
+> [!IMPORTANT]
+> This integration **only works** for locations **within Germany** and areas immediately adjacent to the German border.
+> The DWD radar composites do not cover other countries.
+
 ## Features
 
 - **Location-precise:** values come from the ~1 km radar grid cell containing your coordinates
@@ -17,26 +21,27 @@ Radar-based precipitation measurements and forecasts from the German Weather Ser
 - **Two-hour forecast:** forecast totals, peak intensity, and when rain starts and stops
 - **Precipitation type:** rain, drizzle, snow, sleet, graupel, hail, freezing rain
 - **Measured totals:** past hour, past 24 hours, yesterday, and a days-without-rain counter
-
-## Limitations
-
-> [!IMPORTANT]
-> This integration only works for locations **within Germany** and areas immediately adjacent to the German border. The DWD radar composites do not cover other countries.
+- **Customizable thresholds** for rain events to use as input for automations.
 
 ## Entities
 
 All entities belong to one **DWD Precipitation** device per configured location.
 
-Names ending in **`last <N>`** are measured totals over the window ending now; **`next <N>`** are forecasts. **`next 1–2h`** is the *second* hour ahead (60–120 min), not the coming two hours.
+Names ending in **`last <N>`** are measured totals over the window ending now.
+
+Names ending in **`next <N>`** are forecasts. 
+
+> [!NOTE]
+> **`next 1–2h`** is the *second* hour ahead (60–120 min), not the coming two hours.
 
 **RADVOR RS: radar nowcast · updated every 5 min**
 
 - **Precipitation now** (mm): rain that fell in the past 60 minutes. This is a total, not a mm/h rate.
 - **Precipitation next 1h** (mm): forecast total for the next 0–60 min
 - **Precipitation next 1–2h** (mm): forecast total for 60–120 min from now
-- **Timespan without precipitation** (days): time since `Precipitation now` last reached the reset threshold. Survives restarts.
+- **Timespan without precipitation** (days): time since `Precipitation now` last reached the reset threshold.
 
-**RADVOR RV: nowcast in 5-min steps · updated every 5 min · 2 h horizon**
+**RADVOR RV: nowcast in 5-min steps · updated every 5 min**
 
 - **Peak intensity next 1h** (mm/h): heaviest expected rain rate in the next 0–60 min
 - **Peak intensity next 1–2h** (mm/h): the same for 60–120 min
@@ -113,7 +118,7 @@ After installation, restart Home Assistant. To add DWD Precipitation to your Hom
 
 Open **Settings > Devices & Services > DWD Precipitation > Configure**. None of the options affect how often data is fetched.
 
-- **Add technical details to each sensor** (default: off): adds the source attributes listed under [Attributes](#attributes).
+- **Add technical details to each sensor:**(default: off): adds the source attributes listed under [Attributes](#attributes).
 - **Show sensors as unavailable when the data is out of date** (default: on): if DWD does not publish a new file in time, sensors report `unavailable` instead of keeping the last value. See [Troubleshooting](#troubleshooting) for how long "in time" is. The missing file keeps being retried either way.
 - **Rain detection threshold (mm per hour)** (default: 0): how much forecast rain counts as rain for `Precipitation start`, `Precipitation end` and `Precipitation expected`. 0 means any amount DWD detects; around 0.5 ignores drizzle.
 - **How "Precipitation start" and "Precipitation end" report** (default: clock time): show a clock time or the minutes until the event. The other form is always available as an attribute.
