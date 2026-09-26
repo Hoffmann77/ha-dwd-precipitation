@@ -217,7 +217,8 @@ once released, since renaming one orphans the user's entity.
 5. Add sensor descriptors in `sensor.py` (new `*_SENSORS` tuple)
 6. Register the class in `__init__.py` `PRODUCT_CLASSES` tuple
 7. Register sensors in `sensor.py` `async_setup_entry`, and add each
-   `translation_key`'s name to `translations/en.json`
+   `translation_key`'s name to `translations/en.json` and `translations/de.json`
+   (the two files must keep identical keys)
 
 ## Release timing
 

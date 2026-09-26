@@ -1,0 +1,118 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "description": "Wähle den Ort, für den Niederschlag gemeldet werden soll. Das DWD-Radar deckt nur Deutschland und einen schmalen Streifen jenseits der Grenzen ab.",
+        "data": {
+          "name": "Name",
+          "coordinates": "Standort"
+        },
+        "data_description": {
+          "name": "Wird für das Gerät und als Präfix jeder Entitäts-ID verwendet.",
+          "coordinates": "Die Sensoren melden die Radar-Gitterzelle, die diesen Punkt enthält – etwa 1 km breit."
+        }
+      }
+    },
+    "error": {
+      "invalid_name": "Bitte gib einen Namen ein.",
+      "name_already_exists": "Ein Eintrag mit diesem Namen existiert bereits. Bitte wähle einen anderen Namen.",
+      "coordinates_out_of_range": "Diese Integration liefert nur Daten für Deutschland. Der gewählte Standort liegt außerhalb des abgedeckten Gebiets."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "DWD Niederschlag – Optionen",
+        "description": "Diese Einstellungen ändern, wie die Sensoren die Daten des DWD darstellen. Keine davon beeinflusst, wie oft abgerufen wird – jedes Produkt wird aktualisiert, sobald der DWD es veröffentlicht, und fehlgeschlagene Abrufe werden automatisch wiederholt.",
+        "data": {
+          "extra_state_attributes": "Metadaten als Sensorattribute anzeigen",
+          "unavailable_when_stale": "Sensoren als nicht verfügbar anzeigen, wenn die Daten veraltet sind",
+          "precipitation_threshold": "Schwelle für Regenerkennung (mm pro Stunde)",
+          "start_end_mode": "Anzeige von „Niederschlagsbeginn“ und „Niederschlagsende“",
+          "precipitation_end_algorithm": "Wann „Niederschlagsende“ den Regen als beendet ansieht",
+          "precipitation_reset_threshold": "Regenmenge, die den Trockenzähler zurücksetzt (mm)"
+        },
+        "data_description": {
+          "extra_state_attributes": "Hängt jedem Sensor den DWD-Produktnamen, den Messzeitpunkt und den abgedeckten Zeitraum als Attribute an. Nützlich in Templates oder beim Melden eines Problems; ansonsten ausgeschaltet lassen.",
+          "unavailable_when_stale": "Veröffentlicht der DWD nicht rechtzeitig eine neue Datei, melden die betroffenen Sensoren „nicht verfügbar“, statt den letzten Wert zu behalten. Schalte dies aus, um immer den neuesten Messwert zu behalten – auch wenn er Stunden alt sein kann. In beiden Fällen wird die fehlende Datei im Hintergrund weiter abgerufen.",
+          "precipitation_threshold": "Wie viel vorhergesagter Regen für die Sensoren „Niederschlagsbeginn“, „Niederschlagsende“ und „Niederschlag erwartet“ als Niederschlag zählt. 0 bedeutet jede vom DWD erkannte Menge; auf etwa 0,5 erhöhen, um Nieselregen zu ignorieren.",
+          "start_end_mode": "Ob diese beiden Sensoren eine Uhrzeit („14:25“) oder die Minuten bis zum Ereignis („20“) anzeigen. Die nicht gewählte Variante bleibt als Attribut am selben Sensor verfügbar.",
+          "precipitation_end_algorithm": "„Erste trockene Lücke“ meldet das Ende des aktuellen Schauers und springt daher bei Schauerwetter hin und her. „Niederschlag endet innerhalb von 2 h“ wartet, bis kein weiterer Regen vorhergesagt ist – das ist stabiler, bleibt aber länger unbekannt. Der DWD sagt nur zwei Stunden voraus, darüber hinaus ist der Sensor in beiden Fällen „unbekannt“.",
+          "precipitation_reset_threshold": "Wie viel Regen „Zeitraum ohne Niederschlag“ auf null zurücksetzt. Verglichen wird mit „Niederschlag aktuell“, also den in der letzten Stunde gefallenen Millimetern – 1 mm bedeutet, dass in der letzten Stunde 1 mm gefallen ist, keine Rate."
+        }
+      }
+    }
+  },
+  "selector": {
+    "start_end_mode": {
+      "options": {
+        "timestamp": "Uhrzeit",
+        "duration": "Minuten ab jetzt"
+      }
+    },
+    "precipitation_end_algorithm": {
+      "options": {
+        "episode": "Erste trockene Lücke",
+        "clearing": "Niederschlag endet innerhalb von 2 h"
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "precipitation_now": {
+        "name": "Niederschlag aktuell"
+      },
+      "precipitation_last_1h": {
+        "name": "Niederschlag letzte 1h"
+      },
+      "precipitation_last_24h": {
+        "name": "Niederschlag letzte 24h"
+      },
+      "precipitation_yesterday": {
+        "name": "Niederschlag gestern"
+      },
+      "precipitation_next_1h": {
+        "name": "Niederschlag nächste 1h"
+      },
+      "precipitation_next_1_2h": {
+        "name": "Niederschlag nächste 1–2h"
+      },
+      "peak_intensity_next_1h": {
+        "name": "Spitzenintensität nächste 1h"
+      },
+      "peak_intensity_next_1_2h": {
+        "name": "Spitzenintensität nächste 1–2h"
+      },
+      "precipitation_start": {
+        "name": "Niederschlagsbeginn"
+      },
+      "precipitation_end": {
+        "name": "Niederschlagsende"
+      },
+      "timespan_without_precipitation": {
+        "name": "Zeitraum ohne Niederschlag"
+      },
+      "precipitation_type": {
+        "name": "Niederschlagsart",
+        "state": {
+          "no_precipitation": "Kein Niederschlag",
+          "not_classified": "Nicht klassifiziert",
+          "drizzle": "Nieselregen",
+          "rain": "Regen",
+          "freezing_drizzle": "Gefrierender Nieselregen",
+          "freezing_rain": "Gefrierender Regen",
+          "sleet": "Schneeregen",
+          "snow": "Schnee",
+          "graupel": "Graupel",
+          "hail": "Hagel",
+          "large_hail": "Großer Hagel"
+        }
+      }
+    },
+    "binary_sensor": {
+      "precipitation_expected": {
+        "name": "Niederschlag erwartet"
+      }
+    }
+  }
+}
