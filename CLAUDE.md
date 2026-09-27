@@ -252,16 +252,36 @@ run comes back clean.
 
 ## Grid lookup
 
+Both lookups return the cell that *contains* the location: project it, then
+**floor** its offset from the grid's outer lower-left corner. Never round, and
+never take the nearest grid coordinate unless those coordinates are pixel
+centres — the corner references below are pixel *edges*, and treating them as
+centres shifts the lookup by half a cell, which picks a neighbouring cell for
+~3 locations in 4. Both were wrong that way until 2026.10.
+
+The reference tier checks both against wradlib's own grids (`mode="edge"`),
+not against a reimplementation of our arithmetic, and pins wradlib's DE1200
+grid to the fixture file's corner attributes. Fixture coordinates are cell
+*centres*; a corner would sit on the boundary of four cells.
+
 ### RADOLAN (RW, SF)
-`RadolanProduct.index`: calls `get_radolan_grid(wgs84=True)` to get the full
-900×900 WGS84 lon/lat grid, then finds the nearest cell via minimum squared distance.
-Grid is in `radar/georef.py` (spherical polar-stereographic, Earth radius 6370.040 km).
+`RadolanProduct.index` calls `get_radolan_grid_index(lat, lon)` from
+`radar/georef.py`. `get_radolan_coordinates()` (mode `radolan`) gives each
+pixel's *lower-left corner*; row 0 is the south edge. Spherical
+polar-stereographic (`trig`, Earth radius 6370.040 km, format version <= 4). A
+location off the 900×900 grid is clamped to the nearest edge cell.
 
 ### RS (ODIM_H5)
 `RadvorRS.index` calls `get_rs_grid_index(lat, lon)` from `radar/odim.py`.
-Direct spherical polar-stereographic forward projection (WGS84 a=6378137m, O(1)).
+Ellipsoidal polar-stereographic forward projection (WGS84 a=6378137m, O(1)).
 Grid: 1200 rows × 1100 cols, 1km, same `+proj=stere +lat_ts=60 +lat_0=90 +lon_0=10`
 family as RADOLAN but WGS84 ellipsoid, different false easting/northing, and larger extent.
+The ODIM `LL_*`/`UL_*`/`UR_*`/`LR_*` attributes are the *outer* corners of the
+edge pixels (LL projects to x = −500 m, y = −1 199 500 m); pixel centres sit on
+whole kilometres, the north-west one at the projection origin (RV format
+description §3.1). Row 0 is the north edge. `rs_grid_contains` relies on the
+same floor, so a point just outside an edge is correctly rejected. This is
+wradlib's `dwd-radolan-wgs84-de1200` grid.
 
 ## The radar/ directory
 

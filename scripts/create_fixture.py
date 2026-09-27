@@ -223,8 +223,8 @@ def try_download_radolan(product: str) -> tuple[bytes | None, datetime | None]:
 def radolan_cell_meta(bz2_bytes: bytes) -> dict:
     """Parse a RADOLAN .bz2 with wradlib (authoritative) and record a rain cell.
 
-    lat/lon come from wradlib's WGS84 grid so the parser test can verify our
-    vendored georef puts that cell at the same (row, col).
+    lat/lon is the cell centre on wradlib's WGS84 grid, so the parser test can
+    verify our lookup puts it in the same (row, col).
     """
     import bz2 as _bz2
 
@@ -239,7 +239,7 @@ def radolan_cell_meta(bz2_bytes: bytes) -> dict:
     else:
         row, col = arr.shape[0] // 2, arr.shape[1] // 2
 
-    grid = wrl.georef.get_radolan_grid(*arr.shape, wgs84=True)
+    grid = wrl.georef.get_radolan_grid(*arr.shape, mode="center", wgs84=True)
     lon, lat = float(grid[row, col, 0]), float(grid[row, col, 1])
 
     return {

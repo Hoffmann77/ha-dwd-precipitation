@@ -7,7 +7,7 @@ import logging
 import tarfile
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
-from functools import cached_property, lru_cache
+from functools import cached_property
 from io import BytesIO
 from typing import ClassVar
 
@@ -21,7 +21,7 @@ from .coordinator import (
 from .utils import async_get
 from .radar import (
     read_radolan_composite,
-    get_radolan_grid,
+    get_radolan_grid_index,
     read_odim_composite_cell,
     read_odim_classification,
     get_rs_grid_index,
@@ -53,15 +53,6 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
-
-
-@lru_cache(maxsize=1)
-def _radolan_wgs84_grid() -> np.ndarray:
-    """Return the cached 900×900 RADOLAN WGS84 lon/lat grid.
-
-    Shared across all RADOLAN products, which use an identical grid.
-    """
-    return get_radolan_grid(wgs84=True)
 
 
 def _utc(dt: datetime | None) -> datetime | None:
@@ -543,12 +534,8 @@ class RadolanProduct(BaseProductUpdateCoordinator, ABC):
 
     @cached_property
     def index(self) -> tuple[int, int]:
-        """Return the nearest-cell (row, col) in the RADOLAN 900×900 WGS84 grid."""
-        lat, lon = self.coords
-        grid = _radolan_wgs84_grid()
-        dist_sq = (grid[:, :, 1] - lat) ** 2 + (grid[:, :, 0] - lon) ** 2
-
-        return np.unravel_index(np.argmin(dist_sq), dist_sq.shape)
+        """Return the (row, col) of the RADOLAN 900×900 cell holding the location."""
+        return get_radolan_grid_index(*self.coords, *self.EXPECTED_SHAPE)
 
     @abstractmethod
     def _get_url(self, ts: datetime) -> str:
@@ -560,11 +547,7 @@ class RadolanProduct(BaseProductUpdateCoordinator, ABC):
         return await self.hass.async_add_executor_job(self._parse, response.content)
 
     def _parse(self, content: bytes) -> tuple[float, ProductMetadata]:
-        """Return (scalar_value, ProductMetadata) from the bz2 bytes (blocking).
-
-        Also where ``index`` is first computed, which builds the 900x900 WGS84
-        grid; that belongs off the event loop too.
-        """
+        """Return (scalar_value, ProductMetadata) from the bz2 bytes (blocking)."""
         f = bz2.open(BytesIO(content))
         data, raw = read_radolan_composite(f)
 

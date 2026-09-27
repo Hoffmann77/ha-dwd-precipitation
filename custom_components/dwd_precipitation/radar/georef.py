@@ -15,10 +15,12 @@ __all__ = [
     "get_radolan_coords",
     "get_radolan_coordinates",
     "get_radolan_grid",
+    "get_radolan_grid_index",
 ]
 __doc__ = __doc__.format("\n   ".join(__all__))
 __doctest_requires__ = {"get_radolan_grid": ["osgeo"]}
 
+import math
 from functools import singledispatch
 
 import numpy as np
@@ -426,3 +428,29 @@ def grid_to_polyvert(grid, *, ravel=False):
         polyvert = polyvert.reshape((-1, 5, 2))
 
     return polyvert
+
+
+# ---------------------------------------------------------------------------
+# Not from wradlib: point lookup on the grid above.
+# ---------------------------------------------------------------------------
+
+
+def get_radolan_grid_index(lat, lon, nrows=900, ncols=900):
+    """Return (row, col) of the RADOLAN grid cell containing (lat, lon).
+
+    Row 0 is the southernmost row, matching :func:`read_radolan_composite`.
+    ``get_radolan_coordinates`` (mode ``radolan``) gives the *lower-left
+    corner* of every pixel, so the cell is found by flooring the offset from
+    the grid's lower-left corner. Taking the nearest corner instead picks a
+    neighbouring cell for about three locations in four.
+
+    Uses the spherical ``trig`` model of RADOLAN format versions <= 4 (RW and
+    SF). A point off the grid is clamped to the nearest edge cell.
+    """
+    x_arr, y_arr = get_radolan_coordinates(nrows, ncols, crs="trig")
+    x, y = get_radolan_coords(lon, lat, crs="trig")
+    res = float(x_arr[1] - x_arr[0])
+
+    col = math.floor((float(x) - float(x_arr[0])) / res)
+    row = math.floor((float(y) - float(y_arr[0])) / res)
+    return min(max(row, 0), nrows - 1), min(max(col, 0), ncols - 1)
