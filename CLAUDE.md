@@ -40,8 +40,12 @@ poll loop.
    release time and calls `coordinator.async_refresh()`
 2. `_async_update_data()` computes `latest_release`, and returns the cached
    payload untouched if that release was already fetched
-3. `_fetch_and_parse(latest_release)` downloads and parses the file, extracts
-   `data[self.index]`, and returns `(precipitation, metadata)`
+3. `_fetch_and_parse(latest_release)` downloads the file on the event loop,
+   then hands the bytes to the product's blocking `_parse()` through
+   `hass.async_add_executor_job`, which extracts `data[self.index]` and returns
+   `(precipitation, metadata)`. Decoding never runs on the event loop: a
+   radar grid is one gzip chunk of 1.3 M cells, ~6 ms to inflate even on a fast
+   machine, times 25 members for RS/RV — many users run HA on a Raspberry Pi
 4. The coordinator wraps those in a `CoordinatorData` — its `data`/`metadata`
    are a scalar for RADOLAN products, parallel lists for RS, parallel dicts
    for RV

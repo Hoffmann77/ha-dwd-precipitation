@@ -559,6 +559,10 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
         Return (precipitation, metadata). Must raise on any failure — the
         base class owns the stale/retry logic in _async_update_data.
 
+        Only the download belongs on the event loop: hand the decoding to
+        ``hass.async_add_executor_job``. Decompressing a radar grid takes
+        milliseconds per file even on a fast machine, which every other
+        integration and automation would otherwise wait out.
         """
 
     # ------------------------------------------------------------------

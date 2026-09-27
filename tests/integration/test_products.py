@@ -27,6 +27,28 @@ from custom_components.dwd_precipitation.utils import AsyncResponse
 from tests.factories.odim import make_hymecng_h5, make_rs_tar, make_rv_tar
 
 
+class _FakeHass:
+    """Stands in for hass: runs executor jobs inline and counts them."""
+
+    def __init__(self) -> None:
+        self.executor_jobs = 0
+
+    async def async_add_executor_job(self, target, *args):
+        self.executor_jobs += 1
+        return target(*args)
+
+
+def _coord(cls, options: dict | None = None):
+    """Build a product coordinator without HA's constructor."""
+    coord = cls.__new__(cls)
+    coord.hass = _FakeHass()
+    coord.async_client = object()
+    coord.coords = (51.05, 13.73)
+    coord.config_entry = SimpleNamespace(options=options or {})
+    return coord
+
+
+
 @pytest.mark.asyncio
 async def test_rs_fetch_derives_base_source_timestamp_and_window() -> None:
     """RS: source_timestamp is the base run time (data_end - lead), identical for all leads.
@@ -47,9 +69,7 @@ async def test_rs_fetch_derives_base_source_timestamp_and_window() -> None:
     grid = np.zeros((1200, 1100), dtype=np.float32)
     reads = iter([(grid, w) for w in whats])
 
-    coord = RadvorRS.__new__(RadvorRS)
-    coord.async_client = object()
-    coord.coords = (51.05, 13.73)
+    coord = _coord(RadvorRS)
 
     with (
         patch.object(
@@ -60,6 +80,7 @@ async def test_rs_fetch_derives_base_source_timestamp_and_window() -> None:
         patch.object(products, "read_odim_composite", side_effect=lambda _f, **_kw: next(reads)),
     ):
         _data, meta = await coord._fetch_and_parse(ts)
+    assert coord.hass.executor_jobs == 1
 
     base = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
     assert [m.source_timestamp for m in meta] == [base, base, base]
@@ -93,10 +114,7 @@ async def test_rv_fetch_derives_buckets_and_timing() -> None:
         for lead in leads
     ])
 
-    coord = RadvorRV.__new__(RadvorRV)
-    coord.async_client = object()
-    coord.coords = (51.05, 13.73)
-    coord.config_entry = SimpleNamespace(options={})
+    coord = _coord(RadvorRV)
 
     with (
         patch.object(
@@ -152,9 +170,7 @@ async def test_rv_threshold_from_options_suppresses_light_rain() -> None:
         for lead in leads
     ])
 
-    coord = RadvorRV.__new__(RadvorRV)
-    coord.async_client = object()
-    coord.coords = (51.05, 13.73)
+    coord = _coord(RadvorRV)
     # Threshold is now an intensity (mm/h); 2.4 mm/h < 3.0 mm/h → suppressed.
     coord.config_entry = SimpleNamespace(options={"precipitation_threshold": 3.0})
 
@@ -189,9 +205,7 @@ async def test_rv_threshold_is_interpreted_as_mm_per_hour() -> None:
         for lead in leads
     ])
 
-    coord = RadvorRV.__new__(RadvorRV)
-    coord.async_client = object()
-    coord.coords = (51.05, 13.73)
+    coord = _coord(RadvorRV)
     # 6 mm/h → 0.5 mm/5min gate: 4.8 mm/h is dry, 7.2 mm/h counts.
     coord.config_entry = SimpleNamespace(options={"precipitation_threshold": 6.0})
 
@@ -224,9 +238,7 @@ async def test_rv_end_algorithm_option_selects_clearing() -> None:
             for lead in leads
         ])
 
-    coord = RadvorRV.__new__(RadvorRV)
-    coord.async_client = object()
-    coord.coords = (51.05, 13.73)
+    coord = _coord(RadvorRV)
 
     # Default (episode): ends at the first lull after the lead-10 wave.
     coord.config_entry = SimpleNamespace(options={})
@@ -279,9 +291,7 @@ async def test_hymecng_fetch_maps_class_index_to_label() -> None:
     ts = datetime(2026, 7, 29, 17, 30, tzinfo=timezone.utc)
     hd5 = make_hymecng_h5(shape=RS_GRID_SHAPE, fill=7)  # SNOW everywhere
 
-    coord = HymecNG.__new__(HymecNG)
-    coord.async_client = object()
-    coord.coords = (51.05, 13.73)
+    coord = _coord(HymecNG)
 
     get_mock = AsyncMock(return_value=AsyncResponse(content=hd5.getvalue()))
     with patch.object(products, "async_get", new=get_mock):
@@ -314,9 +324,7 @@ async def test_hymecng_fetch_maps_class_index_to_label() -> None:
 async def test_hymecng_class_and_sentinel_mapping(class_value, expected) -> None:
     """HymecNG: class indices, undetect, and nodata map to the right sensor state."""
     ts = datetime(2026, 7, 29, 17, 30, tzinfo=timezone.utc)
-    coord = HymecNG.__new__(HymecNG)
-    coord.async_client = object()
-    coord.coords = (51.05, 13.73)
+    coord = _coord(HymecNG)
 
     with (
         patch.object(
@@ -344,9 +352,7 @@ async def test_radolan_fetch_derives_window_from_interval() -> None:
     }
     grid = np.zeros((900, 900), dtype=np.float32)
 
-    coord = RadolanRW.__new__(RadolanRW)
-    coord.async_client = object()
-    coord.coords = (51.05, 13.73)
+    coord = _coord(RadolanRW)
 
     with (
         patch.object(

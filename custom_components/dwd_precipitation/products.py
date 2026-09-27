@@ -112,10 +112,13 @@ class RadvorRS(BaseProductUpdateCoordinator):
         )
 
     async def _fetch_and_parse(self, ts: datetime) -> tuple[list, list]:
-        """Fetch one tar archive and extract 3 lead-time ACRR values."""
+        """Fetch one tar archive and decode it off the event loop."""
         response = await async_get(self._get_url(ts), self.async_client)
+        return await self.hass.async_add_executor_job(self._parse, response.content, ts)
 
-        tar_bytes = BytesIO(response.content)
+    def _parse(self, content: bytes, ts: datetime) -> tuple[list, list]:
+        """Extract the 3 lead-time ACRR values from the tar bytes (blocking)."""
+        tar_bytes = BytesIO(content)
         prefix = f"composite_rs_{ts.strftime('%Y%m%d_%H%M')}"
         row, col = self.index
         data: list = []
@@ -201,10 +204,13 @@ class RadvorRV(BaseProductUpdateCoordinator):
         )
 
     async def _fetch_and_parse(self, ts: datetime) -> tuple[dict, dict]:
-        """Fetch one tar archive and derive the RV entity payloads."""
+        """Fetch one tar archive and decode it off the event loop."""
         response = await async_get(self._get_url(ts), self.async_client)
+        return await self.hass.async_add_executor_job(self._parse, response.content, ts)
 
-        tar_bytes = BytesIO(response.content)
+    def _parse(self, content: bytes, ts: datetime) -> tuple[dict, dict]:
+        """Derive the RV entity payloads from the tar bytes (blocking)."""
+        tar_bytes = BytesIO(content)
         prefix = f"composite_rv_{ts.strftime('%Y%m%d_%H%M')}"
         row, col = self.index
 
@@ -361,11 +367,14 @@ class HymecNG(BaseProductUpdateCoordinator):
         )
 
     async def _fetch_and_parse(self, ts: datetime) -> tuple[str | None, ProductMetadata]:
-        """Fetch one ODIM_H5 file and return the cell's precipitation-type label."""
+        """Fetch one ODIM_H5 file and decode it off the event loop."""
         response = await async_get(self._get_url(ts), self.async_client)
+        return await self.hass.async_add_executor_job(self._parse, response.content)
 
+    def _parse(self, content: bytes) -> tuple[str | None, ProductMetadata]:
+        """Return the cell's precipitation-type label (blocking)."""
         raw, dataset_what, moment_what = read_odim_classification(
-            BytesIO(response.content), expected_shape=RS_GRID_SHAPE
+            BytesIO(content), expected_shape=RS_GRID_SHAPE
         )
         row, col = self.index
         value = int(raw[row, col])
@@ -423,9 +432,17 @@ class RadolanProduct(BaseProductUpdateCoordinator, ABC):
         """Return the bz2 file URL for the given release timestamp."""
 
     async def _fetch_and_parse(self, ts: datetime) -> tuple[float, ProductMetadata]:
-        """Fetch one bz2 RADOLAN file and return (scalar_value, ProductMetadata)."""
+        """Fetch one bz2 RADOLAN file and decode it off the event loop."""
         response = await async_get(self._get_url(ts), self.async_client)
-        f = bz2.open(BytesIO(response.content))
+        return await self.hass.async_add_executor_job(self._parse, response.content)
+
+    def _parse(self, content: bytes) -> tuple[float, ProductMetadata]:
+        """Return (scalar_value, ProductMetadata) from the bz2 bytes (blocking).
+
+        Also where ``index`` is first computed, which builds the 900x900 WGS84
+        grid; that belongs off the event loop too.
+        """
+        f = bz2.open(BytesIO(content))
         data, raw = read_radolan_composite(f)
 
         if data.shape != self.EXPECTED_SHAPE:
