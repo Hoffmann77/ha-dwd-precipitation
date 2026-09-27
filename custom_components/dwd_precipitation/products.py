@@ -541,13 +541,19 @@ class RadolanProduct(BaseProductUpdateCoordinator, ABC):
     def _get_url(self, ts: datetime) -> str:
         """Return the bz2 file URL for the given release timestamp."""
 
-    async def _fetch_and_parse(self, ts: datetime) -> tuple[float, ProductMetadata]:
+    async def _fetch_and_parse(self, ts: datetime) -> tuple[float | None, ProductMetadata]:
         """Fetch one bz2 RADOLAN file and decode it off the event loop."""
         response = await async_get(self._get_url(ts), self.async_client)
         return await self.hass.async_add_executor_job(self._parse, response.content)
 
-    def _parse(self, content: bytes) -> tuple[float, ProductMetadata]:
-        """Return (scalar_value, ProductMetadata) from the bz2 bytes (blocking)."""
+    def _parse(self, content: bytes) -> tuple[float | None, ProductMetadata]:
+        """Return (scalar_value, ProductMetadata) from the bz2 bytes (blocking).
+
+        The value is ``None`` where the cell holds no data (radar outage, masked
+        cell, outside coverage), as for RS/RV/HymecNG. The reader marks those
+        cells with the ``nodataflag`` sentinel (-9999), not NaN, and passing it
+        on showed -9999 mm and counted as a dry hour for the dry streak.
+        """
         f = bz2.open(BytesIO(content))
         data, raw = read_radolan_composite(f)
 
@@ -561,7 +567,11 @@ class RadolanProduct(BaseProductUpdateCoordinator, ABC):
         interval = raw.get("intervalseconds")
         data_start = dt_end - timedelta(seconds=interval) if (dt_end and interval) else None
 
-        return float(data[self.index]), ProductMetadata(
+        value = float(data[self.index])
+        if value == raw.get("nodataflag", -9999) or value != value:  # sentinel or NaN
+            value = None
+
+        return value, ProductMetadata(
             source_product=raw.get("producttype"),
             source_timestamp=dt_end,
             data_start=data_start,

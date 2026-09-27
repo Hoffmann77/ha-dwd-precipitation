@@ -170,7 +170,7 @@ class CoordinatorData:
     parallel lists for RS, or parallel dicts keyed by entity sub-key for RV.
     """
 
-    data: float | list[float | None] | dict[str, Any]
+    data: float | None | list[float | None] | dict[str, Any]
     metadata: ProductMetadata | list[ProductMetadata] | dict[str, ProductMetadata]
 
 

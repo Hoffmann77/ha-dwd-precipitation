@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import bz2
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import numpy as np
@@ -18,6 +19,7 @@ from custom_components.dwd_precipitation import products
 from custom_components.dwd_precipitation.products import (
     HymecNG,
     RadolanRW,
+    RadolanSF,
     RadvorRS,
     RadvorRV,
 )
@@ -439,6 +441,69 @@ async def test_radolan_fetch_derives_window_from_interval() -> None:
     assert meta.source_timestamp == datetime(2025, 6, 1, 12, 50, tzinfo=timezone.utc)
     assert meta.data_end == datetime(2025, 6, 1, 12, 50, tzinfo=timezone.utc)
     assert meta.data_start == datetime(2025, 6, 1, 11, 50, tzinfo=timezone.utc)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("cell_value", "expected"),
+    [
+        (-9999.0, None),   # the reader's nodataflag: radar outage / masked cell
+        (np.nan, None),
+        (0.0, 0.0),        # dry is a real reading, not missing
+        (1.7, 1.7),
+    ],
+)
+async def test_radolan_nodata_cell_reads_as_none(cell_value, expected) -> None:
+    """RADOLAN nodata becomes None (sensor unknown), never -9999 mm."""
+    ts = datetime(2025, 6, 1, 12, 50, tzinfo=timezone.utc)
+    raw = {
+        "producttype": "RW",
+        "datetime": ts,
+        "intervalseconds": 3600,
+        "nodataflag": -9999,
+    }
+    coord = _coord(RadolanRW)
+    grid = np.zeros((900, 900), dtype=np.float64)
+    grid[coord.index] = cell_value
+
+    with (
+        patch.object(
+            products,
+            "async_get",
+            new=AsyncMock(return_value=AsyncResponse(content=bz2.compress(b"x"))),
+        ),
+        patch.object(products, "read_radolan_composite", return_value=(grid, raw)),
+    ):
+        value, _meta = await coord._fetch_and_parse(ts)
+
+    assert value == (pytest.approx(expected) if expected is not None else None)
+
+
+_FIXTURES = Path(__file__).parent.parent / "fixtures"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("cls", "fixture"),
+    [(RadolanRW, "radolan_rw_sample.bin.bz2"), (RadolanSF, "radolan_sf_sample.bin.bz2")],
+)
+async def test_radolan_real_file_nodata_reads_as_none(cls, fixture) -> None:
+    """On a real DWD file, a cell outside radar coverage reads as None.
+
+    The south-west corner of the 900 km grid lies in France, beyond the radars'
+    range, so DWD flags it nodata; the real reader must not leak -9999.
+    """
+    content = (_FIXTURES / fixture).read_bytes()
+    coord = _coord(cls)
+    coord.coords = (46.9572, 3.5943)  # centre of cell (0, 0)
+    assert coord.index == (0, 0)
+
+    with patch.object(
+        products, "async_get", new=AsyncMock(return_value=AsyncResponse(content=content))
+    ):
+        value, _meta = await coord._fetch_and_parse(datetime(2026, 7, 3, 6, 50, tzinfo=timezone.utc))
+
+    assert value is None
 
 
 async def _rv_fetch(ts: datetime, values: dict[int, float | None]):

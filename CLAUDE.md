@@ -47,7 +47,9 @@ poll loop.
    radar grid is one gzip chunk of 1.3 M cells, ~6 ms to inflate even on a fast
    machine, times 25 members for RS/RV — many users run HA on a Raspberry Pi
 4. The coordinator wraps those in a `CoordinatorData` — its `data`/`metadata`
-   are a scalar for RADOLAN products, parallel lists for RS (`[_000, _060,
+   are a scalar for RADOLAN products (`None` for a nodata cell: the RADOLAN
+   reader marks those with the -9999 `nodataflag`, not NaN, so `_parse` maps it
+   explicitly), parallel lists for RS (`[_000, _060,
    _120, peak]`, `peak` being `None` unless `full_rolling_series` is on),
    parallel dicts for RV
 5. `PrecipitationSensorEntity.native_value` calls
