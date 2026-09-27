@@ -262,7 +262,11 @@ centres shifts the lookup by half a cell, which picks a neighbouring cell for
 The reference tier checks both against wradlib's own grids (`mode="edge"`),
 not against a reimplementation of our arithmetic, and pins wradlib's DE1200
 grid to the fixture file's corner attributes. Fixture coordinates are cell
-*centres*; a corner would sit on the boundary of four cells.
+*centres*; a corner would sit on the boundary of four cells. The same wradlib
+reference (`tests/wradlib_ref.py`) runs daily on live DWD files for every
+product via `.github/workflows/live-wradlib.yml` (`tests/live_wradlib/`):
+fixed locations must land on the same cell with the same value, and every
+member's full grid must decode identically.
 
 ### RADOLAN (RW, SF)
 `RadolanProduct.index` calls `get_radolan_grid_index(lat, lon)` from

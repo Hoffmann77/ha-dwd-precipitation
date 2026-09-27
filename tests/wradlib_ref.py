@@ -1,20 +1,23 @@
 """Pure-wradlib reference: read DWD files and resolve locations without our code.
 
-Used by the reference tier. Nothing here imports from ``radar/``: a reference that
+Shared by the reference tier (committed fixtures) and the live_wradlib tier
+(fresh DWD files). Nothing here imports from ``radar/``: a reference that
 reuses our arithmetic cannot catch a mistake in it. Import only after
 ``pytest.importorskip("wradlib")``.
 """
 
 from __future__ import annotations
 
+import bz2
 import io
 from functools import lru_cache
 
 import numpy as np
 import wradlib as wrl
 
-# DWD's DE1200 grid (RS, RV, HymecNG).
+# DWD's DE1200 grid (RS, RV, HymecNG) and the national RADOLAN grid (RW, SF).
 DE1200_SHAPE = (1200, 1100)
+RADOLAN_SHAPE = (900, 900)
 
 
 @lru_cache(maxsize=1)
@@ -56,6 +59,16 @@ def de1200_cell(lat: float, lon: float) -> tuple[int, int]:
     return int(rows[0]), int(cols[0])
 
 
+def radolan_cell(lat: float, lon: float) -> tuple[int, int]:
+    """(row, col) on wradlib's 900x900 RADOLAN grid; row 0 is the south edge."""
+    x_edges, y_edges = wrl.georef.get_radolan_coordinates(*RADOLAN_SHAPE, mode="edge")
+    x, y = wrl.georef.get_radolan_coords(lon, lat)
+    return (
+        int(np.searchsorted(y_edges, y, side="right")) - 1,
+        int(np.searchsorted(x_edges, x, side="right")) - 1,
+    )
+
+
 def read_odim(hd5: bytes) -> tuple[np.ndarray, dict]:
     """Return (raw grid, /dataset1/data1/what) from wradlib's ODIM reader."""
     dd = wrl.io.read_opera_hdf5(io.BytesIO(hd5))
@@ -73,3 +86,7 @@ def scale_odim(raw: np.ndarray, what: dict) -> np.ndarray:
     data[raw == int(round(float(what.get("undetect", 0))))] = 0.0
     return data
 
+
+def read_radolan(bz2_bytes: bytes) -> tuple[np.ndarray, dict]:
+    """Return (data, attrs) from wradlib's RADOLAN reader."""
+    return wrl.io.read_radolan_composite(bz2.open(io.BytesIO(bz2_bytes)))
