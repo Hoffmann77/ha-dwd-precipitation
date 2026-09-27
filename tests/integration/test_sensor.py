@@ -30,7 +30,7 @@ from custom_components.dwd_precipitation.dry_streak import (
 )
 from homeassistant.components.sensor import SensorDeviceClass
 from custom_components.dwd_precipitation.sensor import (
-    RADVOR_SENSORS,
+    _peak_hour_sensor,
     TimespanWithoutPrecipitationSensor,
     PrecipitationSensorEntity,
     PrecipitationSensorEntityDescription,
@@ -271,11 +271,32 @@ def test_timing_keys_are_stable_across_modes():
 
 
 def _peak_sensor(metadata, extra=False) -> PrecipitationSensorEntity:
-    desc = next(d for d in RADVOR_SENSORS if d.key == "radvor_rs_peak_1h_120")
+    """The peak sensor as RS feeds it (full rolling series option on)."""
     return _make_sensor_with_desc(
-        desc, data=[0.0, 1.0, 2.0, 6.5], metadata=[None, None, None, metadata],
+        _peak_hour_sensor(True),
+        data=[0.0, 1.0, 2.0, 6.5],
+        metadata=[None, None, None, metadata],
         extra=extra,
     )
+
+
+def test_peak_hour_sensor_source_follows_option():
+    """Off: RV feeds it; on: RS. One key either way, so the entity survives."""
+    rv, rs = _peak_hour_sensor(False), _peak_hour_sensor(True)
+    assert (rv.product_key, rs.product_key) == ("rv", "rs")
+    assert rv.key == rs.key == "radvor_peak_1h_120"
+    assert rv.translation_key == rs.translation_key
+
+    meta = ProductMetadata(source_product="RV", source_timestamp=None, rolling_1h=[])
+    sensor = _make_sensor_with_desc(
+        rv, data={"peak_1h": 4.2}, metadata={"peak_1h": meta}
+    )
+    assert sensor.native_value == 4.2
+    assert sensor.extra_state_attributes == {
+        "window_start": None,
+        "window_end": None,
+        "forecast_rolling_1h": [],
+    }
 
 
 def test_peak_hour_sensor_always_exposes_window_and_series():

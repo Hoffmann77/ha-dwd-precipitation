@@ -30,6 +30,11 @@ HOUR2_LEADS = list(range(60 + LEAD_STEP, 120 + 1, LEAD_STEP))  # 65..120 → [T+
 # [T+60, T+120]; the leads below 60 still include observed rain.
 FUTURE_HOUR_LEADS = list(range(60, MAX_LEAD + 1, LEAD_STEP))  # 60..120 → 13 windows
 
+# RS and RV store amounts in 0.001 mm steps (ODIM gain). Rolling-hour totals are
+# rounded to it, so a sum of twelve float32 RV steps and the matching RS member
+# compare equal instead of differing in the seventh decimal.
+MM_DECIMALS = 3
+
 # Algorithms for deriving the "precipitation end" from the forecast series:
 #
 # * ``END_ALGO_EPISODE`` — the end of the *first* contiguous rain episode: the
@@ -70,6 +75,37 @@ def bucket_max_intensity(
     if not present:
         return None
     return float(max(present)) * STEPS_PER_HOUR
+
+
+def rolling_hour_sums(
+    values: list[float | None], leads: list[int] = FUTURE_HOUR_LEADS
+) -> list[float | None]:
+    """Return RS-equivalent rolling 60-minute totals (mm) from RV 5-minute steps.
+
+    ``values`` is aligned to :data:`LEADS` and holds RV 5-minute accumulations.
+    The result is aligned to :data:`LEADS` too: for each lead ``L`` in ``leads``
+    it is the sum of the twelve steps ending at ``L`` (RV leads ``L-55..L``),
+    i.e. the window ``[T+L-60, T+L]`` of the RS member at the same lead; every
+    other position is ``None``. Only windows wholly in the forecast can be
+    built this way, since RV holds no rain from before ``T-5``, so ``leads`` must
+    all be >= 60.
+
+    A missing step counts as 0, which is what RS reports at the edge of radar
+    coverage; a window is ``None`` only when all twelve steps are missing.
+    On live data this matched RS exactly wherever both had data.
+    """
+    sums: list[float | None] = [None] * len(LEADS)
+    for lead in leads:
+        if lead < 60:
+            raise ValueError(f"Lead {lead} reaches before the RV analysis window")
+        window = [
+            values[k // LEAD_STEP]
+            for k in range(lead - 60 + LEAD_STEP, lead + 1, LEAD_STEP)
+        ]
+        present = [float(v) for v in window if v is not None]
+        if present:
+            sums[lead // LEAD_STEP] = round(sum(present), MM_DECIMALS)
+    return sums
 
 
 def peak_rolling_hour(

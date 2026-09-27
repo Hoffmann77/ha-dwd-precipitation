@@ -30,7 +30,8 @@
           "precipitation_threshold": "Schwelle für Regenerkennung (mm pro Stunde)",
           "start_end_mode": "Anzeige von „Niederschlagsbeginn“ und „Niederschlagsende“",
           "precipitation_end_algorithm": "Wann „Niederschlagsende“ den Regen als beendet ansieht",
-          "precipitation_reset_threshold": "Regenmenge, die den Trockenzähler zurücksetzt (mm)"
+          "precipitation_reset_threshold": "Regenmenge, die den Trockenzähler zurücksetzt (mm)",
+          "full_rolling_series": "Vollständige gleitende Stundenreihe (dekodiert alle RS-Vorhersageschritte)"
         },
         "data_description": {
           "extra_state_attributes": "Hängt jedem Sensor den DWD-Produktnamen, den Messzeitpunkt und den abgedeckten Zeitraum als Attribute an. Nützlich in Templates oder beim Melden eines Problems; ansonsten ausgeschaltet lassen.",
@@ -38,7 +39,8 @@
           "precipitation_threshold": "Wie viel vorhergesagter Regen für die Sensoren „Niederschlagsbeginn“, „Niederschlagsende“ und „Niederschlag erwartet“ als Niederschlag zählt. 0 bedeutet jede vom DWD erkannte Menge; auf etwa 0,5 erhöhen, um Nieselregen zu ignorieren.",
           "start_end_mode": "Ob diese beiden Sensoren eine Uhrzeit („14:25“) oder die Minuten bis zum Ereignis („20“) anzeigen. Die nicht gewählte Variante bleibt als Attribut am selben Sensor verfügbar.",
           "precipitation_end_algorithm": "„Erste trockene Lücke“ meldet das Ende des aktuellen Schauers und springt daher bei Schauerwetter hin und her. „Niederschlag endet innerhalb von 2 h“ wartet, bis kein weiterer Regen vorhergesagt ist – das ist stabiler, bleibt aber länger unbekannt. Der DWD sagt nur zwei Stunden voraus, darüber hinaus ist der Sensor in beiden Fällen „unbekannt“.",
-          "precipitation_reset_threshold": "Wie viel Regen „Zeitraum ohne Niederschlag“ auf null zurücksetzt. Verglichen wird mit „Niederschlag aktuell“, also den in der letzten Stunde gefallenen Millimetern – 1 mm bedeutet, dass in der letzten Stunde 1 mm gefallen ist, keine Rate."
+          "precipitation_reset_threshold": "Wie viel Regen „Zeitraum ohne Niederschlag“ auf null zurücksetzt. Verglichen wird mit „Niederschlag aktuell“, also den in der letzten Stunde gefallenen Millimetern – 1 mm bedeutet, dass in der letzten Stunde 1 mm gefallen ist, keine Rate.",
+          "full_rolling_series": "Ergänzt das Attribut „forecast_rolling_1h“ von „Maximaler Stundenniederschlag nächste 2h“ um die 12 gleitenden Stunden, die in 5 bis 55 Minuten enden und damit teils in der Vergangenheit liegen. Ohne diese Option enthält es die 13 Stunden, die vollständig in der Zukunft liegen, berechnet aus Vorhersagedaten, die ohnehin geladen werden. Der Wert des Sensors ist in beiden Fällen gleich; eingeschaltet verdoppelt sich etwa die Rechenzeit pro Aktualisierung, was auf kleinen Geräten spürbar sein kann."
         }
       }
     }

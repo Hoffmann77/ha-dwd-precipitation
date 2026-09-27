@@ -15,6 +15,7 @@ from radar.nowcast import (
     bucket_max_intensity,
     detect_start_end,
     peak_rolling_hour,
+    rolling_hour_sums,
 )
 
 
@@ -178,3 +179,40 @@ def test_peak_rolling_hour_all_missing():
 
 def test_peak_rolling_hour_dry():
     assert peak_rolling_hour(_series(), FUTURE_HOUR_LEADS) == (0.0, 60)
+
+
+# --- RS-equivalent rolling hours from RV --------------------------------
+
+def test_rolling_hour_sums_cover_twelve_steps_ending_at_lead():
+    # Rain only in step +5 and step +60: the T..T+60 hour holds both; the hour
+    # ending at +65 has lost step +5.
+    sums = rolling_hour_sums(_series(**{"5": 1.0, "60": 2.0}))
+    assert sums[60 // 5] == pytest.approx(3.0)
+    assert sums[65 // 5] == pytest.approx(2.0)
+    assert sums[120 // 5] == pytest.approx(0.0)
+    # Windows reaching into the past are not built at all.
+    assert sums[: 60 // 5] == [None] * 12
+
+
+def test_rolling_hour_sums_ignore_the_analysis_step():
+    # Lead 0 is [T-5, T]: before every future window.
+    assert rolling_hour_sums(_series(**{"0": 9.0}))[60 // 5] == 0.0
+
+
+def test_rolling_hour_sums_round_to_odim_resolution():
+    # Twelve float32-ish steps must not leave 1e-7 noise behind.
+    values = [0.1] * len(LEADS)
+    assert rolling_hour_sums(values)[60 // 5] == 1.2
+
+
+def test_rolling_hour_sums_missing_steps():
+    values = _series()
+    values[30 // 5] = None
+    assert rolling_hour_sums(values)[60 // 5] == 0.0  # one gap counts as dry
+    all_missing = [None] * len(LEADS)
+    assert rolling_hour_sums(all_missing)[60 // 5] is None
+
+
+def test_rolling_hour_sums_reject_past_windows():
+    with pytest.raises(ValueError):
+        rolling_hour_sums(_series(), leads=[55])
