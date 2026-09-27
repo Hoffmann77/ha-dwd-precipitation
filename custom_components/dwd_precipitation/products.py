@@ -28,6 +28,7 @@ from .radar import (
     RS_GRID_SHAPE,
 )
 from .radar.nowcast import (
+    FUTURE_HOUR_LEADS,
     HOUR1_LEADS,
     HOUR2_LEADS,
     LEAD_STEP,
@@ -35,6 +36,8 @@ from .radar.nowcast import (
     STEPS_PER_HOUR,
     bucket_max_intensity,
     detect_start_end,
+    peak_rolling_hour,
+    rolling_hour_sums,
 )
 from .const import (
     CONF_PRECIPITATION_THRESHOLD,
@@ -117,6 +120,44 @@ def _odim_window(what: dict) -> tuple[datetime | None, datetime | None]:
     return (
         _parse_odim_ts(what.get("startdate"), what.get("starttime")),
         _parse_odim_ts(what.get("enddate"), what.get("endtime")),
+    )
+
+
+def _peak_hour_payload(
+    sums: list[float | None],
+    windows: list[tuple[datetime | None, datetime | None]],
+    series_leads: list[int],
+    source_product: str | None,
+    source_timestamp: datetime | None,
+) -> tuple[float | None, ProductMetadata]:
+    """Build the "Peak hourly precipitation next 2h" value and metadata.
+
+    ``sums`` (rolling 60-minute totals, mm) and ``windows`` are aligned to
+    LEADS; ``series_leads`` picks the points exposed as ``rolling_1h``.
+    """
+    def _iso(dt: datetime | None) -> str | None:
+        return dt.isoformat() if dt is not None else None
+
+    rolling_1h = [
+        {
+            "lead": lead,
+            "start": _iso(windows[lead // LEAD_STEP][0]),
+            "end": _iso(windows[lead // LEAD_STEP][1]),
+            "value": sums[lead // LEAD_STEP],
+        }
+        for lead in series_leads
+    ]
+
+    peak, peak_lead = peak_rolling_hour(sums, FUTURE_HOUR_LEADS)
+    # A dry forecast has no wettest hour, so it gets no window either.
+    start, end = windows[peak_lead // LEAD_STEP] if peak else (None, None)
+    return peak, ProductMetadata(
+        source_product=source_product,
+        source_timestamp=source_timestamp,
+        lead_time_minutes=peak_lead if peak else None,
+        data_start=start,
+        data_end=end,
+        rolling_1h=rolling_1h,
     )
 
 
@@ -206,6 +247,10 @@ class RadvorRV(BaseProductUpdateCoordinator):
     * ``rain_within_2h`` — whether any precipitation is forecast within the
       2-hour horizon (drives the "rain expected" binary sensor). Its metadata
       carries the full 25-point 5-minute forecast series as ``samples``.
+    * ``peak_1h`` — the wettest rolling hour wholly in the future, summed from
+      twelve 5-minute steps (identical to the RS member for that window). Its
+      metadata carries those 13 rolling hours as ``rolling_1h``, and it
+      feeds the "Peak hourly precipitation next 2h" sensor.
 
     precipitation → dict[str, value], metadata → dict[str, ProductMetadata]
     """
@@ -325,6 +370,18 @@ class RadvorRV(BaseProductUpdateCoordinator):
             samples=_samples(LEADS),
         )
 
+        # Rolling hour ending at T+L = the twelve 5-minute steps L-55..L.
+        windows = [(None, None)] * len(LEADS)
+        for lead in FUTURE_HOUR_LEADS:
+            start = starts[(lead - 60 + LEAD_STEP) // LEAD_STEP]
+            end = ends[lead // LEAD_STEP]
+            if start is None and end is not None:
+                start = end - timedelta(minutes=60)
+            windows[lead // LEAD_STEP] = (start, end)
+        peak_1h, peak_meta = _peak_hour_payload(
+            rolling_hour_sums(values), windows, FUTURE_HOUR_LEADS, "RV", base_ts
+        )
+
         data = {
             "max_060": bucket_max_intensity(values, HOUR1_LEADS),
             "max_120": bucket_max_intensity(values, HOUR2_LEADS),
@@ -333,6 +390,7 @@ class RadvorRV(BaseProductUpdateCoordinator):
             "end_in": end_in,
             "end_at": _at(end_in),
             "rain_within_2h": start_in is not None,
+            "peak_1h": peak_1h,
         }
         metadata = {
             "max_060": hour1_meta,
@@ -342,6 +400,7 @@ class RadvorRV(BaseProductUpdateCoordinator):
             "end_in": timing_meta,
             "end_at": timing_meta,
             "rain_within_2h": rain_meta,
+            "peak_1h": peak_meta,
         }
         return data, metadata
 

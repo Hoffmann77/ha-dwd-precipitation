@@ -157,6 +157,9 @@ class ProductMetadata:
     # of {"lead", "start", "end", "value", "intensity"} — surfaced as an entity
     # state attribute.
     samples: list[dict[str, Any]] | None = None
+    # Optional RS rolling-hour series: one point per 5-minute lead, each a dict
+    # of {"lead", "start", "end", "value"} where value is a 60-minute total (mm).
+    rolling_1h: list[dict[str, Any]] | None = None
 
 
 @dataclass

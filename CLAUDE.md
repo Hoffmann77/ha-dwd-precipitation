@@ -157,7 +157,7 @@ viewers and Windows consoles mangle typographic punctuation.
 | Class | Key | Format | Update | Description |
 |-------|-----|--------|--------|-------------|
 | `RadvorRS` | `rs` | ODIM_H5 (tar) | 5 min | RADVOR nowcast, 0/60/120 min lead; each grid is a 60-min accumulation (see "RS product specifics") |
-| `RadvorRV` | `rv` | ODIM_H5 (tar) | 5 min | RV nowcast, 25×5-min grids; derives +1h/+2h peak intensity (mm/h), precip start/end timing (episode/clearing end algorithm, user-selectable), and a rain-within-2h flag (whose metadata carries the raw 25-point forecast series, exposed by default) |
+| `RadvorRV` | `rv` | ODIM_H5 (tar) | 5 min | RV nowcast, 25×5-min grids; derives +1h/+2h peak intensity (mm/h), precip start/end timing (episode/clearing end algorithm, user-selectable), a rain-within-2h flag (whose metadata carries the raw 25-point forecast series, exposed by default), and the wettest future hour (see "Peak hourly precipitation") |
 | `HymecNG` | `hymecng` | ODIM_H5 (single .hd5) | 5 min | Precipitation-*type* composite (rain/snow/freezing rain/hail/…); one enum "Precipitation type" sensor |
 | `RadolanRW` | `rw` | RADOLAN binary (.bz2) | 1 h | 1-hour precipitation analysis (gauge-adjusted; same window as RS `_000`) |
 | `RadolanSF` | `sf` | RADOLAN binary (.bz2) | 1 h | 24-hour precipitation analysis |
@@ -300,7 +300,30 @@ Current runtime deps: `numpy`, `h5py`
   `_060` covers T→T+60, and `_120` covers T+60→T+120.
 - **Grid**: `xsize=1100`, `ysize=1200`, `xscale=yscale=1000.0 m`
 - **Projection**: `+proj=stere +lat_ts=60 +lat_0=90 +lon_0=10 +x_0=543196.835... +y_0=3622588.861...` (WGS84)
-- **Fetching**: `RadvorRS.update()` downloads one tar and extracts the `_000`, `_060`, `_120` members using stdlib `tarfile`
+- **Rolling windows**: the members in between are the same 60-minute sum sliding
+  in 5-minute steps — lead L covers T+L−60 → T+L, so neighbours overlap by 55 min.
+  RS is radar-only, like RV: `_060` equals the sum of RV leads 5–60 cell for cell
+  (checked against live data). Only RADOLAN RW/SF are gauge-adjusted.
+- **Fetching**: `RadvorRS._fetch_and_parse()` downloads one tar; `_parse()`
+  reads the `_000`/`_060`/`_120` members using stdlib `tarfile`.
+
+## Peak hourly precipitation
+
+`Peak hourly precipitation next 2h` is the wettest rolling hour wholly in the
+future (windows ending at +60..+120, `FUTURE_HOUR_LEADS`; ties go to the earlier
+window), with the window as `data_start`/`data_end` (`None` on a dry forecast)
+and the rolling-hour series as `rolling_1h`.
+
+RV feeds it, summing twelve 5-minute steps per window (`rolling_hour_sums`)
+from the 25 members it decodes anyway, rather than decoding the RS members
+that hold the same windows precomputed. It can only build windows wholly in
+the forecast, so the series has 13 points.
+
+The sum is the RS figure: RS *is* summed RV, verified on live data to 0.000 mm
+in every cell. A missing RV step counts as 0 because that is what RS reports at
+the coverage edge, and sums round to the ODIM 0.001 mm resolution
+(`MM_DECIMALS`). The entity key `radvor_peak_1h_120` is deliberately
+product-neutral rather than `radvor_rv_*`.
 
 ## HymecNG product specifics
 

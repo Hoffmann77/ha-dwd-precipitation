@@ -58,6 +58,9 @@ class PrecipitationSensorEntityDescription(SensorEntityDescription):
     # Optional companion attributes, computed from the coordinator data payload.
     # Always exposed (not gated behind the diagnostic-attributes option).
     attrs_fn: Callable[[Any], dict[str, Any]] | None = None
+    # Like attrs_fn, but computed from this entity's ProductMetadata (as picked
+    # by access_fn). Also always exposed.
+    metadata_attrs_fn: Callable[[ProductMetadata], dict[str, Any]] | None = None
 
 
 RADOLAN_SENSORS = (
@@ -125,6 +128,30 @@ RADVOR_SENSORS = (
         product_key="rs",
         access_fn=lambda _list: _list[2],
     ),
+)
+
+
+def _peak_hour_attrs(meta: ProductMetadata) -> dict[str, Any]:
+    """Return the peak window and the rolling-hour series behind it."""
+    return {
+        "window_start": meta.data_start,
+        "window_end": meta.data_end,
+        "forecast_rolling_1h": meta.rolling_1h,
+    }
+
+
+# Summed from the RV 5-minute steps, which RV decodes anyway: RS *is* summed
+# RV, so this is the RS figure for every window wholly in the future.
+PEAK_HOUR_SENSOR = PrecipitationSensorEntityDescription(
+    key="radvor_peak_1h_120",
+    translation_key="peak_hourly_precipitation_next_2h",
+    native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
+    device_class=SensorDeviceClass.PRECIPITATION,
+    suggested_display_precision=1,
+    state_class=SensorStateClass.MEASUREMENT,
+    product_key="rv",
+    access_fn=lambda d: d["peak_1h"],
+    metadata_attrs_fn=_peak_hour_attrs,
 )
 
 
@@ -244,6 +271,7 @@ async def async_setup_entry(
 
     entity_descriptions = (
         RADVOR_SENSORS
+        + (PEAK_HOUR_SENSOR,)
         + RADVOR_RV_SENSORS
         + _rv_timing_sensors(mode)
         + HYMECNG_SENSORS
@@ -267,8 +295,8 @@ class PrecipitationSensorEntity(DwdCoordinatorEntity, SensorEntity):
 
     entity_description: PrecipitationSensorEntityDescription
 
-    # The 5-minute constituent points would bloat the recorder history.
-    _unrecorded_attributes = frozenset({"forecast_5min"})
+    # The per-lead forecast series would bloat the recorder history.
+    _unrecorded_attributes = frozenset({"forecast_5min", "forecast_rolling_1h"})
 
     @property
     def native_value(self) -> float | datetime | str | None:
@@ -300,15 +328,26 @@ class PrecipitationSensorEntity(DwdCoordinatorEntity, SensorEntity):
                 }
             )
 
+        metadata: ProductMetadata | None = (
+            self.entity_description.access_fn(self.coordinator.data.metadata)
+            if self.coordinator.data.metadata
+            else None
+        )
+        metadata_attrs_fn = self.entity_description.metadata_attrs_fn
+        if metadata_attrs_fn is not None and metadata is not None:
+            attrs.update(
+                {
+                    key: _plain_value(value)
+                    for key, value in metadata_attrs_fn(metadata).items()
+                }
+            )
+
         # Diagnostic metadata is opt-in via the integration options.
         if not self.coordinator.config_entry.options.get(
             CONF_EXTRA_ATTRIBUTES, False
         ):
             return attrs
 
-        metadata: ProductMetadata = self.entity_description.access_fn(
-            self.coordinator.data.metadata
-        )
         if metadata is None:
             return attrs
 

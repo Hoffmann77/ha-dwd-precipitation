@@ -366,3 +366,73 @@ async def test_radolan_fetch_derives_window_from_interval() -> None:
     assert meta.source_timestamp == datetime(2025, 6, 1, 12, 50, tzinfo=timezone.utc)
     assert meta.data_end == datetime(2025, 6, 1, 12, 50, tzinfo=timezone.utc)
     assert meta.data_start == datetime(2025, 6, 1, 11, 50, tzinfo=timezone.utc)
+
+
+async def _rv_fetch(ts: datetime, values: dict[int, float | None]):
+    """Run RadvorRV._fetch_and_parse, serving each lead from ``values`` (None = missing member)."""
+    def _read(fileobj, _row, _col, **_kw):
+        lead = int(fileobj.getvalue())  # make_rv_tar's payload is the lead
+        value = values[lead]
+        return np.float32("nan" if value is None else value), _rv_what(ts, lead)
+
+    coord = _coord(RadvorRV)
+    with (
+        patch.object(
+            products,
+            "async_get",
+            new=AsyncMock(return_value=AsyncResponse(content=make_rv_tar(ts))),
+        ),
+        patch.object(products, "read_odim_composite_cell", side_effect=_read),
+    ):
+        data, meta = await coord._fetch_and_parse(ts)
+    assert coord.hass.executor_jobs == 1
+    return data, meta
+
+
+@pytest.mark.asyncio
+async def test_rv_peak_hour_and_rolling_series() -> None:
+    """RV: the wettest wholly-future rolling hour, its window and the 13-point series."""
+    ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
+    leads = list(range(0, 121, 5))
+    # 5-minute rain: a shower around +40 min and a heavier cell around +95 min.
+    rv = {lead: 0.0 for lead in leads}
+    rv.update({35: 0.4, 40: 0.9, 45: 0.3, 85: 0.6, 90: 1.7, 95: 2.2, 100: 0.8})
+    data, meta = await _rv_fetch(ts, rv)
+
+    # Wettest hour ends at +95: steps +40..+95 catch the tail of the first
+    # shower too (0.9 + 0.3), beating the window ending at +100 (5.6 mm).
+    assert data["peak_1h"] == pytest.approx(0.9 + 0.3 + 0.6 + 1.7 + 2.2)
+    peak = meta["peak_1h"]
+    assert peak.lead_time_minutes == 95
+    assert peak.data_start == datetime(2026, 5, 18, 16, 35, tzinfo=timezone.utc)
+    assert peak.data_end == datetime(2026, 5, 18, 17, 35, tzinfo=timezone.utc)
+    assert peak.source_timestamp == ts
+
+    # The 13 windows wholly in the future, each the sum of its twelve steps.
+    series = peak.rolling_1h
+    assert [p["lead"] for p in series] == list(range(60, 121, 5))
+    for point in series:
+        lead = point["lead"]
+        expected = sum(rv[k] for k in leads if lead - 60 < k <= lead)
+        assert point["value"] == pytest.approx(expected), lead
+    assert series[0]["start"] == "2026-05-18T16:00:00+00:00"
+    assert series[0]["end"] == "2026-05-18T17:00:00+00:00"
+
+
+@pytest.mark.asyncio
+async def test_rv_peak_hour_treats_missing_step_as_dry() -> None:
+    """RV: a missing 5-minute member counts as 0, as RS does at the coverage edge."""
+    ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
+    rv: dict[int, float | None] = {lead: 0.0 for lead in range(0, 121, 5)}
+    rv.update({5: None, 60: 1.0, 65: 2.0})
+    data, meta = await _rv_fetch(ts, rv)
+
+    assert data["peak_1h"] == pytest.approx(3.0)
+    # Lead 5 opens the T+0..T+60 window; its start falls back to end - 60 min.
+    first = meta["peak_1h"].rolling_1h[0]
+    assert first == {
+        "lead": 60,
+        "start": "2026-05-18T16:00:00+00:00",
+        "end": "2026-05-18T17:00:00+00:00",
+        "value": pytest.approx(1.0),
+    }

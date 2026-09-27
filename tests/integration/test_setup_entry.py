@@ -11,7 +11,7 @@ Run with:
 from __future__ import annotations
 
 from contextlib import ExitStack, contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -56,8 +56,17 @@ async def test_entry_setup_creates_sensors_with_correct_values(
         "end_in": 30,
         "end_at": ts,
         "rain_within_2h": True,
+        "peak_1h": 4.0,
     }
     rv_meta = {key: rv_timing for key in rv_data}
+    rv_meta["peak_1h"] = ProductMetadata(
+        source_product="RV",
+        source_timestamp=ts,
+        lead_time_minutes=90,
+        data_start=ts + timedelta(minutes=30),
+        data_end=ts + timedelta(minutes=90),
+        rolling_1h=[{"lead": 90, "start": None, "end": None, "value": 4.0}],
+    )
     hymec_meta = ProductMetadata(source_product="HymecNG_top_view", source_timestamp=ts)
 
     entry = MockConfigEntry(
@@ -129,6 +138,19 @@ async def test_entry_setup_creates_sensors_with_correct_values(
     assert state is not None
     assert float(state.state) == approx(1.5)
 
+    # The peak-hour sensor carries its window and the rolling-hour series.
+    peak_entry = next(
+        e
+        for e in ent_reg.entities.values()
+        if e.domain == "sensor" and e.unique_id.endswith("radvor_peak_1h_120")
+    )
+    state = hass.states.get(peak_entry.entity_id)
+    assert state is not None
+    assert float(state.state) == approx(4.0)
+    assert state.attributes["window_start"] == "2025-06-01T12:30:00+00:00"
+    assert state.attributes["window_end"] == "2025-06-01T13:30:00+00:00"
+    assert state.attributes["forecast_rolling_1h"][0]["value"] == approx(4.0)
+
     # The peak-intensity sensor reports the extrapolated mm/h rate.
     max_060_entry = next(
         e
@@ -174,6 +196,7 @@ RV_DATA = {
     "end_in": 30,
     "end_at": RV_TS,
     "rain_within_2h": True,
+    "peak_1h": 0.0,
 }
 RV_META = {
     key: ProductMetadata(source_product="RV", source_timestamp=RV_TS)
