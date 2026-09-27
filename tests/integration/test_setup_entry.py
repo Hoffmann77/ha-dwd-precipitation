@@ -11,7 +11,7 @@ Run with:
 from __future__ import annotations
 
 from contextlib import ExitStack, contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -40,11 +40,19 @@ async def test_entry_setup_creates_sensors_with_correct_values(
 ) -> None:
     """Full entry setup with mocked _fetch_and_parse; verify coordinators + sensor states."""
     ts = datetime(2025, 6, 1, 12, 0, tzinfo=timezone.utc)
-    rs_data = [1.5, 2.0, None]
+    rs_data = [1.5, 2.0, None, 6.5]
     rs_meta = [
         {"product": "ACRR", "datetime": ts, "lead_time_minutes": 0},
         {"product": "ACRR", "datetime": ts, "lead_time_minutes": 60},
         {},
+        ProductMetadata(
+            source_product="RS",
+            source_timestamp=ts,
+            lead_time_minutes=75,
+            data_start=ts + timedelta(minutes=15),
+            data_end=ts + timedelta(minutes=75),
+            rolling_1h=[{"lead": 75, "start": None, "end": None, "value": 6.5}],
+        ),
     ]
     rw_meta = {"producttype": "RW", "datetime": datetime(2025, 6, 1, 12, 50)}
     rv_timing = ProductMetadata(source_product="RV", source_timestamp=ts)
@@ -105,7 +113,7 @@ async def test_entry_setup_creates_sensors_with_correct_values(
     coordinators = entry.runtime_data.coordinators
     assert set(coordinators) == {"rs", "rv", "hymecng", "rw", "sf", "sf_2350"}
     assert coordinators["rw"].data.data == approx(3.2)
-    assert coordinators["rs"].data.data == [1.5, 2.0, None]
+    assert coordinators["rs"].data.data == [1.5, 2.0, None, 6.5]
     assert coordinators["rv"].data.data["max_060"] == approx(48.0)
     assert coordinators["hymecng"].data.data == "snow"
 
@@ -128,6 +136,19 @@ async def test_entry_setup_creates_sensors_with_correct_values(
     state = hass.states.get(rs_000_entry.entity_id)
     assert state is not None
     assert float(state.state) == approx(1.5)
+
+    # The peak-hour sensor carries its window and the rolling-hour series.
+    peak_entry = next(
+        e
+        for e in ent_reg.entities.values()
+        if e.domain == "sensor" and e.unique_id.endswith("radvor_rs_peak_1h_120")
+    )
+    state = hass.states.get(peak_entry.entity_id)
+    assert state is not None
+    assert float(state.state) == approx(6.5)
+    assert state.attributes["window_start"] == "2025-06-01T12:15:00+00:00"
+    assert state.attributes["window_end"] == "2025-06-01T13:15:00+00:00"
+    assert state.attributes["forecast_rolling_1h"][0]["value"] == approx(6.5)
 
     # The peak-intensity sensor reports the extrapolated mm/h rate.
     max_060_entry = next(
@@ -182,7 +203,10 @@ RV_META = {
 
 # What each product's _fetch_and_parse returns when it is meant to succeed.
 WORKING_PRODUCTS = {
-    RadvorRS: ([1.5, 2.0, None], [{}, {}, {}]),
+    RadvorRS: (
+        [1.5, 2.0, None, 6.5],
+        [{}, {}, {}, ProductMetadata(source_product="RS", source_timestamp=RV_TS)],
+    ),
     RadvorRV: (RV_DATA, RV_META),
     HymecNG: ("snow", {}),
     RadolanRW: (3.2, {}),

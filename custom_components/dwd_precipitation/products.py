@@ -28,6 +28,7 @@ from .radar import (
     RS_GRID_SHAPE,
 )
 from .radar.nowcast import (
+    FUTURE_HOUR_LEADS,
     HOUR1_LEADS,
     HOUR2_LEADS,
     LEAD_STEP,
@@ -35,6 +36,7 @@ from .radar.nowcast import (
     STEPS_PER_HOUR,
     bucket_max_intensity,
     detect_start_end,
+    peak_rolling_hour,
 )
 from .const import (
     CONF_PRECIPITATION_THRESHOLD,
@@ -81,8 +83,17 @@ def _parse_odim_ts(date: str | None, time: str | None) -> datetime | None:
 class RadvorRS(BaseProductUpdateCoordinator):
     """DWD RS precipitation nowcast (RADVOR, ODIM_H5 format).
 
-    Returns three lead times (0 / 60 / 120 min) from a single tar archive.
-    precipitation → list[float | None], metadata → list[ProductMetadata]
+    RS is published every 5 minutes as one tar of 25 ODIM_H5 members (leads
+    0..120 min, 5-min steps). Each member is a *rolling 60-minute* accumulation
+    (mm) ending at T+lead, so consecutive members overlap by 55 minutes.
+
+    precipitation → list[float | None], metadata → list[ProductMetadata],
+    both indexed:
+
+    * ``0`` / ``1`` / ``2`` — the non-overlapping hours: leads 0 / 60 / 120.
+    * ``3`` — the wettest rolling hour wholly in the future (leads 60..120).
+      Its metadata's window is that hour, and it carries the full 25-point
+      rolling-hour series as ``rolling_1h``.
     """
 
     PRODUCT_KEY = "rs"
@@ -112,39 +123,40 @@ class RadvorRS(BaseProductUpdateCoordinator):
         )
 
     async def _fetch_and_parse(self, ts: datetime) -> tuple[list, list]:
-        """Fetch one tar archive and extract 3 lead-time ACRR values."""
+        """Fetch one tar archive and derive the RS entity payloads."""
         response = await async_get(self._get_url(ts), self.async_client)
 
         tar_bytes = BytesIO(response.content)
         prefix = f"composite_rs_{ts.strftime('%Y%m%d_%H%M')}"
         row, col = self.index
-        data: list = []
-        metadata: list = []
+
+        # Per-lead rolling-hour cell values (mm) and metadata, aligned to LEADS.
+        values: list[float | None] = []
+        per_lead: list[ProductMetadata | None] = []
 
         with tarfile.open(fileobj=tar_bytes, mode="r") as tf:
-            for suffix in ("000", "060", "120"):
-                member_name = f"{prefix}_{suffix}-hd5"
+            for lead in LEADS:
+                member_name = f"{prefix}_{lead:03d}-hd5"
                 try:
                     f = tf.extractfile(member_name)
                 except KeyError:
                     f = None
                 if f is None:
                     _LOGGER.warning("RS tar member not found: %s", member_name)
-                    data.append(None)
-                    metadata.append(None)
+                    values.append(None)
+                    per_lead.append(None)
                     continue
 
                 _data, _what = read_odim_composite(
                     BytesIO(f.read()), expected_shape=RS_GRID_SHAPE
                 )
                 val = float(_data[row, col])
-                data.append(None if np.isnan(val) else val)
+                values.append(None if np.isnan(val) else val)
 
-                lead = int(suffix)
                 data_start = _parse_odim_ts(_what.get("startdate"), _what.get("starttime"))
                 data_end = _parse_odim_ts(_what.get("enddate"), _what.get("endtime"))
                 source_ts = data_end - timedelta(minutes=lead) if data_end else None
-                metadata.append(ProductMetadata(
+                per_lead.append(ProductMetadata(
                     source_product=_what.get("prodname") or _what.get("product"),
                     source_timestamp=source_ts,
                     lead_time_minutes=lead,
@@ -152,6 +164,32 @@ class RadvorRS(BaseProductUpdateCoordinator):
                     data_end=data_end,
                 ))
 
+        rolling_1h = [
+            {
+                "lead": lead,
+                "start": meta.data_start.isoformat() if meta and meta.data_start else None,
+                "end": meta.data_end.isoformat() if meta and meta.data_end else None,
+                "value": value,
+            }
+            for lead, value, meta in zip(LEADS, values, per_lead)
+        ]
+
+        peak, peak_lead = peak_rolling_hour(values, FUTURE_HOUR_LEADS)
+        # A dry forecast has no wettest hour, so it gets no window either.
+        peak_window = per_lead[peak_lead // LEAD_STEP] if peak else None
+        base = next((m for m in per_lead if m is not None), None)
+        peak_meta = ProductMetadata(
+            source_product=base.source_product if base else None,
+            source_timestamp=base.source_timestamp if base else None,
+            lead_time_minutes=peak_window.lead_time_minutes if peak_window else None,
+            data_start=peak_window.data_start if peak_window else None,
+            data_end=peak_window.data_end if peak_window else None,
+            rolling_1h=rolling_1h,
+        )
+
+        hourly = [0, 60, 120]
+        data = [values[lead // LEAD_STEP] for lead in hourly] + [peak]
+        metadata = [per_lead[lead // LEAD_STEP] for lead in hourly] + [peak_meta]
         return data, metadata
 
 

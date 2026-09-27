@@ -27,25 +27,23 @@ from custom_components.dwd_precipitation.utils import AsyncResponse
 from tests.factories.odim import make_hymecng_h5, make_rs_tar, make_rv_tar
 
 
-@pytest.mark.asyncio
-async def test_rs_fetch_derives_base_source_timestamp_and_window() -> None:
-    """RS: source_timestamp is the base run time (data_end - lead), identical for all leads.
+def _rs_what(base: datetime, lead: int) -> dict:
+    """ODIM /dataset/what for an RS member: rolling hour [T+lead-60, T+lead]."""
+    end = base + timedelta(minutes=lead)
+    start = end - timedelta(minutes=60)
+    return {
+        "prodname": "RS",
+        "startdate": start.strftime("%Y%m%d"), "starttime": start.strftime("%H%M%S"),
+        "enddate": end.strftime("%Y%m%d"), "endtime": end.strftime("%H%M%S"),
+    }
 
-    The ODIM enddate/endtime advances with the lead time, so the previous code
-    (which used it directly) was only correct for the 0-min member.
-    """
-    ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
-    # /dataset/what per member — the validity window advances by the lead time.
-    whats = [
-        {"prodname": "RS", "startdate": "20260518", "starttime": "150000",
-         "enddate": "20260518", "endtime": "160000"},
-        {"prodname": "RS", "startdate": "20260518", "starttime": "160000",
-         "enddate": "20260518", "endtime": "170000"},
-        {"prodname": "RS", "startdate": "20260518", "starttime": "170000",
-         "enddate": "20260518", "endtime": "180000"},
-    ]
-    grid = np.zeros((1200, 1100), dtype=np.float32)
-    reads = iter([(grid, w) for w in whats])
+
+async def _rs_fetch(ts: datetime, values: dict[int, float]):
+    """Run RadvorRS._fetch_and_parse with one uniform grid per lead."""
+    reads = iter([
+        (np.full((1200, 1100), values[lead], dtype=np.float32), _rs_what(ts, lead))
+        for lead in range(0, 121, 5)
+    ])
 
     coord = RadvorRS.__new__(RadvorRS)
     coord.async_client = object()
@@ -59,15 +57,73 @@ async def test_rs_fetch_derives_base_source_timestamp_and_window() -> None:
         ),
         patch.object(products, "read_odim_composite", side_effect=lambda _f, **_kw: next(reads)),
     ):
-        _data, meta = await coord._fetch_and_parse(ts)
+        return await coord._fetch_and_parse(ts)
 
+
+@pytest.mark.asyncio
+async def test_rs_fetch_derives_base_source_timestamp_and_window() -> None:
+    """RS: source_timestamp is the base run time (data_end - lead), identical for all leads.
+
+    The ODIM enddate/endtime advances with the lead time, so the previous code
+    (which used it directly) was only correct for the 0-min member.
+    """
+    ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
+    data, meta = await _rs_fetch(ts, {lead: float(lead) for lead in range(0, 121, 5)})
+
+    # The three non-overlapping hours come from leads 0 / 60 / 120.
+    assert data[:3] == [0.0, 60.0, 120.0]
     base = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
-    assert [m.source_timestamp for m in meta] == [base, base, base]
-    assert [m.lead_time_minutes for m in meta] == [0, 60, 120]
+    assert [m.source_timestamp for m in meta] == [base, base, base, base]
+    assert [m.lead_time_minutes for m in meta[:3]] == [0, 60, 120]
     assert meta[0].data_start == datetime(2026, 5, 18, 15, 0, tzinfo=timezone.utc)
     assert meta[0].data_end == base
     assert meta[2].data_start == datetime(2026, 5, 18, 17, 0, tzinfo=timezone.utc)
     assert meta[2].data_end == datetime(2026, 5, 18, 18, 0, tzinfo=timezone.utc)
+
+
+@pytest.mark.asyncio
+async def test_rs_peak_hour_and_rolling_series() -> None:
+    """RS: the wettest future rolling hour, its window, and the 25-point series."""
+    ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
+    # A storm straddling the fixed hours: its heaviest hour ends at T+90, which
+    # neither "next 1h" (lead 60) nor "next 1-2h" (lead 120) sees in full.
+    values = {lead: 0.0 for lead in range(0, 121, 5)}
+    values.update({0: 30.0, 60: 4.0, 85: 9.0, 90: 18.0, 95: 18.0, 120: 5.0})
+    data, meta = await _rs_fetch(ts, values)
+
+    # Lead 0 (the past hour, 30 mm) is not a forecast and is excluded; the tie
+    # between leads 90 and 95 goes to the earlier window.
+    assert data[3] == pytest.approx(18.0)
+    peak = meta[3]
+    assert peak.lead_time_minutes == 90
+    assert peak.data_start == datetime(2026, 5, 18, 16, 30, tzinfo=timezone.utc)
+    assert peak.data_end == datetime(2026, 5, 18, 17, 30, tzinfo=timezone.utc)
+    assert peak.source_timestamp == ts
+
+    series = peak.rolling_1h
+    assert [p["lead"] for p in series] == list(range(0, 121, 5))
+    assert series[0] == {
+        "lead": 0,
+        "start": "2026-05-18T15:00:00+00:00",
+        "end": "2026-05-18T16:00:00+00:00",
+        "value": pytest.approx(30.0),
+    }
+    assert series[18]["value"] == pytest.approx(18.0)  # lead 90
+    # The fixed-hour members keep no series of their own.
+    assert all(m.rolling_1h is None for m in meta[:3])
+
+
+@pytest.mark.asyncio
+async def test_rs_dry_forecast_has_no_peak_window() -> None:
+    """RS: a dry forecast peaks at 0 mm, but has no wettest hour to point at."""
+    ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
+    data, meta = await _rs_fetch(ts, {lead: 0.0 for lead in range(0, 121, 5)})
+
+    assert data[3] == 0.0
+    assert meta[3].data_start is None
+    assert meta[3].data_end is None
+    assert meta[3].lead_time_minutes is None
+    assert len(meta[3].rolling_1h) == 25
 
 
 def _rv_what(base: datetime, lead: int) -> dict:

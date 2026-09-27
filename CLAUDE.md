@@ -43,8 +43,8 @@ poll loop.
 3. `_fetch_and_parse(latest_release)` downloads and parses the file, extracts
    `data[self.index]`, and returns `(precipitation, metadata)`
 4. The coordinator wraps those in a `CoordinatorData` — its `data`/`metadata`
-   are a scalar for RADOLAN products, parallel lists for RS, parallel dicts
-   for RV
+   are a scalar for RADOLAN products, parallel lists for RS (`[_000, _060,
+   _120, peak]`), parallel dicts for RV
 5. `PrecipitationSensorEntity.native_value` calls
    `description.value_fn(coordinator.data.data)`
 
@@ -152,7 +152,7 @@ viewers and Windows consoles mangle typographic punctuation.
 
 | Class | Key | Format | Update | Description |
 |-------|-----|--------|--------|-------------|
-| `RadvorRS` | `rs` | ODIM_H5 (tar) | 5 min | RADVOR nowcast, 0/60/120 min lead; each grid is a 60-min accumulation (see "RS product specifics") |
+| `RadvorRS` | `rs` | ODIM_H5 (tar) | 5 min | RADVOR nowcast, 25 rolling 60-min accumulations; exposes the 0/60/120 min leads plus the wettest future hour, whose metadata carries the full rolling-hour series (see "RS product specifics") |
 | `RadvorRV` | `rv` | ODIM_H5 (tar) | 5 min | RV nowcast, 25×5-min grids; derives +1h/+2h peak intensity (mm/h), precip start/end timing (episode/clearing end algorithm, user-selectable), and a rain-within-2h flag (whose metadata carries the raw 25-point forecast series, exposed by default) |
 | `HymecNG` | `hymecng` | ODIM_H5 (single .hd5) | 5 min | Precipitation-*type* composite (rain/snow/freezing rain/hail/…); one enum "Precipitation type" sensor |
 | `RadolanRW` | `rw` | RADOLAN binary (.bz2) | 1 h | 1-hour precipitation analysis (gauge-adjusted; same window as RS `_000`) |
@@ -293,7 +293,16 @@ Current runtime deps: `numpy`, `h5py`
   `_060` covers T→T+60, and `_120` covers T+60→T+120.
 - **Grid**: `xsize=1100`, `ysize=1200`, `xscale=yscale=1000.0 m`
 - **Projection**: `+proj=stere +lat_ts=60 +lat_0=90 +lon_0=10 +x_0=543196.835... +y_0=3622588.861...` (WGS84)
-- **Fetching**: `RadvorRS.update()` downloads one tar and extracts the `_000`, `_060`, `_120` members using stdlib `tarfile`
+- **Rolling windows**: the members in between are the same 60-minute sum sliding
+  in 5-minute steps — lead L covers T+L−60 → T+L, so neighbours overlap by 55 min.
+  RS is radar-only, like RV: `_060` equals the sum of RV leads 5–60 cell for cell
+  (checked against live data). Only RADOLAN RW/SF are gauge-adjusted.
+- **Fetching**: `RadvorRS._fetch_and_parse()` downloads one tar and reads all 25
+  members using stdlib `tarfile`. The payload list is `[_000, _060, _120, peak]`:
+  `peak` is the largest of leads 60–120 (`peak_rolling_hour` in `radar/nowcast.py`;
+  ties go to the earlier window), and its metadata carries that window as
+  `data_start`/`data_end` (both `None` on a dry forecast) and the 25-point series
+  as `rolling_1h`
 
 ## HymecNG product specifics
 

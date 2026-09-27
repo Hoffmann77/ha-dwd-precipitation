@@ -194,17 +194,18 @@ def make_odim_virtual_dataset(shape=(5, 5)):
 
 
 def make_rs_tar(ts: datetime) -> bytes:
-    """Build an in-memory RS tar with the three lead-time members (dummy payloads).
+    """Build an in-memory RS tar with all 25 lead-time members (dummy payloads).
 
-    Members are named like the real archive; contents are placeholders because
-    callers patch read_odim_composite to inject the parsed values/metadata.
+    Members are named like the real archive (``_000-hd5`` .. ``_120-hd5``);
+    contents are placeholders because callers patch read_odim_composite to
+    inject the parsed values/metadata per lead.
     """
     prefix = f"composite_rs_{ts.strftime('%Y%m%d_%H%M')}"
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w") as tf:
-        for suffix in ("000", "060", "120"):
-            payload = suffix.encode()
-            info = tarfile.TarInfo(name=f"{prefix}_{suffix}-hd5")
+        for lead in range(0, 121, 5):
+            payload = f"{lead:03d}".encode()
+            info = tarfile.TarInfo(name=f"{prefix}_{lead:03d}-hd5")
             info.size = len(payload)
             tf.addfile(info, io.BytesIO(payload))
     return buf.getvalue()

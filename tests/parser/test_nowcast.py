@@ -1,4 +1,4 @@
-"""Pure unit tests for the RV nowcast helpers (no HA/numpy dependency)."""
+"""Pure unit tests for the RADVOR nowcast helpers (no HA/numpy dependency)."""
 
 from __future__ import annotations
 
@@ -7,12 +7,14 @@ import pytest
 from radar.nowcast import (
     END_ALGO_CLEARING,
     END_ALGO_EPISODE,
+    FUTURE_HOUR_LEADS,
     HOUR1_LEADS,
     HOUR2_LEADS,
     LEADS,
     STEPS_PER_HOUR,
     bucket_max_intensity,
     detect_start_end,
+    peak_rolling_hour,
 )
 
 
@@ -145,3 +147,34 @@ def test_clearing_last_wave_at_horizon_edge_has_no_end():
 
 def test_clearing_never_rains():
     assert detect_start_end(_series(), 0.0, END_ALGO_CLEARING) == (None, None)
+
+
+# --- RS rolling-hour peak -----------------------------------------------
+
+def test_future_hour_leads_span_next_two_hours():
+    # Lead L covers [T+L-60, T+L]: 60 is [T, T+60], 120 is [T+60, T+120].
+    assert FUTURE_HOUR_LEADS == list(range(60, 121, 5))
+
+
+def test_peak_rolling_hour_ignores_past_hour():
+    values = _series(**{"0": 40.0, "55": 30.0, "75": 7.0})
+    assert peak_rolling_hour(values, FUTURE_HOUR_LEADS) == (7.0, 75)
+
+
+def test_peak_rolling_hour_tie_goes_to_earliest_window():
+    values = _series(**{"80": 5.0, "100": 5.0})
+    assert peak_rolling_hour(values, FUTURE_HOUR_LEADS) == (5.0, 80)
+
+
+def test_peak_rolling_hour_skips_missing_members():
+    values = [None] * len(LEADS)
+    values[120 // 5] = 1.5
+    assert peak_rolling_hour(values, FUTURE_HOUR_LEADS) == (1.5, 120)
+
+
+def test_peak_rolling_hour_all_missing():
+    assert peak_rolling_hour([None] * len(LEADS), FUTURE_HOUR_LEADS) == (None, None)
+
+
+def test_peak_rolling_hour_dry():
+    assert peak_rolling_hour(_series(), FUTURE_HOUR_LEADS) == (0.0, 60)
