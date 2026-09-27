@@ -10,6 +10,7 @@ from radar.odim import (
     _parse_proj_param,
     get_rs_grid_index,
     read_odim_composite,
+    read_odim_composite_cell,
     read_odim_classification,
 )
 
@@ -216,3 +217,54 @@ def test_classification_returns_validity_window():
 def test_classification_shape_pinning_rejects_wrong_size():
     with pytest.raises(ValueError, match="Unexpected composite shape"):
         read_odim_classification(make_hymecng_h5(shape=(5, 5)), expected_shape=RS_GRID_SHAPE)
+
+
+# ===========================================================================
+# read_odim_composite_cell — one cell, same answer as the full-grid reader
+# ===========================================================================
+
+def _varied_odim_h5(shape=(6, 7)):
+    """ODIM file with a distinct raw count per cell, plus nodata and undetect."""
+    buf = make_odim_h5(shape=shape)
+    import h5py
+    with h5py.File(buf, "r+") as f:
+        raw = np.arange(1, shape[0] * shape[1] + 1, dtype=np.uint32).reshape(shape) * 37
+        raw[0, 0] = 4294967295  # nodata
+        raw[0, 1] = 0           # undetect
+        f["dataset1/data1/data"][...] = raw
+    buf.seek(0)
+    return buf
+
+
+def test_cell_reader_matches_grid_reader_everywhere():
+    grid, what = read_odim_composite(_varied_odim_h5())
+    rows, cols = grid.shape
+    for row in range(rows):
+        for col in range(cols):
+            value, cell_what = read_odim_composite_cell(_varied_odim_h5(), row, col)
+            if np.isnan(grid[row, col]):
+                assert np.isnan(value), (row, col)
+            else:
+                # Bit-identical, not approximately equal: the same float32 math.
+                assert value == grid[row, col], (row, col)
+                assert value.dtype == np.float32
+    assert cell_what == what
+
+
+def test_cell_reader_nodata_and_undetect():
+    assert np.isnan(read_odim_composite_cell(_varied_odim_h5(), 0, 0)[0])
+    assert read_odim_composite_cell(_varied_odim_h5(), 0, 1)[0] == 0.0
+
+
+@pytest.mark.parametrize("row, col", [(-1, 0), (0, -1), (6, 0), (0, 7)])
+def test_cell_reader_rejects_cells_outside_the_grid(row, col):
+    # A negative index would silently wrap to the far edge of the grid.
+    with pytest.raises(ValueError, match="outside"):
+        read_odim_composite_cell(_varied_odim_h5(), row, col)
+
+
+def test_cell_reader_keeps_untrusted_input_checks():
+    with pytest.raises(ValueError):
+        read_odim_composite_cell(make_odim_external_link(), 0, 0)
+    with pytest.raises(ValueError, match="shape"):
+        read_odim_composite_cell(make_odim_h5(shape=(5, 5)), 0, 0, expected_shape=(6, 6))

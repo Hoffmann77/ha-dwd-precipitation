@@ -271,7 +271,10 @@ be installed in standard HA environments).
 
 `radar/odim.py` is original code that uses `h5py` directly. It exposes
 `read_odim_composite` (physical quantities like RS/RV's `ACRR`, scaled by
-gain/offset) and `read_odim_classification` (HymecNG's `CLASS` quantity —
+gain/offset), `read_odim_composite_cell` (the same for one cell — what RS/RV
+use, since scaling and masking the whole grid to keep one value was over half
+the decode time; libhdf5 still inflates the single whole-grid chunk, so reading
+fewer *cells* cannot save more) and `read_odim_classification` (HymecNG's `CLASS` quantity —
 discrete class indices returned unscaled, with the `nodata`/`undetect`
 sentinels preserved so the caller can tell "outside coverage" from "dry").
 

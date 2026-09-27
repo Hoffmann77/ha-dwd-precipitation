@@ -66,8 +66,7 @@ async def test_rs_fetch_derives_base_source_timestamp_and_window() -> None:
         {"prodname": "RS", "startdate": "20260518", "starttime": "170000",
          "enddate": "20260518", "endtime": "180000"},
     ]
-    grid = np.zeros((1200, 1100), dtype=np.float32)
-    reads = iter([(grid, w) for w in whats])
+    reads = iter([(np.float32(0.0), w) for w in whats])
 
     coord = _coord(RadvorRS)
 
@@ -77,7 +76,7 @@ async def test_rs_fetch_derives_base_source_timestamp_and_window() -> None:
             "async_get",
             new=AsyncMock(return_value=AsyncResponse(content=make_rs_tar(ts))),
         ),
-        patch.object(products, "read_odim_composite", side_effect=lambda _f, **_kw: next(reads)),
+        patch.object(products, "read_odim_composite_cell", side_effect=lambda _f, _r, _c, **_kw: next(reads)),
     ):
         _data, meta = await coord._fetch_and_parse(ts)
     assert coord.hass.executor_jobs == 1
@@ -110,7 +109,7 @@ async def test_rv_fetch_derives_buckets_and_timing() -> None:
     leads = list(range(0, 121, 5))
     values = {lead: (1.0 if 30 <= lead <= 60 else 0.0) for lead in leads}
     reads = iter([
-        (np.full((1200, 1100), values[lead], dtype=np.float32), _rv_what(ts, lead))
+        (np.float32(values[lead]), _rv_what(ts, lead))
         for lead in leads
     ])
 
@@ -122,7 +121,7 @@ async def test_rv_fetch_derives_buckets_and_timing() -> None:
             "async_get",
             new=AsyncMock(return_value=AsyncResponse(content=make_rv_tar(ts))),
         ),
-        patch.object(products, "read_odim_composite", side_effect=lambda _f, **_kw: next(reads)),
+        patch.object(products, "read_odim_composite_cell", side_effect=lambda _f, _r, _c, **_kw: next(reads)),
     ):
         data, meta = await coord._fetch_and_parse(ts)
 
@@ -166,7 +165,7 @@ async def test_rv_threshold_from_options_suppresses_light_rain() -> None:
     leads = list(range(0, 121, 5))
     values = {lead: (0.2 if lead >= 30 else 0.0) for lead in leads}  # 0.2 mm/5min = 2.4 mm/h
     reads = iter([
-        (np.full((1200, 1100), values[lead], dtype=np.float32), _rv_what(ts, lead))
+        (np.float32(values[lead]), _rv_what(ts, lead))
         for lead in leads
     ])
 
@@ -180,7 +179,7 @@ async def test_rv_threshold_from_options_suppresses_light_rain() -> None:
             "async_get",
             new=AsyncMock(return_value=AsyncResponse(content=make_rv_tar(ts))),
         ),
-        patch.object(products, "read_odim_composite", side_effect=lambda _f, **_kw: next(reads)),
+        patch.object(products, "read_odim_composite_cell", side_effect=lambda _f, _r, _c, **_kw: next(reads)),
     ):
         data, _meta = await coord._fetch_and_parse(ts)
 
@@ -201,7 +200,7 @@ async def test_rv_threshold_is_interpreted_as_mm_per_hour() -> None:
     values[30] = 0.4
     values[60] = 0.6
     reads = iter([
-        (np.full((1200, 1100), values[lead], dtype=np.float32), _rv_what(ts, lead))
+        (np.float32(values[lead]), _rv_what(ts, lead))
         for lead in leads
     ])
 
@@ -215,7 +214,7 @@ async def test_rv_threshold_is_interpreted_as_mm_per_hour() -> None:
             "async_get",
             new=AsyncMock(return_value=AsyncResponse(content=make_rv_tar(ts))),
         ),
-        patch.object(products, "read_odim_composite", side_effect=lambda _f, **_kw: next(reads)),
+        patch.object(products, "read_odim_composite_cell", side_effect=lambda _f, _r, _c, **_kw: next(reads)),
     ):
         data, _meta = await coord._fetch_and_parse(ts)
 
@@ -234,7 +233,7 @@ async def test_rv_end_algorithm_option_selects_clearing() -> None:
 
     def _make_reads():
         return iter([
-            (np.full((1200, 1100), values[lead], dtype=np.float32), _rv_what(ts, lead))
+            (np.float32(values[lead]), _rv_what(ts, lead))
             for lead in leads
         ])
 
@@ -249,7 +248,7 @@ async def test_rv_end_algorithm_option_selects_clearing() -> None:
             "async_get",
             new=AsyncMock(return_value=AsyncResponse(content=make_rv_tar(ts))),
         ),
-        patch.object(products, "read_odim_composite", side_effect=lambda _f, **_kw: next(episode_reads)),
+        patch.object(products, "read_odim_composite_cell", side_effect=lambda _f, _r, _c, **_kw: next(episode_reads)),
     ):
         episode, _ = await coord._fetch_and_parse(ts)
     assert episode["start_in"] == 5
@@ -264,7 +263,7 @@ async def test_rv_end_algorithm_option_selects_clearing() -> None:
             "async_get",
             new=AsyncMock(return_value=AsyncResponse(content=make_rv_tar(ts))),
         ),
-        patch.object(products, "read_odim_composite", side_effect=lambda _f, **_kw: next(clearing_reads)),
+        patch.object(products, "read_odim_composite_cell", side_effect=lambda _f, _r, _c, **_kw: next(clearing_reads)),
     ):
         clearing, _ = await coord._fetch_and_parse(ts)
     assert clearing["start_in"] == 5

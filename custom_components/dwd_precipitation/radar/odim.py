@@ -125,6 +125,35 @@ def _require_plain_dataset(dset, expected_shape=None):
     return dset
 
 
+def _open_composite(hf, dataset: str, moment: str, expected_shape):
+    """Return ``(dset, dataset_what, what)`` for a composite's payload, checked."""
+    dataset_what = {
+        k: _normalise_attr_value(v)
+        for k, v in _resolve_hard(hf, f"{dataset}/what").attrs.items()
+    }
+    what = {
+        k: _normalise_attr_value(v)
+        for k, v in _resolve_hard(hf, f"{dataset}/{moment}/what").attrs.items()
+    }
+    dset = _require_plain_dataset(
+        _resolve_hard(hf, f"{dataset}/{moment}/data"), expected_shape
+    )
+    return dset, dataset_what, what
+
+
+def _scale(raw, what):
+    """Turn raw ACRR counts into mm: nodata → NaN, undetect → 0.0."""
+    gain     = float(what["gain"])
+    offset   = float(what["offset"])
+    nodata   = int(what["nodata"])
+    undetect = int(round(float(what.get("undetect", 0))))
+
+    data = raw.astype(np.float32) * gain + offset
+    data[raw == nodata]   = np.nan
+    data[raw == undetect] = 0.0
+    return data
+
+
 def read_odim_composite(
     fileobj,
     dataset: str = "dataset1",
@@ -144,29 +173,36 @@ def read_odim_composite(
     which bounds the array allocation.
     """
     with h5py.File(fileobj, "r") as hf:
-        dataset_what = {
-            k: _normalise_attr_value(v)
-            for k, v in _resolve_hard(hf, f"{dataset}/what").attrs.items()
-        }
-        what = {
-            k: _normalise_attr_value(v)
-            for k, v in _resolve_hard(hf, f"{dataset}/{moment}/what").attrs.items()
-        }
-        dset = _require_plain_dataset(
-            _resolve_hard(hf, f"{dataset}/{moment}/data"), expected_shape
-        )
+        dset, dataset_what, what = _open_composite(hf, dataset, moment, expected_shape)
         raw = dset[:]
 
-    gain     = float(what["gain"])
-    offset   = float(what["offset"])
-    nodata   = int(what["nodata"])
-    undetect = int(round(float(what.get("undetect", 0))))
+    return _scale(raw, what), dataset_what
 
-    data = raw.astype(np.float32) * gain + offset
-    data[raw == nodata]   = np.nan
-    data[raw == undetect] = 0.0
 
-    return data, dataset_what
+def read_odim_composite_cell(
+    fileobj,
+    row: int,
+    col: int,
+    dataset: str = "dataset1",
+    moment: str = "data1",
+    expected_shape=None,
+):
+    """Read one cell of a Cartesian ODIM_H5 composite.
+
+    Returns (value, dataset_what): the same float32 value
+    :func:`read_odim_composite` would hold at ``[row, col]`` (NaN for nodata),
+    with the same untrusted-input checks. DWD stores the whole grid as a single
+    compressed chunk, so libhdf5 still inflates it; what this saves is scaling
+    and masking 1.3 million cells to keep one, which is most of the cost.
+    """
+    with h5py.File(fileobj, "r") as hf:
+        dset, dataset_what, what = _open_composite(hf, dataset, moment, expected_shape)
+        rows, cols = dset.shape
+        if not (0 <= row < rows and 0 <= col < cols):
+            raise ValueError(f"Cell ({row}, {col}) is outside the {dset.shape} grid")
+        raw = dset[row:row + 1, col:col + 1]
+
+    return _scale(raw, what)[0, 0], dataset_what
 
 
 def read_odim_classification(

@@ -22,7 +22,7 @@ from .utils import async_get
 from .radar import (
     read_radolan_composite,
     get_radolan_grid,
-    read_odim_composite,
+    read_odim_composite_cell,
     read_odim_classification,
     get_rs_grid_index,
     RS_GRID_SHAPE,
@@ -78,6 +78,48 @@ def _parse_odim_ts(date: str | None, time: str | None) -> datetime | None:
         return None
 
 
+# The three non-overlapping RS hours: past, next and second-next.
+RS_HOURLY_LEADS = (0, 60, 120)
+
+
+def _read_tar_cells(
+    content: bytes, prefix: str, leads, cell: tuple[int, int], label: str
+) -> dict[int, tuple[float | None, dict] | None]:
+    """Decode one grid cell from each requested member of a RADVOR tar.
+
+    Returns ``{lead: (value, dataset_what)}``; ``value`` is ``None`` for nodata,
+    and a member missing from the archive maps to ``None`` (logged).
+    """
+    row, col = cell
+    out: dict[int, tuple[float | None, dict] | None] = {}
+    with tarfile.open(fileobj=BytesIO(content), mode="r") as tf:
+        for lead in leads:
+            member_name = f"{prefix}_{lead:03d}-hd5"
+            try:
+                f = tf.extractfile(member_name)
+            except KeyError:
+                f = None
+            if f is None:
+                _LOGGER.warning("%s tar member not found: %s", label, member_name)
+                out[lead] = None
+                continue
+
+            val, what = read_odim_composite_cell(
+                BytesIO(f.read()), row, col, expected_shape=RS_GRID_SHAPE
+            )
+            val = float(val)
+            out[lead] = (None if np.isnan(val) else val, what)
+    return out
+
+
+def _odim_window(what: dict) -> tuple[datetime | None, datetime | None]:
+    """Return the (start, end) validity window of an ODIM /dataset/what."""
+    return (
+        _parse_odim_ts(what.get("startdate"), what.get("starttime")),
+        _parse_odim_ts(what.get("enddate"), what.get("endtime")),
+    )
+
+
 class RadvorRS(BaseProductUpdateCoordinator):
     """DWD RS precipitation nowcast (RADVOR, ODIM_H5 format).
 
@@ -118,42 +160,32 @@ class RadvorRS(BaseProductUpdateCoordinator):
 
     def _parse(self, content: bytes, ts: datetime) -> tuple[list, list]:
         """Extract the 3 lead-time ACRR values from the tar bytes (blocking)."""
-        tar_bytes = BytesIO(content)
-        prefix = f"composite_rs_{ts.strftime('%Y%m%d_%H%M')}"
-        row, col = self.index
-        data: list = []
-        metadata: list = []
+        cells = _read_tar_cells(
+            content,
+            f"composite_rs_{ts.strftime('%Y%m%d_%H%M')}",
+            RS_HOURLY_LEADS,
+            self.index,
+            "RS",
+        )
 
-        with tarfile.open(fileobj=tar_bytes, mode="r") as tf:
-            for suffix in ("000", "060", "120"):
-                member_name = f"{prefix}_{suffix}-hd5"
-                try:
-                    f = tf.extractfile(member_name)
-                except KeyError:
-                    f = None
-                if f is None:
-                    _LOGGER.warning("RS tar member not found: %s", member_name)
-                    data.append(None)
-                    metadata.append(None)
-                    continue
+        per_lead: dict[int, ProductMetadata | None] = {}
+        for lead, cell in cells.items():
+            if cell is None:
+                per_lead[lead] = None
+                continue
+            data_start, data_end = _odim_window(cell[1])
+            per_lead[lead] = ProductMetadata(
+                source_product=cell[1].get("prodname") or cell[1].get("product"),
+                source_timestamp=(
+                    data_end - timedelta(minutes=lead) if data_end else None
+                ),
+                lead_time_minutes=lead,
+                data_start=data_start,
+                data_end=data_end,
+            )
 
-                _data, _what = read_odim_composite(
-                    BytesIO(f.read()), expected_shape=RS_GRID_SHAPE
-                )
-                val = float(_data[row, col])
-                data.append(None if np.isnan(val) else val)
-
-                lead = int(suffix)
-                data_start = _parse_odim_ts(_what.get("startdate"), _what.get("starttime"))
-                data_end = _parse_odim_ts(_what.get("enddate"), _what.get("endtime"))
-                source_ts = data_end - timedelta(minutes=lead) if data_end else None
-                metadata.append(ProductMetadata(
-                    source_product=_what.get("prodname") or _what.get("product"),
-                    source_timestamp=source_ts,
-                    lead_time_minutes=lead,
-                    data_start=data_start,
-                    data_end=data_end,
-                ))
+        data = [cells[lead][0] if cells[lead] else None for lead in RS_HOURLY_LEADS]
+        metadata = [per_lead[lead] for lead in RS_HOURLY_LEADS]
 
         return data, metadata
 
@@ -210,9 +242,9 @@ class RadvorRV(BaseProductUpdateCoordinator):
 
     def _parse(self, content: bytes, ts: datetime) -> tuple[dict, dict]:
         """Derive the RV entity payloads from the tar bytes (blocking)."""
-        tar_bytes = BytesIO(content)
-        prefix = f"composite_rv_{ts.strftime('%Y%m%d_%H%M')}"
-        row, col = self.index
+        cells = _read_tar_cells(
+            content, f"composite_rv_{ts.strftime('%Y%m%d_%H%M')}", LEADS, self.index, "RV"
+        )
 
         # Per-lead 5-minute cell values (mm) and window bounds, aligned to LEADS.
         values: list[float | None] = []
@@ -220,33 +252,21 @@ class RadvorRV(BaseProductUpdateCoordinator):
         ends: list[datetime | None] = []
         base_ts: datetime | None = None
 
-        with tarfile.open(fileobj=tar_bytes, mode="r") as tf:
-            for lead in LEADS:
-                member_name = f"{prefix}_{lead:03d}-hd5"
-                try:
-                    f = tf.extractfile(member_name)
-                except KeyError:
-                    f = None
-                if f is None:
-                    _LOGGER.warning("RV tar member not found: %s", member_name)
-                    values.append(None)
-                    starts.append(None)
-                    ends.append(None)
-                    continue
+        for lead in LEADS:
+            cell = cells[lead]
+            if cell is None:
+                values.append(None)
+                starts.append(None)
+                ends.append(None)
+                continue
 
-                _data, _what = read_odim_composite(
-                    BytesIO(f.read()), expected_shape=RS_GRID_SHAPE
-                )
-                val = float(_data[row, col])
-                values.append(None if np.isnan(val) else val)
-
-                data_start = _parse_odim_ts(_what.get("startdate"), _what.get("starttime"))
-                data_end = _parse_odim_ts(_what.get("enddate"), _what.get("endtime"))
-                starts.append(data_start)
-                ends.append(data_end)
-                # Base run time T = end of the analysis window (lead 0).
-                if lead == 0 and data_end is not None:
-                    base_ts = data_end
+            data_start, data_end = _odim_window(cell[1])
+            values.append(cell[0])
+            starts.append(data_start)
+            ends.append(data_end)
+            # Base run time T = end of the analysis window (lead 0).
+            if lead == 0 and data_end is not None:
+                base_ts = data_end
 
         # The user configures the threshold as an intensity (mm/h); the
         # detection works on 5-minute accumulations, so convert back to mm/5min.
