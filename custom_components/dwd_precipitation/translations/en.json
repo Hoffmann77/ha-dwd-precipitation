@@ -30,7 +30,8 @@
           "precipitation_threshold": "Rain detection threshold (mm per hour)",
           "start_end_mode": "How “Precipitation start” and “Precipitation end” report",
           "precipitation_end_algorithm": "When “Precipitation end” counts rain as over",
-          "precipitation_reset_threshold": "Rain needed to reset the dry-streak counter (mm)"
+          "precipitation_reset_threshold": "Rain needed to reset the dry-streak counter (mm)",
+          "full_rolling_series": "Full rolling-hour series (decodes all RS forecast steps)"
         },
         "data_description": {
           "extra_state_attributes": "Attaches the DWD product name, the measurement time and the period each value covers to every sensor as attributes. Useful in templates or when reporting a problem; leave it off otherwise.",
@@ -38,7 +39,8 @@
           "precipitation_threshold": "How much forecast rain counts as precipitation for the “Precipitation start”, “Precipitation end” and “Precipitation expected” sensors. 0 means any amount DWD detects; raise it to around 0.5 to ignore drizzle.",
           "start_end_mode": "Whether those two sensors show a clock time (“14:25”) or the minutes until the event (“20”). Whichever you do not pick stays available as an attribute on the same sensor.",
           "precipitation_end_algorithm": "“First dry gap” reports the end of the current burst, so it moves around during showers. “Precipitation clears within 2 h” waits until no further rain is forecast, which is steadier but stays unknown longer. DWD forecasts only two hours ahead, so beyond that the sensor is “unknown” either way.",
-          "precipitation_reset_threshold": "How much rain resets “Timespan without precipitation” to zero. It is compared against “Precipitation now”, which is millimetres accumulated over the past hour — so 1 mm means 1 mm fell in the last hour, not a rate."
+          "precipitation_reset_threshold": "How much rain resets “Timespan without precipitation” to zero. It is compared against “Precipitation now”, which is millimetres accumulated over the past hour — so 1 mm means 1 mm fell in the last hour, not a rate.",
+          "full_rolling_series": "Adds the 12 rolling hours that straddle now (ending 5 to 55 minutes from now) to the “forecast_rolling_1h” attribute of “Peak hourly precipitation next 2h”. Without it the attribute lists the 13 hours that lie wholly ahead, computed from forecast data that is downloaded anyway. The sensor's value is the same either way; turning this on roughly doubles the processing time per update, which can matter on small devices."
         }
       }
     }

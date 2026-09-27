@@ -29,6 +29,8 @@ from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_EXTRA_ATTRIBUTES,
+    CONF_FULL_ROLLING_SERIES,
+    DEFAULT_FULL_ROLLING_SERIES,
     CONF_PRECIPITATION_RESET_THRESHOLD,
     DEFAULT_PRECIPITATION_RESET_THRESHOLD,
     CONF_START_END_MODE,
@@ -140,19 +142,31 @@ def _peak_hour_attrs(meta: ProductMetadata) -> dict[str, Any]:
     }
 
 
-# Summed from the RV 5-minute steps, which RV decodes anyway: RS *is* summed
-# RV, so this is the RS figure for every window wholly in the future.
-PEAK_HOUR_SENSOR = PrecipitationSensorEntityDescription(
-    key="radvor_peak_1h_120",
-    translation_key="peak_hourly_precipitation_next_2h",
-    native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
-    device_class=SensorDeviceClass.PRECIPITATION,
-    suggested_display_precision=1,
-    state_class=SensorStateClass.MEASUREMENT,
-    product_key="rv",
-    access_fn=lambda d: d["peak_1h"],
-    metadata_attrs_fn=_peak_hour_attrs,
-)
+def _peak_hour_sensor(full_rolling_series: bool) -> PrecipitationSensorEntityDescription:
+    """Return "Peak hourly precipitation next 2h", bound to the product feeding it.
+
+    The value is the same from either product (RS equals summed RV for every
+    window wholly in the future). RV is the default because it has already
+    decoded the steps; RS only when the option asks for the 12 windows RV
+    cannot reach. The key is product-neutral so toggling the option keeps the
+    entity, its id and its history.
+    """
+    common = dict(
+        key="radvor_peak_1h_120",
+        translation_key="peak_hourly_precipitation_next_2h",
+        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
+        device_class=SensorDeviceClass.PRECIPITATION,
+        suggested_display_precision=1,
+        state_class=SensorStateClass.MEASUREMENT,
+        metadata_attrs_fn=_peak_hour_attrs,
+    )
+    if full_rolling_series:
+        return PrecipitationSensorEntityDescription(
+            product_key="rs", access_fn=lambda _list: _list[3], **common
+        )
+    return PrecipitationSensorEntityDescription(
+        product_key="rv", access_fn=lambda d: d["peak_1h"], **common
+    )
 
 
 # RV sensors whose shape does not depend on the start/end display mode: the two
@@ -268,10 +282,13 @@ async def async_setup_entry(
     coordinators = entry.runtime_data.coordinators
 
     mode = entry.options.get(CONF_START_END_MODE, DEFAULT_START_END_MODE)
+    full_rolling_series = entry.options.get(
+        CONF_FULL_ROLLING_SERIES, DEFAULT_FULL_ROLLING_SERIES
+    )
 
     entity_descriptions = (
         RADVOR_SENSORS
-        + (PEAK_HOUR_SENSOR,)
+        + (_peak_hour_sensor(full_rolling_series),)
         + RADVOR_RV_SENSORS
         + _rv_timing_sensors(mode)
         + HYMECNG_SENSORS

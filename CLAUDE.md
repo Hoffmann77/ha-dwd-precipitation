@@ -47,8 +47,9 @@ poll loop.
    radar grid is one gzip chunk of 1.3 M cells, ~6 ms to inflate even on a fast
    machine, times 25 members for RS/RV — many users run HA on a Raspberry Pi
 4. The coordinator wraps those in a `CoordinatorData` — its `data`/`metadata`
-   are a scalar for RADOLAN products, parallel lists for RS, parallel dicts
-   for RV
+   are a scalar for RADOLAN products, parallel lists for RS (`[_000, _060,
+   _120, peak]`, `peak` being `None` unless `full_rolling_series` is on),
+   parallel dicts for RV
 5. `PrecipitationSensorEntity.native_value` calls
    `description.value_fn(coordinator.data.data)`
 
@@ -156,8 +157,8 @@ viewers and Windows consoles mangle typographic punctuation.
 
 | Class | Key | Format | Update | Description |
 |-------|-----|--------|--------|-------------|
-| `RadvorRS` | `rs` | ODIM_H5 (tar) | 5 min | RADVOR nowcast, 0/60/120 min lead; each grid is a 60-min accumulation (see "RS product specifics") |
-| `RadvorRV` | `rv` | ODIM_H5 (tar) | 5 min | RV nowcast, 25×5-min grids; derives +1h/+2h peak intensity (mm/h), precip start/end timing (episode/clearing end algorithm, user-selectable), a rain-within-2h flag (whose metadata carries the raw 25-point forecast series, exposed by default), and the wettest future hour (see "Peak hourly precipitation") |
+| `RadvorRS` | `rs` | ODIM_H5 (tar) | 5 min | RADVOR nowcast, 25 rolling 60-min accumulations; exposes the 0/60/120 min leads, plus — only with the `full_rolling_series` option — the wettest future hour with the 25-point rolling-hour series (see "RS product specifics") |
+| `RadvorRV` | `rv` | ODIM_H5 (tar) | 5 min | RV nowcast, 25×5-min grids; derives +1h/+2h peak intensity (mm/h), precip start/end timing (episode/clearing end algorithm, user-selectable), a rain-within-2h flag (whose metadata carries the raw 25-point forecast series, exposed by default), and by default the wettest future hour (see "Peak hourly precipitation") |
 | `HymecNG` | `hymecng` | ODIM_H5 (single .hd5) | 5 min | Precipitation-*type* composite (rain/snow/freezing rain/hail/…); one enum "Precipitation type" sensor |
 | `RadolanRW` | `rw` | RADOLAN binary (.bz2) | 1 h | 1-hour precipitation analysis (gauge-adjusted; same window as RS `_000`) |
 | `RadolanSF` | `sf` | RADOLAN binary (.bz2) | 1 h | 24-hour precipitation analysis |
@@ -305,25 +306,31 @@ Current runtime deps: `numpy`, `h5py`
   RS is radar-only, like RV: `_060` equals the sum of RV leads 5–60 cell for cell
   (checked against live data). Only RADOLAN RW/SF are gauge-adjusted.
 - **Fetching**: `RadvorRS._fetch_and_parse()` downloads one tar; `_parse()`
-  reads the `_000`/`_060`/`_120` members using stdlib `tarfile`.
+  reads members with stdlib `tarfile` — only `_000`/`_060`/`_120` by default,
+  all 25 with the `full_rolling_series` option. The payload list is
+  `[_000, _060, _120, peak]`, where `peak` is `None` unless the option is on.
 
 ## Peak hourly precipitation
 
 `Peak hourly precipitation next 2h` is the wettest rolling hour wholly in the
 future (windows ending at +60..+120, `FUTURE_HOUR_LEADS`; ties go to the earlier
 window), with the window as `data_start`/`data_end` (`None` on a dry forecast)
-and the rolling-hour series as `rolling_1h`.
+and the rolling-hour series as `rolling_1h`. Two products can feed it, and
+`_peak_hour_sensor()` binds the entity to one at setup (options reload the entry):
 
-RV feeds it, summing twelve 5-minute steps per window (`rolling_hour_sums`)
-from the 25 members it decodes anyway, rather than decoding the RS members
-that hold the same windows precomputed. It can only build windows wholly in
-the forecast, so the series has 13 points.
+- **RV (default)** sums twelve 5-minute steps per window (`rolling_hour_sums`),
+  reusing the 25 members RV decodes anyway. It can only build windows wholly in
+  the forecast, so the series has 13 points.
+- **RS (`full_rolling_series` on)** decodes all 25 members, adding the 12
+  windows that straddle now. ~+140 ms per release.
 
-The sum is the RS figure: RS *is* summed RV, verified on live data to 0.000 mm
-in every cell. A missing RV step counts as 0 because that is what RS reports at
-the coverage edge, and sums round to the ODIM 0.001 mm resolution
-(`MM_DECIMALS`). The entity key `radvor_peak_1h_120` is deliberately
-product-neutral rather than `radvor_rv_*`.
+The two are interchangeable by construction: RS *is* summed RV, verified on
+live data to 0.000 mm in every cell. A missing RV step counts as 0 because that
+is what RS reports at the coverage edge, and both round to the ODIM 0.001 mm
+resolution (`MM_DECIMALS`). Keep it that way — flipping the option must not
+move the state, and a test asserts both paths give the same peak, window and
+series. The entity key `radvor_peak_1h_120` is deliberately product-neutral so
+the entity survives the switch.
 
 ## HymecNG product specifics
 

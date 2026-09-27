@@ -35,11 +35,14 @@ from .radar.nowcast import (
     LEADS,
     STEPS_PER_HOUR,
     bucket_max_intensity,
+    MM_DECIMALS,
     detect_start_end,
     peak_rolling_hour,
     rolling_hour_sums,
 )
 from .const import (
+    CONF_FULL_ROLLING_SERIES,
+    DEFAULT_FULL_ROLLING_SERIES,
     CONF_PRECIPITATION_THRESHOLD,
     DEFAULT_PRECIPITATION_THRESHOLD,
     CONF_PRECIPITATION_END_ALGORITHM,
@@ -133,7 +136,8 @@ def _peak_hour_payload(
     """Build the "Peak hourly precipitation next 2h" value and metadata.
 
     ``sums`` (rolling 60-minute totals, mm) and ``windows`` are aligned to
-    LEADS; ``series_leads`` picks the points exposed as ``rolling_1h``.
+    LEADS; ``series_leads`` picks the points exposed as ``rolling_1h``. RS and
+    RV both land here, so the two sources cannot drift apart in shape.
     """
     def _iso(dt: datetime | None) -> str | None:
         return dt.isoformat() if dt is not None else None
@@ -164,8 +168,19 @@ def _peak_hour_payload(
 class RadvorRS(BaseProductUpdateCoordinator):
     """DWD RS precipitation nowcast (RADVOR, ODIM_H5 format).
 
-    Returns three lead times (0 / 60 / 120 min) from a single tar archive.
-    precipitation → list[float | None], metadata → list[ProductMetadata]
+    RS is published every 5 minutes as one tar of 25 ODIM_H5 members (leads
+    0..120 min, 5-min steps). Each member is a *rolling 60-minute* accumulation
+    (mm) ending at T+lead, so consecutive members overlap by 55 minutes.
+
+    precipitation → list[float | None], metadata → list[ProductMetadata | None],
+    both indexed:
+
+    * ``0`` / ``1`` / ``2`` — the non-overlapping hours: leads 0 / 60 / 120.
+    * ``3`` — the wettest rolling hour wholly in the future, with the full
+      25-point rolling-hour series as ``rolling_1h`` on its metadata. Only
+      filled with the ``full_rolling_series`` option on, since it needs all 25
+      members decoded; otherwise ``None`` and RV provides the sensor (see
+      RadvorRV).
     """
 
     PRODUCT_KEY = "rs"
@@ -188,6 +203,13 @@ class RadvorRS(BaseProductUpdateCoordinator):
         """Return (row, col) in the RS composite grid."""
         return get_rs_grid_index(*self.coords)
 
+    @property
+    def full_rolling_series(self) -> bool:
+        """Whether this entry decodes every member for the rolling-hour series."""
+        return self.config_entry.options.get(
+            CONF_FULL_ROLLING_SERIES, DEFAULT_FULL_ROLLING_SERIES
+        )
+
     def _get_url(self, ts: datetime) -> str:
         """Return the URL for the tar archive."""
         return (
@@ -200,11 +222,12 @@ class RadvorRS(BaseProductUpdateCoordinator):
         return await self.hass.async_add_executor_job(self._parse, response.content, ts)
 
     def _parse(self, content: bytes, ts: datetime) -> tuple[list, list]:
-        """Extract the 3 lead-time ACRR values from the tar bytes (blocking)."""
+        """Derive the RS entity payloads from the tar bytes (blocking)."""
+        full = self.full_rolling_series
         cells = _read_tar_cells(
             content,
             f"composite_rs_{ts.strftime('%Y%m%d_%H%M')}",
-            RS_HOURLY_LEADS,
+            LEADS if full else RS_HOURLY_LEADS,
             self.index,
             "RS",
         )
@@ -228,7 +251,28 @@ class RadvorRS(BaseProductUpdateCoordinator):
         data = [cells[lead][0] if cells[lead] else None for lead in RS_HOURLY_LEADS]
         metadata = [per_lead[lead] for lead in RS_HOURLY_LEADS]
 
-        return data, metadata
+        if not full:
+            return data + [None], metadata + [None]
+
+        sums = [
+            round(cells[lead][0], MM_DECIMALS)
+            if cells[lead] and cells[lead][0] is not None
+            else None
+            for lead in LEADS
+        ]
+        windows = [
+            (m.data_start, m.data_end) if (m := per_lead[lead]) else (None, None)
+            for lead in LEADS
+        ]
+        base = next((m for m in per_lead.values() if m is not None), None)
+        peak, peak_meta = _peak_hour_payload(
+            sums,
+            windows,
+            LEADS,
+            base.source_product if base else None,
+            base.source_timestamp if base else None,
+        )
+        return data + [peak], metadata + [peak_meta]
 
 
 class RadvorRV(BaseProductUpdateCoordinator):
@@ -249,8 +293,8 @@ class RadvorRV(BaseProductUpdateCoordinator):
       carries the full 25-point 5-minute forecast series as ``samples``.
     * ``peak_1h`` — the wettest rolling hour wholly in the future, summed from
       twelve 5-minute steps (identical to the RS member for that window). Its
-      metadata carries those 13 rolling hours as ``rolling_1h``, and it
-      feeds the "Peak hourly precipitation next 2h" sensor.
+      metadata carries those 13 rolling hours as ``rolling_1h``. Used unless
+      the ``full_rolling_series`` option hands the sensor to RS.
 
     precipitation → dict[str, value], metadata → dict[str, ProductMetadata]
     """

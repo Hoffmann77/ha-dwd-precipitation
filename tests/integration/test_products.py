@@ -49,6 +49,41 @@ def _coord(cls, options: dict | None = None):
 
 
 
+def _rs_what(base: datetime, lead: int) -> dict:
+    """ODIM /dataset/what for an RS member: rolling hour [T+lead-60, T+lead]."""
+    end = base + timedelta(minutes=lead)
+    start = end - timedelta(minutes=60)
+    return {
+        "prodname": "RS",
+        "startdate": start.strftime("%Y%m%d"), "starttime": start.strftime("%H%M%S"),
+        "enddate": end.strftime("%Y%m%d"), "endtime": end.strftime("%H%M%S"),
+    }
+
+
+async def _rs_fetch(ts: datetime, values: dict[int, float], full: bool = True):
+    """Run RadvorRS._fetch_and_parse, serving each decoded lead from ``values``."""
+    decoded: list[int] = []
+
+    def _read(fileobj, _row, _col, **_kw):
+        lead = int(fileobj.getvalue())  # make_rs_tar's payload is the lead
+        decoded.append(lead)
+        return np.float32(values[lead]), _rs_what(ts, lead)
+
+    coord = _coord(RadvorRS, {"full_rolling_series": full})
+
+    with (
+        patch.object(
+            products,
+            "async_get",
+            new=AsyncMock(return_value=AsyncResponse(content=make_rs_tar(ts))),
+        ),
+        patch.object(products, "read_odim_composite_cell", side_effect=_read),
+    ):
+        data, meta = await coord._fetch_and_parse(ts)
+    assert coord.hass.executor_jobs == 1
+    return data, meta, decoded
+
+
 @pytest.mark.asyncio
 async def test_rs_fetch_derives_base_source_timestamp_and_window() -> None:
     """RS: source_timestamp is the base run time (data_end - lead), identical for all leads.
@@ -57,37 +92,75 @@ async def test_rs_fetch_derives_base_source_timestamp_and_window() -> None:
     (which used it directly) was only correct for the 0-min member.
     """
     ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
-    # /dataset/what per member — the validity window advances by the lead time.
-    whats = [
-        {"prodname": "RS", "startdate": "20260518", "starttime": "150000",
-         "enddate": "20260518", "endtime": "160000"},
-        {"prodname": "RS", "startdate": "20260518", "starttime": "160000",
-         "enddate": "20260518", "endtime": "170000"},
-        {"prodname": "RS", "startdate": "20260518", "starttime": "170000",
-         "enddate": "20260518", "endtime": "180000"},
-    ]
-    reads = iter([(np.float32(0.0), w) for w in whats])
+    data, meta, _ = await _rs_fetch(ts, {lead: float(lead) for lead in range(0, 121, 5)})
 
-    coord = _coord(RadvorRS)
-
-    with (
-        patch.object(
-            products,
-            "async_get",
-            new=AsyncMock(return_value=AsyncResponse(content=make_rs_tar(ts))),
-        ),
-        patch.object(products, "read_odim_composite_cell", side_effect=lambda _f, _r, _c, **_kw: next(reads)),
-    ):
-        _data, meta = await coord._fetch_and_parse(ts)
-    assert coord.hass.executor_jobs == 1
-
+    # The three non-overlapping hours come from leads 0 / 60 / 120.
+    assert data[:3] == [0.0, 60.0, 120.0]
     base = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
-    assert [m.source_timestamp for m in meta] == [base, base, base]
-    assert [m.lead_time_minutes for m in meta] == [0, 60, 120]
+    assert [m.source_timestamp for m in meta] == [base, base, base, base]
+    assert [m.lead_time_minutes for m in meta[:3]] == [0, 60, 120]
     assert meta[0].data_start == datetime(2026, 5, 18, 15, 0, tzinfo=timezone.utc)
     assert meta[0].data_end == base
     assert meta[2].data_start == datetime(2026, 5, 18, 17, 0, tzinfo=timezone.utc)
     assert meta[2].data_end == datetime(2026, 5, 18, 18, 0, tzinfo=timezone.utc)
+
+
+@pytest.mark.asyncio
+async def test_rs_peak_hour_and_rolling_series() -> None:
+    """RS: the wettest future rolling hour, its window, and the 25-point series."""
+    ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
+    # A storm straddling the fixed hours: its heaviest hour ends at T+90, which
+    # neither "next 1h" (lead 60) nor "next 1-2h" (lead 120) sees in full.
+    values = {lead: 0.0 for lead in range(0, 121, 5)}
+    values.update({0: 30.0, 60: 4.0, 85: 9.0, 90: 18.0, 95: 18.0, 120: 5.0})
+    data, meta, _ = await _rs_fetch(ts, values)
+
+    # Lead 0 (the past hour, 30 mm) is not a forecast and is excluded; the tie
+    # between leads 90 and 95 goes to the earlier window.
+    assert data[3] == pytest.approx(18.0)
+    peak = meta[3]
+    assert peak.lead_time_minutes == 90
+    assert peak.data_start == datetime(2026, 5, 18, 16, 30, tzinfo=timezone.utc)
+    assert peak.data_end == datetime(2026, 5, 18, 17, 30, tzinfo=timezone.utc)
+    assert peak.source_timestamp == ts
+
+    series = peak.rolling_1h
+    assert [p["lead"] for p in series] == list(range(0, 121, 5))
+    assert series[0] == {
+        "lead": 0,
+        "start": "2026-05-18T15:00:00+00:00",
+        "end": "2026-05-18T16:00:00+00:00",
+        "value": pytest.approx(30.0),
+    }
+    assert series[18]["value"] == pytest.approx(18.0)  # lead 90
+    # The fixed-hour members keep no series of their own.
+    assert all(m.rolling_1h is None for m in meta[:3])
+
+
+@pytest.mark.asyncio
+async def test_rs_dry_forecast_has_no_peak_window() -> None:
+    """RS: a dry forecast peaks at 0 mm, but has no wettest hour to point at."""
+    ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
+    data, meta, _ = await _rs_fetch(ts, {lead: 0.0 for lead in range(0, 121, 5)})
+
+    assert data[3] == 0.0
+    assert meta[3].data_start is None
+    assert meta[3].data_end is None
+    assert meta[3].lead_time_minutes is None
+    assert len(meta[3].rolling_1h) == 25
+
+
+@pytest.mark.asyncio
+async def test_rs_without_option_decodes_only_the_three_hours() -> None:
+    """RS: with the option off only leads 0/60/120 are decoded; RV owns the peak."""
+    ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
+    values = {lead: float(lead) for lead in range(0, 121, 5)}
+    data, meta, decoded = await _rs_fetch(ts, values, full=False)
+
+    assert decoded == [0, 60, 120]
+    assert data == [0.0, 60.0, 120.0, None]
+    assert meta[3] is None
+    assert [m.lead_time_minutes for m in meta[:3]] == [0, 60, 120]
 
 
 def _rv_what(base: datetime, lead: int) -> dict:
@@ -390,33 +463,45 @@ async def _rv_fetch(ts: datetime, values: dict[int, float | None]):
 
 
 @pytest.mark.asyncio
-async def test_rv_peak_hour_and_rolling_series() -> None:
-    """RV: the wettest wholly-future rolling hour, its window and the 13-point series."""
+async def test_rv_peak_hour_matches_rs_for_the_same_rain() -> None:
+    """RV-summed rolling hours give RS's peak, window and future series exactly.
+
+    The two sources back one sensor, switched by an option, so the state must
+    not move when a user flips it.
+    """
     ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
     leads = list(range(0, 121, 5))
     # 5-minute rain: a shower around +40 min and a heavier cell around +95 min.
     rv = {lead: 0.0 for lead in leads}
     rv.update({35: 0.4, 40: 0.9, 45: 0.3, 85: 0.6, 90: 1.7, 95: 2.2, 100: 0.8})
-    data, meta = await _rv_fetch(ts, rv)
+    # RS members are the rolling hour ending at each lead (the past hour being
+    # whatever it was; RV cannot see it, and it plays no part in the peak).
+    rs = {
+        lead: round(sum(rv[k] for k in leads if lead - 60 < k <= lead and k > 0), 3)
+        for lead in leads
+    }
+    rs[0] = 12.0
 
+    rv_data, rv_meta = await _rv_fetch(ts, rv)
+    rs_data, rs_meta, _ = await _rs_fetch(ts, rs)
+
+    assert rv_data["peak_1h"] == pytest.approx(rs_data[3])
     # Wettest hour ends at +95: steps +40..+95 catch the tail of the first
     # shower too (0.9 + 0.3), beating the window ending at +100 (5.6 mm).
-    assert data["peak_1h"] == pytest.approx(0.9 + 0.3 + 0.6 + 1.7 + 2.2)
-    peak = meta["peak_1h"]
-    assert peak.lead_time_minutes == 95
-    assert peak.data_start == datetime(2026, 5, 18, 16, 35, tzinfo=timezone.utc)
-    assert peak.data_end == datetime(2026, 5, 18, 17, 35, tzinfo=timezone.utc)
-    assert peak.source_timestamp == ts
+    assert rv_data["peak_1h"] == pytest.approx(0.9 + 0.3 + 0.6 + 1.7 + 2.2)
+    for attr in ("lead_time_minutes", "data_start", "data_end"):
+        assert getattr(rv_meta["peak_1h"], attr) == getattr(rs_meta[3], attr), attr
+    assert rv_meta["peak_1h"].lead_time_minutes == 95
+    assert rv_meta["peak_1h"].data_start == datetime(2026, 5, 18, 16, 35, tzinfo=timezone.utc)
+    assert rv_meta["peak_1h"].data_end == datetime(2026, 5, 18, 17, 35, tzinfo=timezone.utc)
 
-    # The 13 windows wholly in the future, each the sum of its twelve steps.
-    series = peak.rolling_1h
-    assert [p["lead"] for p in series] == list(range(60, 121, 5))
-    for point in series:
-        lead = point["lead"]
-        expected = sum(rv[k] for k in leads if lead - 60 < k <= lead)
-        assert point["value"] == pytest.approx(expected), lead
-    assert series[0]["start"] == "2026-05-18T16:00:00+00:00"
-    assert series[0]["end"] == "2026-05-18T17:00:00+00:00"
+    # RV's series is the 13 wholly-future hours, point for point equal to RS's.
+    rv_series = rv_meta["peak_1h"].rolling_1h
+    rs_series = {p["lead"]: p for p in rs_meta[3].rolling_1h}
+    assert [p["lead"] for p in rv_series] == list(range(60, 121, 5))
+    assert len(rs_series) == 25
+    for point in rv_series:
+        assert point == rs_series[point["lead"]]
 
 
 @pytest.mark.asyncio

@@ -29,6 +29,8 @@ from .const import (
     RAIN_END_ALGO_CLEARING,
     CONF_PRECIPITATION_RESET_THRESHOLD,
     DEFAULT_PRECIPITATION_RESET_THRESHOLD,
+    CONF_FULL_ROLLING_SERIES,
+    DEFAULT_FULL_ROLLING_SERIES,
 )
 from .radar import rs_grid_contains
 
@@ -113,6 +115,12 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                         mode=selector.NumberSelectorMode.BOX,
                     )
                 ),
+                vol.Optional(
+                    CONF_FULL_ROLLING_SERIES,
+                    default=self.config_entry.options.get(
+                        CONF_FULL_ROLLING_SERIES, DEFAULT_FULL_ROLLING_SERIES
+                    ),
+                ): selector.BooleanSelector(),
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)
