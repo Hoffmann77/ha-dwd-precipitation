@@ -5,9 +5,8 @@ Tries to download a real RS file from DWD OpenData.  If no file with
 precipitation is found in the last 2 hours, falls back to a synthetic
 file with the real RS grid structure and a single known precipitation cell.
 
-The lat/lon of the chosen precipitation cell is computed via pyproj so
-that test_location_value_matches_wradlib can verify our coordinate transform
-against the ellipsoidal reference implementation.
+The lat/lon of the chosen precipitation cell is its centre, computed via
+pyproj, so the reference tests can check our lookup returns that cell.
 
 Run once from the repo root (needs wradlib + pyproj + requests installed):
 
@@ -57,7 +56,7 @@ PROJDEF = (
 )
 XSIZE, YSIZE = 1100, 1200
 XSCALE = YSCALE = 1000.0
-LL_LAT, LL_LON = 45.696, 3.567
+LL_LAT, LL_LON = 45.696425377390064, 3.5669946350078914
 GAIN, OFFSET = 0.001, -0.001
 NODATA = 4294967295
 
@@ -67,7 +66,12 @@ SYNTH_RAW = 2501  # → 2.500 mm
 
 
 def cell_to_lonlat(hdf5_bytes: bytes, row: int, col: int) -> tuple[float, float]:
-    """Convert grid (row, col) to (lat, lon) using pyproj."""
+    """Return the (lat, lon) of the centre of grid cell (row, col), via pyproj.
+
+    The ODIM corner attributes are the outer corners of the edge pixels, so a
+    pixel centre is half a cell in from them. The corner itself would sit on the
+    boundary of four cells and not pin down which one the lookup should return.
+    """
     from pyproj import Proj
 
     with h5py.File(io.BytesIO(hdf5_bytes), "r") as f:
@@ -85,8 +89,8 @@ def cell_to_lonlat(hdf5_bytes: bytes, row: int, col: int) -> tuple[float, float]
     ysize  = int(where["ysize"])
 
     x_ll, y_ll = p(ll_lon, ll_lat)
-    x = x_ll + col * xscale
-    y = y_ll + (ysize - 1 - row) * yscale
+    x = x_ll + (col + 0.5) * xscale
+    y = y_ll + (ysize - 1 - row + 0.5) * yscale
     lon, lat = p(x, y, inverse=True)
     return float(lat), float(lon)
 
@@ -325,8 +329,9 @@ def main() -> None:
         "synthetic":   synthetic,
         "source_ts":   ts.strftime("%Y-%m-%dT%H:%M:00Z") if ts else None,
         "note": (
-            "lat/lon derived from (row, col) via pyproj so the wradlib test "
-            "can verify our ellipsoidal coordinate transform matches pyproj."
+            "lat/lon is the centre of (grid_row, grid_col), so the cell it "
+            "falls in is unambiguous; the wradlib test checks our lookup "
+            "returns that cell."
         ),
     }
     META_OUT.write_text(json.dumps(meta, indent=2))

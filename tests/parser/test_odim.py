@@ -12,6 +12,7 @@ from radar.odim import (
     read_odim_composite,
     read_odim_composite_cell,
     read_odim_classification,
+    rs_grid_contains,
 )
 
 from tests.factories.odim import (
@@ -70,6 +71,41 @@ def test_ll_corner_maps_to_bottom_left():
     row, col = get_rs_grid_index(RS_WHERE["LL_lat"], RS_WHERE["LL_lon"])
     assert col == 0
     assert row == RS_WHERE["ysize"] - 1
+
+
+# Cells wradlib's DE1200 grid gives for these locations (the reference tier
+# re-derives them; pinned here so the check also runs without wradlib).
+@pytest.mark.parametrize(
+    ("lat", "lon", "cell"),
+    [
+        (53.5511, 9.9937, (304, 543)),    # Hamburg
+        (52.5200, 13.4050, (416, 784)),   # Berlin
+        (47.9990, 7.8421, (951, 371)),    # Freiburg
+        (48.1374, 11.5755, (936, 669)),   # Munich
+        (50.9375, 6.9603, (601, 319)),    # Cologne
+    ],
+)
+def test_grid_index_matches_wradlib_pins(lat, lon, cell):
+    assert get_rs_grid_index(lat, lon) == cell
+
+
+# Points 400 m and 100 m either side of the outer grid edges, from projected
+# x/y via pyproj. The corner attributes are the *outer* pixel corners, so a
+# point just beyond them is off the grid — rounding put it in the edge cell.
+@pytest.mark.parametrize(
+    ("lat", "lon", "cell", "inside"),
+    [
+        (50.70260195370898, 2.6576754488211547, (600, -1), False),   # x = -900 m
+        (50.703475085889224, 2.668353517852978, (600, 0), True),     # x = -100 m
+        (56.22287238431419, 10.10762718326833, (-1, 550), False),    # y = +900 m
+        (56.21846556371837, 10.107612326653413, (0, 550), True),     # y = +400 m
+        (45.94609595982105, 10.080828049983344, (1200, 550), False), # y = -1 199 900 m
+        (45.95272662686072, 10.080841460710587, (1199, 550), True),  # y = -1 199 100 m
+    ],
+)
+def test_grid_edges_are_outer_pixel_corners(lat, lon, cell, inside):
+    assert get_rs_grid_index(lat, lon) == cell
+    assert rs_grid_contains(lat, lon) is inside
 
 
 def test_ur_corner_maps_near_top_right():

@@ -1,10 +1,10 @@
 {
-  "lat": 54.55923319262408,
-  "lon": 10.56079659382093,
+  "lat": 54.5635584582075,
+  "lon": 10.568387412231138,
   "expected_mm": 0.10499998927116394,
   "grid_row": 188,
   "grid_col": 581,
   "synthetic": false,
   "source_ts": "2026-07-03T07:50:00Z",
-  "note": "lat/lon derived from (row, col) via pyproj so the wradlib test can verify our ellipsoidal coordinate transform matches pyproj."
+  "note": "lat/lon is the centre of (grid_row, grid_col), so the cell it falls in is unambiguous; the wradlib test checks our lookup returns that cell."
 }
