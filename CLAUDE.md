@@ -21,6 +21,10 @@ sensor.py             HA SensorEntity descriptors. value_fn pulls from
 dry_streak.py         Pure "days without rain" logic: the persisted anchor
                       payload + threshold/downtime-correction helpers used by
                       the TimespanWithoutPrecipitationSensor in sensor.py.
+precipitation_total.py
+                      Pure running-total logic: the persisted total payload,
+                      the reading filter, and the missed-release walk used by
+                      the PrecipitationTotalSensor in sensor.py.
 config_flow.py        UI config flow: collects name + lat/lon.
 const.py              DWD OpenData base URLs and HA constants.
 utils.py              async_get() HTTP helper; get_previous_multiple() for
@@ -196,6 +200,15 @@ belongs in the docs rather than in four entity names:
 - `Precipitation expected` is a flag; `off` already covers "not in the horizon".
 - `Precipitation type` is the only genuinely instantaneous value, so it needs no
   qualifier (and `now` would collide with the RS sensor's name).
+
+`Precipitation total (hourly)` / `(daily)` are the other exception: they hold
+no window at all (an ever-growing sum since setup), so the parenthesis names the
+*cadence* they grow at, which is what tells the two apart. They are
+`TOTAL_INCREASING` and keyed on the release timestamp, never on the value
+changing: two equally wet hours are two releases, and a release seen twice is
+counted once. RW backs the hourly one, `sf_2350` the daily one; they are
+separate entities rather than one with a source option, because switching the
+source would make a `TOTAL_INCREASING` sensor jump.
 
 `Peak intensity next 1h` / `next 1–2h` drop the `Precipitation` head noun on
 purpose: they are mm/h rather than mm, and the shorter head stops them reading

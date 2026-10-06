@@ -71,6 +71,12 @@
       "precipitation_yesterday": {
         "name": "Precipitation yesterday"
       },
+      "precipitation_total_hourly": {
+        "name": "Precipitation total (hourly)"
+      },
+      "precipitation_total_daily": {
+        "name": "Precipitation total (daily)"
+      },
       "precipitation_next_1h": {
         "name": "Precipitation next 1h"
       },

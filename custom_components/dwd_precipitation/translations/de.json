@@ -71,6 +71,12 @@
       "precipitation_yesterday": {
         "name": "Niederschlag gestern"
       },
+      "precipitation_total_hourly": {
+        "name": "Niederschlag gesamt (stündlich)"
+      },
+      "precipitation_total_daily": {
+        "name": "Niederschlag gesamt (täglich)"
+      },
       "precipitation_next_1h": {
         "name": "Niederschlag nächste 1h"
       },
