@@ -45,6 +45,11 @@ from .dry_streak import (
     scalar_reading,
 )
 from .entity import DwdCoordinatorEntity
+from .precipitation_total import (
+    PrecipitationTotalExtraData,
+    countable,
+    missed_releases,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -90,6 +95,43 @@ RADOLAN_SENSORS = (
         state_class=SensorStateClass.MEASUREMENT,
         product_key="sf_2350",
         access_fn=lambda d: d,
+    ),
+)
+
+
+@dataclass(frozen=True, kw_only=True)
+class PrecipitationTotalEntityDescription(SensorEntityDescription):
+    """Provide a description for a cumulative precipitation total."""
+
+    product_key: str
+    # How many missed releases to fetch after a gap (see missed_releases).
+    max_backfill: int
+
+
+# Two totals over the same rain: RW counts each hour as soon as it is analysed,
+# sf_2350 counts each day once, the morning after. They are separate entities
+# rather than one with a source option so that switching never makes a
+# TOTAL_INCREASING sensor jump.
+TOTAL_SENSORS = (
+    PrecipitationTotalEntityDescription(
+        key="radolan_rw_total",
+        translation_key="precipitation_total_hourly",
+        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
+        device_class=SensorDeviceClass.PRECIPITATION,
+        suggested_display_precision=1,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        product_key="rw",
+        max_backfill=48,
+    ),
+    PrecipitationTotalEntityDescription(
+        key="radolan_sf_yesterday_total",
+        translation_key="precipitation_total_daily",
+        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
+        device_class=SensorDeviceClass.PRECIPITATION,
+        suggested_display_precision=1,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        product_key="sf_2350",
+        max_backfill=7,
     ),
 )
 
@@ -257,6 +299,10 @@ async def async_setup_entry(
         )
         for entity_description in entity_descriptions
     ]
+    entities.extend(
+        PrecipitationTotalSensor(coordinators[description.product_key], description)
+        for description in TOTAL_SENSORS
+    )
     entities.append(TimespanWithoutPrecipitationSensor(coordinators["rs"]))
 
     async_add_entities(entities)
@@ -327,6 +373,143 @@ class PrecipitationSensorEntity(DwdCoordinatorEntity, SensorEntity):
             attrs["forecast_5min"] = metadata.samples
 
         return attrs
+
+
+class PrecipitationTotalSensor(DwdCoordinatorEntity, RestoreEntity, SensorEntity):
+    """Running total of a RADOLAN accumulation product, one release at a time.
+
+    Counts every release once, keyed on its timestamp (see precipitation_total).
+    The first release seen after setup only sets the starting point: its window
+    predates the sensor, so the total starts at 0. After a gap -- Home Assistant
+    was down, or DWD failed for longer than a release -- the missed releases are
+    fetched in the background and added as they arrive. A restart during that
+    backfill drops whatever it had not fetched yet.
+    """
+
+    entity_description: PrecipitationTotalEntityDescription
+
+    def __init__(
+        self,
+        coordinator: BaseProductUpdateCoordinator,
+        description: PrecipitationTotalEntityDescription,
+    ) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, description)
+        self._total: float | None = None
+        self._last_release: datetime | None = None
+
+    @property
+    def available(self) -> bool:
+        """Return True once there is a total.
+
+        A total does not go stale the way a reading does: while the product is
+        failing it is still the right sum of everything counted so far, and the
+        missed releases are added once they can be fetched.
+        """
+        return self._total is not None
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the running total in mm."""
+        return None if self._total is None else round(self._total, 2)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return the end of the newest window included in the total."""
+        return {
+            "counted_until": (
+                self._last_release.isoformat() if self._last_release else None
+            )
+        }
+
+    @property
+    def extra_restore_state_data(self) -> PrecipitationTotalExtraData:
+        """Return the total to persist across restarts."""
+        return PrecipitationTotalExtraData(
+            total=self._total, last_release=self._last_release
+        )
+
+    async def async_added_to_hass(self) -> None:
+        """Restore the total and count whatever was released in the meantime."""
+        await super().async_added_to_hass()
+
+        if (restored := await self.async_get_last_extra_data()) is not None:
+            data = PrecipitationTotalExtraData.from_dict(restored.as_dict())
+            self._total = data.total
+            self._last_release = data.last_release
+
+        # coordinator.data is already populated by the first refresh.
+        self._count_new_release()
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self._count_new_release()
+        super()._handle_coordinator_update()
+
+    @callback
+    def _count_new_release(self) -> None:
+        """Add the coordinator's release to the total if it is a new one."""
+        release = self.coordinator.curr_release
+        cdata = self.coordinator.data
+        if release is None or cdata is None:
+            return
+
+        if self._last_release is not None and release <= self._last_release:
+            return
+
+        if self._last_release is None or self._total is None:
+            # First release ever seen: it fixes the starting point only.
+            self._total = self._total or 0.0
+            self._last_release = release
+            return
+
+        missed = missed_releases(
+            self.coordinator,
+            self._last_release,
+            release,
+            self.entity_description.max_backfill,
+        )
+
+        if (value := countable(cdata.data)) is not None:
+            self._total += value
+        self._last_release = release
+
+        if missed:
+            self.coordinator.config_entry.async_create_background_task(
+                self.hass,
+                self._async_backfill(missed),
+                f"{self.entity_id} backfill",
+            )
+
+    async def _async_backfill(self, releases: list[datetime]) -> None:
+        """Fetch releases that were never counted and add them to the total."""
+        failed = 0
+        for release in releases:
+            try:
+                value, _metadata = await self.coordinator._fetch_and_parse(release)
+            except Exception as err:  # noqa: BLE001 - any failure skips the file
+                _LOGGER.debug(
+                    "%s: could not backfill %s: %s",
+                    self.entity_id,
+                    release.isoformat(),
+                    err,
+                )
+                failed += 1
+                continue
+
+            if (mm := countable(value)) is not None:
+                self._total = (self._total or 0.0) + mm
+                self.async_write_ha_state()
+
+        if failed:
+            _LOGGER.info(
+                "%s: %s of %s missed DWD releases could not be fetched, so the "
+                "total leaves them out",
+                self.entity_id,
+                failed,
+                len(releases),
+            )
 
 
 class TimespanWithoutPrecipitationSensor(

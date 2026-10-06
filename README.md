@@ -20,6 +20,7 @@ Radar-based precipitation measurements and forecasts from the German Weather Ser
 - **Two-hour forecast:** forecast totals, peak intensity, and when rain starts and stops
 - **Precipitation type:** rain, drizzle, snow, sleet, graupel, hail, freezing rain
 - **Measured totals:** past hour, past 24 hours, yesterday, and a days-without-rain counter
+- **Long-term totals:** running rain totals for Home Assistant's statistics, so weekly, monthly and yearly sums work out of the box
 - **Customizable thresholds** for rain events to use as input for automations.
 
 ## Entities
@@ -57,6 +58,8 @@ Names ending in **`next <N>`** are forecasts.
 - **Precipitation last 1h** (mm): past 60 min. Arrives once an hour but is more accurate than `Precipitation now`.
 - **Precipitation last 24h** (mm): rolling past 24 hours
 - **Precipitation yesterday** (mm): the previous calendar day's total, available around 00:20 local time
+- **Precipitation total (hourly)** (mm): running total of all rain since setup, grows once an hour. For "rain this week" and same-day automations
+- **Precipitation total (daily)** (mm): the same, built from `Precipitation yesterday`, grows once a day. For monthly and yearly statistics
 
 See [Entity details](#entity-details) for the full behaviour of each sensor and its attributes.
 
@@ -155,6 +158,15 @@ For the full two-hour forecast total, add `Precipitation next 1h` and `Precipita
 - **Precipitation last 24h** (mm): rain that fell in the rolling past 24 hours. Updated hourly.
 - **Precipitation yesterday** (mm): total for the previous calendar day. Updated once a day, around 00:20 German local time.
 
+### Running totals: for statistics · hourly / daily
+
+Two ever-growing totals (state class `total_increasing`), for Home Assistant's long-term statistics, the statistics graph card, and the [Utility Meter](https://www.home-assistant.io/integrations/utility_meter/) helper. Use them for daily, weekly, monthly or yearly rain sums; the other sensors are snapshots and do not add up correctly over time. Both start at 0 when the integration is set up.
+
+- **Precipitation total (hourly)** (mm): adds each `Precipitation last 1h` value once. Up to date within the hour, so it suits "how much rain since this morning" automations.
+- **Precipitation total (daily)** (mm): adds each `Precipitation yesterday` value once. Today's rain only appears the next morning, but a single file a day makes it the most robust choice for monthly and yearly figures. On the two DST changeover days the 23:50 windows are 23 or 25 hours apart while each file covers 24 hours, so one hour is counted twice in spring and missed in autumn.
+
+If Home Assistant was offline, or DWD failed to publish for a while, the missed files are fetched in the background on the next update (up to 48 hours for the hourly total, 7 days for the daily one) and added late. Files DWD no longer serves are left out.
+
 ### Attributes
 
 Always present:
@@ -165,6 +177,7 @@ Always present:
 | `forecast_5min` | `Precipitation expected` | The full 25-point RV forecast (0–120 min in 5-minute steps); each point has `lead`, `start`, `end`, `value` (mm) and `intensity` (mm/h). Not recorded in history |
 | `hours_without_precipitation` | `Timespan without precipitation` | The dry streak in hours; `null` until the counter has started |
 | `dry_since` | `Timespan without precipitation` | ISO-8601 UTC time of the rain that last reset the counter |
+| `counted_until` | `Precipitation total (hourly)`, `Precipitation total (daily)` | ISO-8601 UTC end of the newest DWD window included in the total |
 
 With **Add technical details to each sensor** enabled, every DWD sensor also has:
 
