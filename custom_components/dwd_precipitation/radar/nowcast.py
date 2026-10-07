@@ -1,4 +1,4 @@
-"""Pure nowcast helpers for the RV 5-minute forecast series.
+"""Pure nowcast helpers for the RADVOR (RV and RS) forecast series.
 
 These functions operate on a plain list of per-lead precipitation values and
 carry no Home Assistant or numpy dependency, so they can be unit-tested in
@@ -24,6 +24,16 @@ STEPS_PER_HOUR = 60 // LEAD_STEP  # 12
 # Lead lists for the two hourly comparison buckets (matching the RS product).
 HOUR1_LEADS = list(range(LEAD_STEP, 60 + 1, LEAD_STEP))   # 5..60   → [T, T+60]
 HOUR2_LEADS = list(range(60 + LEAD_STEP, 120 + 1, LEAD_STEP))  # 65..120 → [T+60, T+120]
+
+# RS leads whose rolling 60-minute window lies wholly in the future. An RS
+# member at lead L covers [T+L-60, T+L], so 60 is [T, T+60] and 120 is
+# [T+60, T+120]; the leads below 60 still include observed rain.
+FUTURE_HOUR_LEADS = list(range(60, MAX_LEAD + 1, LEAD_STEP))  # 60..120 → 13 windows
+
+# RS and RV store amounts in 0.001 mm steps (ODIM gain). Rolling-hour totals are
+# rounded to it, so a sum of twelve float32 RV steps and the matching RS member
+# compare equal instead of differing in the seventh decimal.
+MM_DECIMALS = 3
 
 # Algorithms for deriving the "precipitation end" from the forecast series:
 #
@@ -65,6 +75,57 @@ def bucket_max_intensity(
     if not present:
         return None
     return float(max(present)) * STEPS_PER_HOUR
+
+
+def rolling_hour_sums(
+    values: list[float | None], leads: list[int] = FUTURE_HOUR_LEADS
+) -> list[float | None]:
+    """Return RS-equivalent rolling 60-minute totals (mm) from RV 5-minute steps.
+
+    ``values`` is aligned to :data:`LEADS` and holds RV 5-minute accumulations.
+    The result is aligned to :data:`LEADS` too: for each lead ``L`` in ``leads``
+    it is the sum of the twelve steps ending at ``L`` (RV leads ``L-55..L``),
+    i.e. the window ``[T+L-60, T+L]`` of the RS member at the same lead; every
+    other position is ``None``. Only windows wholly in the forecast can be
+    built this way, since RV holds no rain from before ``T-5``, so ``leads`` must
+    all be >= 60.
+
+    A missing step counts as 0, which is what RS reports at the edge of radar
+    coverage; a window is ``None`` only when all twelve steps are missing.
+    On live data this matched RS exactly wherever both had data.
+    """
+    sums: list[float | None] = [None] * len(LEADS)
+    for lead in leads:
+        if lead < 60:
+            raise ValueError(f"Lead {lead} reaches before the RV analysis window")
+        window = [
+            values[k // LEAD_STEP]
+            for k in range(lead - 60 + LEAD_STEP, lead + 1, LEAD_STEP)
+        ]
+        present = [float(v) for v in window if v is not None]
+        if present:
+            sums[lead // LEAD_STEP] = round(sum(present), MM_DECIMALS)
+    return sums
+
+
+def peak_rolling_hour(
+    values: list[float | None], leads: list[int]
+) -> tuple[float | None, int | None]:
+    """Return ``(peak, lead)`` of the wettest rolling hour among ``leads``.
+
+    ``values`` is aligned to :data:`LEADS` and holds RS rolling 60-minute
+    accumulations (mm), so each is already an hourly total and is compared as
+    is. ``lead`` identifies the peak window (it ends at ``T + lead``); a tie goes
+    to the earliest window, the one an automation has to act on first. ``None``
+    entries (nodata) are skipped; ``(None, None)`` only when every one is missing.
+    """
+    peak: float | None = None
+    peak_lead: int | None = None
+    for lead in leads:
+        value = values[lead // LEAD_STEP]
+        if value is not None and (peak is None or value > peak):
+            peak, peak_lead = float(value), lead
+    return peak, peak_lead
 
 
 def _end_episode(

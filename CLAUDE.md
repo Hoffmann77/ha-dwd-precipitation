@@ -44,11 +44,18 @@ poll loop.
    release time and calls `coordinator.async_refresh()`
 2. `_async_update_data()` computes `latest_release`, and returns the cached
    payload untouched if that release was already fetched
-3. `_fetch_and_parse(latest_release)` downloads and parses the file, extracts
-   `data[self.index]`, and returns `(precipitation, metadata)`
+3. `_fetch_and_parse(latest_release)` downloads the file on the event loop,
+   then hands the bytes to the product's blocking `_parse()` through
+   `hass.async_add_executor_job`, which extracts `data[self.index]` and returns
+   `(precipitation, metadata)`. Decoding never runs on the event loop: a
+   radar grid is one gzip chunk of 1.3 M cells, ~6 ms to inflate even on a fast
+   machine, times 25 members for RS/RV — many users run HA on a Raspberry Pi
 4. The coordinator wraps those in a `CoordinatorData` — its `data`/`metadata`
-   are a scalar for RADOLAN products, parallel lists for RS, parallel dicts
-   for RV
+   are a scalar for RADOLAN products (`None` for a nodata cell: the RADOLAN
+   reader marks those with the -9999 `nodataflag`, not NaN, so `_parse` maps it
+   explicitly), parallel lists for RS (`[_000, _060,
+   _120, peak]`, `peak` being `None` unless `full_rolling_series` is on),
+   parallel dicts for RV
 5. `PrecipitationSensorEntity.native_value` calls
    `description.value_fn(coordinator.data.data)`
 
@@ -156,8 +163,8 @@ viewers and Windows consoles mangle typographic punctuation.
 
 | Class | Key | Format | Update | Description |
 |-------|-----|--------|--------|-------------|
-| `RadvorRS` | `rs` | ODIM_H5 (tar) | 5 min | RADVOR nowcast, 0/60/120 min lead; each grid is a 60-min accumulation (see "RS product specifics") |
-| `RadvorRV` | `rv` | ODIM_H5 (tar) | 5 min | RV nowcast, 25×5-min grids; derives +1h/+2h peak intensity (mm/h), precip start/end timing (episode/clearing end algorithm, user-selectable), and a rain-within-2h flag (whose metadata carries the raw 25-point forecast series, exposed by default) |
+| `RadvorRS` | `rs` | ODIM_H5 (tar) | 5 min | RADVOR nowcast, 25 rolling 60-min accumulations; exposes the 0/60/120 min leads, plus — only with the `full_rolling_series` option — the wettest future hour with the 25-point rolling-hour series (see "RS product specifics") |
+| `RadvorRV` | `rv` | ODIM_H5 (tar) | 5 min | RV nowcast, 25×5-min grids; derives +1h/+2h peak intensity (mm/h), precip start/end timing (episode/clearing end algorithm, user-selectable), a rain-within-2h flag (whose metadata carries the raw 25-point forecast series, exposed by default), and by default the wettest future hour (see "Peak hourly precipitation") |
 | `HymecNG` | `hymecng` | ODIM_H5 (single .hd5) | 5 min | Precipitation-*type* composite (rain/snow/freezing rain/hail/…); one enum "Precipitation type" sensor |
 | `RadolanRW` | `rw` | RADOLAN binary (.bz2) | 1 h | 1-hour precipitation analysis (gauge-adjusted; same window as RS `_000`) |
 | `RadolanSF` | `sf` | RADOLAN binary (.bz2) | 1 h | 24-hour precipitation analysis |
@@ -260,16 +267,40 @@ run comes back clean.
 
 ## Grid lookup
 
+Both lookups return the cell that *contains* the location: project it, then
+**floor** its offset from the grid's outer lower-left corner. Never round, and
+never take the nearest grid coordinate unless those coordinates are pixel
+centres — the corner references below are pixel *edges*, and treating them as
+centres shifts the lookup by half a cell, which picks a neighbouring cell for
+~3 locations in 4. Both were wrong that way until 2026.10.
+
+The reference tier checks both against wradlib's own grids (`mode="edge"`),
+not against a reimplementation of our arithmetic, and pins wradlib's DE1200
+grid to the fixture file's corner attributes. Fixture coordinates are cell
+*centres*; a corner would sit on the boundary of four cells. The same wradlib
+reference (`tests/wradlib_ref.py`) runs daily on live DWD files for every
+product via `.github/workflows/live-wradlib.yml` (`tests/live_wradlib/`):
+fixed locations must land on the same cell with the same value, and every
+member's full grid must decode identically.
+
 ### RADOLAN (RW, SF)
-`RadolanProduct.index`: calls `get_radolan_grid(wgs84=True)` to get the full
-900×900 WGS84 lon/lat grid, then finds the nearest cell via minimum squared distance.
-Grid is in `radar/georef.py` (spherical polar-stereographic, Earth radius 6370.040 km).
+`RadolanProduct.index` calls `get_radolan_grid_index(lat, lon)` from
+`radar/georef.py`. `get_radolan_coordinates()` (mode `radolan`) gives each
+pixel's *lower-left corner*; row 0 is the south edge. Spherical
+polar-stereographic (`trig`, Earth radius 6370.040 km, format version <= 4). A
+location off the 900×900 grid is clamped to the nearest edge cell.
 
 ### RS (ODIM_H5)
 `RadvorRS.index` calls `get_rs_grid_index(lat, lon)` from `radar/odim.py`.
-Direct spherical polar-stereographic forward projection (WGS84 a=6378137m, O(1)).
+Ellipsoidal polar-stereographic forward projection (WGS84 a=6378137m, O(1)).
 Grid: 1200 rows × 1100 cols, 1km, same `+proj=stere +lat_ts=60 +lat_0=90 +lon_0=10`
 family as RADOLAN but WGS84 ellipsoid, different false easting/northing, and larger extent.
+The ODIM `LL_*`/`UL_*`/`UR_*`/`LR_*` attributes are the *outer* corners of the
+edge pixels (LL projects to x = −500 m, y = −1 199 500 m); pixel centres sit on
+whole kilometres, the north-west one at the projection origin (RV format
+description §3.1). Row 0 is the north edge. `rs_grid_contains` relies on the
+same floor, so a point just outside an edge is correctly rejected. This is
+wradlib's `dwd-radolan-wgs84-de1200` grid.
 
 ## The radar/ directory
 
@@ -280,7 +311,10 @@ be installed in standard HA environments).
 
 `radar/odim.py` is original code that uses `h5py` directly. It exposes
 `read_odim_composite` (physical quantities like RS/RV's `ACRR`, scaled by
-gain/offset) and `read_odim_classification` (HymecNG's `CLASS` quantity —
+gain/offset), `read_odim_composite_cell` (the same for one cell — what RS/RV
+use, since scaling and masking the whole grid to keep one value was over half
+the decode time; libhdf5 still inflates the single whole-grid chunk, so reading
+fewer *cells* cannot save more) and `read_odim_classification` (HymecNG's `CLASS` quantity —
 discrete class indices returned unscaled, with the `nodata`/`undetect`
 sentinels preserved so the caller can tell "outside coverage" from "dry").
 
@@ -306,7 +340,36 @@ Current runtime deps: `numpy`, `h5py`
   `_060` covers T→T+60, and `_120` covers T+60→T+120.
 - **Grid**: `xsize=1100`, `ysize=1200`, `xscale=yscale=1000.0 m`
 - **Projection**: `+proj=stere +lat_ts=60 +lat_0=90 +lon_0=10 +x_0=543196.835... +y_0=3622588.861...` (WGS84)
-- **Fetching**: `RadvorRS.update()` downloads one tar and extracts the `_000`, `_060`, `_120` members using stdlib `tarfile`
+- **Rolling windows**: the members in between are the same 60-minute sum sliding
+  in 5-minute steps — lead L covers T+L−60 → T+L, so neighbours overlap by 55 min.
+  RS is radar-only, like RV: `_060` equals the sum of RV leads 5–60 cell for cell
+  (checked against live data). Only RADOLAN RW/SF are gauge-adjusted.
+- **Fetching**: `RadvorRS._fetch_and_parse()` downloads one tar; `_parse()`
+  reads members with stdlib `tarfile` — only `_000`/`_060`/`_120` by default,
+  all 25 with the `full_rolling_series` option. The payload list is
+  `[_000, _060, _120, peak]`, where `peak` is `None` unless the option is on.
+
+## Peak hourly precipitation
+
+`Peak hourly precipitation next 2h` is the wettest rolling hour wholly in the
+future (windows ending at +60..+120, `FUTURE_HOUR_LEADS`; ties go to the earlier
+window), with the window as `data_start`/`data_end` (`None` on a dry forecast)
+and the rolling-hour series as `rolling_1h`. Two products can feed it, and
+`_peak_hour_sensor()` binds the entity to one at setup (options reload the entry):
+
+- **RV (default)** sums twelve 5-minute steps per window (`rolling_hour_sums`),
+  reusing the 25 members RV decodes anyway. It can only build windows wholly in
+  the forecast, so the series has 13 points.
+- **RS (`full_rolling_series` on)** decodes all 25 members, adding the 12
+  windows that straddle now. ~+140 ms per release.
+
+The two are interchangeable by construction: RS *is* summed RV, verified on
+live data to 0.000 mm in every cell. A missing RV step counts as 0 because that
+is what RS reports at the coverage edge, and both round to the ODIM 0.001 mm
+resolution (`MM_DECIMALS`). Keep it that way — flipping the option must not
+move the state, and a test asserts both paths give the same peak, window and
+series. The entity key `radvor_peak_1h_120` is deliberately product-neutral so
+the entity survives the switch.
 
 ## HymecNG product specifics
 

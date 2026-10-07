@@ -29,6 +29,8 @@ from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_EXTRA_ATTRIBUTES,
+    CONF_FULL_ROLLING_SERIES,
+    DEFAULT_FULL_ROLLING_SERIES,
     CONF_PRECIPITATION_RESET_THRESHOLD,
     DEFAULT_PRECIPITATION_RESET_THRESHOLD,
     CONF_START_END_MODE,
@@ -63,6 +65,9 @@ class PrecipitationSensorEntityDescription(SensorEntityDescription):
     # Optional companion attributes, computed from the coordinator data payload.
     # Always exposed (not gated behind the diagnostic-attributes option).
     attrs_fn: Callable[[Any], dict[str, Any]] | None = None
+    # Like attrs_fn, but computed from this entity's ProductMetadata (as picked
+    # by access_fn). Also always exposed.
+    metadata_attrs_fn: Callable[[ProductMetadata], dict[str, Any]] | None = None
 
 
 RADOLAN_SENSORS = (
@@ -168,6 +173,42 @@ RADVOR_SENSORS = (
         access_fn=lambda _list: _list[2],
     ),
 )
+
+
+def _peak_hour_attrs(meta: ProductMetadata) -> dict[str, Any]:
+    """Return the peak window and the rolling-hour series behind it."""
+    return {
+        "window_start": meta.data_start,
+        "window_end": meta.data_end,
+        "forecast_rolling_1h": meta.rolling_1h,
+    }
+
+
+def _peak_hour_sensor(full_rolling_series: bool) -> PrecipitationSensorEntityDescription:
+    """Return "Peak hourly precipitation next 2h", bound to the product feeding it.
+
+    The value is the same from either product (RS equals summed RV for every
+    window wholly in the future). RV is the default because it has already
+    decoded the steps; RS only when the option asks for the 12 windows RV
+    cannot reach. The key is product-neutral so toggling the option keeps the
+    entity, its id and its history.
+    """
+    common = dict(
+        key="radvor_peak_1h_120",
+        translation_key="peak_hourly_precipitation_next_2h",
+        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
+        device_class=SensorDeviceClass.PRECIPITATION,
+        suggested_display_precision=1,
+        state_class=SensorStateClass.MEASUREMENT,
+        metadata_attrs_fn=_peak_hour_attrs,
+    )
+    if full_rolling_series:
+        return PrecipitationSensorEntityDescription(
+            product_key="rs", access_fn=lambda _list: _list[3], **common
+        )
+    return PrecipitationSensorEntityDescription(
+        product_key="rv", access_fn=lambda d: d["peak_1h"], **common
+    )
 
 
 # RV sensors whose shape does not depend on the start/end display mode: the two
@@ -283,9 +324,13 @@ async def async_setup_entry(
     coordinators = entry.runtime_data.coordinators
 
     mode = entry.options.get(CONF_START_END_MODE, DEFAULT_START_END_MODE)
+    full_rolling_series = entry.options.get(
+        CONF_FULL_ROLLING_SERIES, DEFAULT_FULL_ROLLING_SERIES
+    )
 
     entity_descriptions = (
         RADVOR_SENSORS
+        + (_peak_hour_sensor(full_rolling_series),)
         + RADVOR_RV_SENSORS
         + _rv_timing_sensors(mode)
         + HYMECNG_SENSORS
@@ -313,8 +358,8 @@ class PrecipitationSensorEntity(DwdCoordinatorEntity, SensorEntity):
 
     entity_description: PrecipitationSensorEntityDescription
 
-    # The 5-minute constituent points would bloat the recorder history.
-    _unrecorded_attributes = frozenset({"forecast_5min"})
+    # The per-lead forecast series would bloat the recorder history.
+    _unrecorded_attributes = frozenset({"forecast_5min", "forecast_rolling_1h"})
 
     @property
     def native_value(self) -> float | datetime | str | None:
@@ -346,15 +391,26 @@ class PrecipitationSensorEntity(DwdCoordinatorEntity, SensorEntity):
                 }
             )
 
+        metadata: ProductMetadata | None = (
+            self.entity_description.access_fn(self.coordinator.data.metadata)
+            if self.coordinator.data.metadata
+            else None
+        )
+        metadata_attrs_fn = self.entity_description.metadata_attrs_fn
+        if metadata_attrs_fn is not None and metadata is not None:
+            attrs.update(
+                {
+                    key: _plain_value(value)
+                    for key, value in metadata_attrs_fn(metadata).items()
+                }
+            )
+
         # Diagnostic metadata is opt-in via the integration options.
         if not self.coordinator.config_entry.options.get(
             CONF_EXTRA_ATTRIBUTES, False
         ):
             return attrs
 
-        metadata: ProductMetadata = self.entity_description.access_fn(
-            self.coordinator.data.metadata
-        )
         if metadata is None:
             return attrs
 

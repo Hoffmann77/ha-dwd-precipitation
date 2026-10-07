@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from radar import get_radolan_grid, read_radolan_composite
+from radar import get_radolan_grid, get_radolan_grid_index, read_radolan_composite
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
 RW_BZ2 = FIXTURES / "radolan_rw_sample.bin.bz2"
@@ -48,3 +48,35 @@ def test_radolan_grid_matches_wradlib():
     ref = wrl.georef.get_radolan_grid(wgs84=True, crs="trig")
 
     np.testing.assert_allclose(ours, ref, rtol=1e-6, atol=1e-6)
+
+
+@pytest.mark.wradlib
+def test_radolan_grid_index_matches_wradlib():
+    """Our RADOLAN (row, col) equals the wradlib cell enclosing the location.
+
+    The reference is wradlib's own pixel-edge grid (``mode="edge"``) and its
+    default spherical projection, not our arithmetic, so a half-cell shift
+    (e.g. taking the nearest lower-left corner) is caught. Points off the grid
+    are clamped to the nearest edge cell, as RadolanProduct relies on.
+    """
+    wrl = pytest.importorskip("wradlib")
+    nrows = ncols = 900
+    x_edges, y_edges = wrl.georef.get_radolan_coordinates(nrows, ncols, mode="edge")
+
+    rng = np.random.default_rng(20260927)
+    # Wider than the 900 km grid, so the clamp is exercised too.
+    lats = rng.uniform(46.5, 55.3, 5000)
+    lons = rng.uniform(2.0, 16.0, 5000)
+    x, y = wrl.georef.get_radolan_coords(lons, lats)
+    rows = np.clip(np.searchsorted(y_edges, y, side="right") - 1, 0, nrows - 1)
+    cols = np.clip(np.searchsorted(x_edges, x, side="right") - 1, 0, ncols - 1)
+
+    mismatches = [
+        (float(lat), float(lon), get_radolan_grid_index(lat, lon), (int(r), int(c)))
+        for lat, lon, r, c in zip(lats, lons, rows, cols)
+        if get_radolan_grid_index(lat, lon) != (r, c)
+    ]
+    assert not mismatches, (
+        f"{len(mismatches)} of {len(lats)} locations differ from wradlib, "
+        f"e.g. (lat, lon, ours, wradlib) = {mismatches[:3]}"
+    )

@@ -50,6 +50,14 @@ RAIN_END_ALGO_EPISODE = END_ALGO_EPISODE
 RAIN_END_ALGO_CLEARING = END_ALGO_CLEARING
 DEFAULT_PRECIPITATION_END_ALGORITHM = DEFAULT_END_ALGO
 
+CONF_FULL_ROLLING_SERIES = "full_rolling_series"
+
+# Where "Peak hourly precipitation next 2h" comes from. Off: summed from the RV
+# 5-minute steps that are decoded anyway, which only reaches the 13 rolling
+# hours wholly in the future. On: RS decodes all 25 of its members, adding the
+# 12 windows that straddle now. The peak itself is identical either way.
+DEFAULT_FULL_ROLLING_SERIES = False
+
 CONF_PRECIPITATION_RESET_THRESHOLD = "precipitation_reset_threshold"
 
 # mm; "Precipitation now" at/above this value resets the dry streak counter.

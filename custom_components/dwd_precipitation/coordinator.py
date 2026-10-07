@@ -157,6 +157,9 @@ class ProductMetadata:
     # of {"lead", "start", "end", "value", "intensity"} — surfaced as an entity
     # state attribute.
     samples: list[dict[str, Any]] | None = None
+    # Optional RS rolling-hour series: one point per 5-minute lead, each a dict
+    # of {"lead", "start", "end", "value"} where value is a 60-minute total (mm).
+    rolling_1h: list[dict[str, Any]] | None = None
 
 
 @dataclass
@@ -167,7 +170,7 @@ class CoordinatorData:
     parallel lists for RS, or parallel dicts keyed by entity sub-key for RV.
     """
 
-    data: float | list[float | None] | dict[str, Any]
+    data: float | None | list[float | None] | dict[str, Any]
     metadata: ProductMetadata | list[ProductMetadata] | dict[str, ProductMetadata]
 
 
@@ -559,6 +562,10 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
         Return (precipitation, metadata). Must raise on any failure — the
         base class owns the stale/retry logic in _async_update_data.
 
+        Only the download belongs on the event loop: hand the decoding to
+        ``hass.async_add_executor_job``. Decompressing a radar grid takes
+        milliseconds per file even on a fast machine, which every other
+        integration and automation would otherwise wait out.
         """
 
     # ------------------------------------------------------------------

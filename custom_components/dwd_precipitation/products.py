@@ -7,7 +7,7 @@ import logging
 import tarfile
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
-from functools import cached_property, lru_cache
+from functools import cached_property
 from io import BytesIO
 from typing import ClassVar
 
@@ -21,22 +21,28 @@ from .coordinator import (
 from .utils import async_get
 from .radar import (
     read_radolan_composite,
-    get_radolan_grid,
-    read_odim_composite,
+    get_radolan_grid_index,
+    read_odim_composite_cell,
     read_odim_classification,
     get_rs_grid_index,
     RS_GRID_SHAPE,
 )
 from .radar.nowcast import (
+    FUTURE_HOUR_LEADS,
     HOUR1_LEADS,
     HOUR2_LEADS,
     LEAD_STEP,
     LEADS,
     STEPS_PER_HOUR,
     bucket_max_intensity,
+    MM_DECIMALS,
     detect_start_end,
+    peak_rolling_hour,
+    rolling_hour_sums,
 )
 from .const import (
+    CONF_FULL_ROLLING_SERIES,
+    DEFAULT_FULL_ROLLING_SERIES,
     CONF_PRECIPITATION_THRESHOLD,
     DEFAULT_PRECIPITATION_THRESHOLD,
     CONF_PRECIPITATION_END_ALGORITHM,
@@ -47,15 +53,6 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
-
-
-@lru_cache(maxsize=1)
-def _radolan_wgs84_grid() -> np.ndarray:
-    """Return the cached 900×900 RADOLAN WGS84 lon/lat grid.
-
-    Shared across all RADOLAN products, which use an identical grid.
-    """
-    return get_radolan_grid(wgs84=True)
 
 
 def _utc(dt: datetime | None) -> datetime | None:
@@ -78,11 +75,103 @@ def _parse_odim_ts(date: str | None, time: str | None) -> datetime | None:
         return None
 
 
+# The three non-overlapping RS hours: past, next and second-next.
+RS_HOURLY_LEADS = (0, 60, 120)
+
+
+def _read_tar_cells(
+    content: bytes, prefix: str, leads, cell: tuple[int, int], label: str
+) -> dict[int, tuple[float | None, dict] | None]:
+    """Decode one grid cell from each requested member of a RADVOR tar.
+
+    Returns ``{lead: (value, dataset_what)}``; ``value`` is ``None`` for nodata,
+    and a member missing from the archive maps to ``None`` (logged).
+    """
+    row, col = cell
+    out: dict[int, tuple[float | None, dict] | None] = {}
+    with tarfile.open(fileobj=BytesIO(content), mode="r") as tf:
+        for lead in leads:
+            member_name = f"{prefix}_{lead:03d}-hd5"
+            try:
+                f = tf.extractfile(member_name)
+            except KeyError:
+                f = None
+            if f is None:
+                _LOGGER.warning("%s tar member not found: %s", label, member_name)
+                out[lead] = None
+                continue
+
+            val, what = read_odim_composite_cell(
+                BytesIO(f.read()), row, col, expected_shape=RS_GRID_SHAPE
+            )
+            val = float(val)
+            out[lead] = (None if np.isnan(val) else val, what)
+    return out
+
+
+def _odim_window(what: dict) -> tuple[datetime | None, datetime | None]:
+    """Return the (start, end) validity window of an ODIM /dataset/what."""
+    return (
+        _parse_odim_ts(what.get("startdate"), what.get("starttime")),
+        _parse_odim_ts(what.get("enddate"), what.get("endtime")),
+    )
+
+
+def _peak_hour_payload(
+    sums: list[float | None],
+    windows: list[tuple[datetime | None, datetime | None]],
+    series_leads: list[int],
+    source_product: str | None,
+    source_timestamp: datetime | None,
+) -> tuple[float | None, ProductMetadata]:
+    """Build the "Peak hourly precipitation next 2h" value and metadata.
+
+    ``sums`` (rolling 60-minute totals, mm) and ``windows`` are aligned to
+    LEADS; ``series_leads`` picks the points exposed as ``rolling_1h``. RS and
+    RV both land here, so the two sources cannot drift apart in shape.
+    """
+    def _iso(dt: datetime | None) -> str | None:
+        return dt.isoformat() if dt is not None else None
+
+    rolling_1h = [
+        {
+            "lead": lead,
+            "start": _iso(windows[lead // LEAD_STEP][0]),
+            "end": _iso(windows[lead // LEAD_STEP][1]),
+            "value": sums[lead // LEAD_STEP],
+        }
+        for lead in series_leads
+    ]
+
+    peak, peak_lead = peak_rolling_hour(sums, FUTURE_HOUR_LEADS)
+    # A dry forecast has no wettest hour, so it gets no window either.
+    start, end = windows[peak_lead // LEAD_STEP] if peak else (None, None)
+    return peak, ProductMetadata(
+        source_product=source_product,
+        source_timestamp=source_timestamp,
+        lead_time_minutes=peak_lead if peak else None,
+        data_start=start,
+        data_end=end,
+        rolling_1h=rolling_1h,
+    )
+
+
 class RadvorRS(BaseProductUpdateCoordinator):
     """DWD RS precipitation nowcast (RADVOR, ODIM_H5 format).
 
-    Returns three lead times (0 / 60 / 120 min) from a single tar archive.
-    precipitation → list[float | None], metadata → list[ProductMetadata]
+    RS is published every 5 minutes as one tar of 25 ODIM_H5 members (leads
+    0..120 min, 5-min steps). Each member is a *rolling 60-minute* accumulation
+    (mm) ending at T+lead, so consecutive members overlap by 55 minutes.
+
+    precipitation → list[float | None], metadata → list[ProductMetadata | None],
+    both indexed:
+
+    * ``0`` / ``1`` / ``2`` — the non-overlapping hours: leads 0 / 60 / 120.
+    * ``3`` — the wettest rolling hour wholly in the future, with the full
+      25-point rolling-hour series as ``rolling_1h`` on its metadata. Only
+      filled with the ``full_rolling_series`` option on, since it needs all 25
+      members decoded; otherwise ``None`` and RV provides the sensor (see
+      RadvorRV).
     """
 
     PRODUCT_KEY = "rs"
@@ -105,6 +194,13 @@ class RadvorRS(BaseProductUpdateCoordinator):
         """Return (row, col) in the RS composite grid."""
         return get_rs_grid_index(*self.coords)
 
+    @property
+    def full_rolling_series(self) -> bool:
+        """Whether this entry decodes every member for the rolling-hour series."""
+        return self.config_entry.options.get(
+            CONF_FULL_ROLLING_SERIES, DEFAULT_FULL_ROLLING_SERIES
+        )
+
     def _get_url(self, ts: datetime) -> str:
         """Return the URL for the tar archive."""
         return (
@@ -112,47 +208,62 @@ class RadvorRS(BaseProductUpdateCoordinator):
         )
 
     async def _fetch_and_parse(self, ts: datetime) -> tuple[list, list]:
-        """Fetch one tar archive and extract 3 lead-time ACRR values."""
+        """Fetch one tar archive and decode it off the event loop."""
         response = await async_get(self._get_url(ts), self.async_client)
+        return await self.hass.async_add_executor_job(self._parse, response.content, ts)
 
-        tar_bytes = BytesIO(response.content)
-        prefix = f"composite_rs_{ts.strftime('%Y%m%d_%H%M')}"
-        row, col = self.index
-        data: list = []
-        metadata: list = []
+    def _parse(self, content: bytes, ts: datetime) -> tuple[list, list]:
+        """Derive the RS entity payloads from the tar bytes (blocking)."""
+        full = self.full_rolling_series
+        cells = _read_tar_cells(
+            content,
+            f"composite_rs_{ts.strftime('%Y%m%d_%H%M')}",
+            LEADS if full else RS_HOURLY_LEADS,
+            self.index,
+            "RS",
+        )
 
-        with tarfile.open(fileobj=tar_bytes, mode="r") as tf:
-            for suffix in ("000", "060", "120"):
-                member_name = f"{prefix}_{suffix}-hd5"
-                try:
-                    f = tf.extractfile(member_name)
-                except KeyError:
-                    f = None
-                if f is None:
-                    _LOGGER.warning("RS tar member not found: %s", member_name)
-                    data.append(None)
-                    metadata.append(None)
-                    continue
+        per_lead: dict[int, ProductMetadata | None] = {}
+        for lead, cell in cells.items():
+            if cell is None:
+                per_lead[lead] = None
+                continue
+            data_start, data_end = _odim_window(cell[1])
+            per_lead[lead] = ProductMetadata(
+                source_product=cell[1].get("prodname") or cell[1].get("product"),
+                source_timestamp=(
+                    data_end - timedelta(minutes=lead) if data_end else None
+                ),
+                lead_time_minutes=lead,
+                data_start=data_start,
+                data_end=data_end,
+            )
 
-                _data, _what = read_odim_composite(
-                    BytesIO(f.read()), expected_shape=RS_GRID_SHAPE
-                )
-                val = float(_data[row, col])
-                data.append(None if np.isnan(val) else val)
+        data = [cells[lead][0] if cells[lead] else None for lead in RS_HOURLY_LEADS]
+        metadata = [per_lead[lead] for lead in RS_HOURLY_LEADS]
 
-                lead = int(suffix)
-                data_start = _parse_odim_ts(_what.get("startdate"), _what.get("starttime"))
-                data_end = _parse_odim_ts(_what.get("enddate"), _what.get("endtime"))
-                source_ts = data_end - timedelta(minutes=lead) if data_end else None
-                metadata.append(ProductMetadata(
-                    source_product=_what.get("prodname") or _what.get("product"),
-                    source_timestamp=source_ts,
-                    lead_time_minutes=lead,
-                    data_start=data_start,
-                    data_end=data_end,
-                ))
+        if not full:
+            return data + [None], metadata + [None]
 
-        return data, metadata
+        sums = [
+            round(cells[lead][0], MM_DECIMALS)
+            if cells[lead] and cells[lead][0] is not None
+            else None
+            for lead in LEADS
+        ]
+        windows = [
+            (m.data_start, m.data_end) if (m := per_lead[lead]) else (None, None)
+            for lead in LEADS
+        ]
+        base = next((m for m in per_lead.values() if m is not None), None)
+        peak, peak_meta = _peak_hour_payload(
+            sums,
+            windows,
+            LEADS,
+            base.source_product if base else None,
+            base.source_timestamp if base else None,
+        )
+        return data + [peak], metadata + [peak_meta]
 
 
 class RadvorRV(BaseProductUpdateCoordinator):
@@ -171,6 +282,10 @@ class RadvorRV(BaseProductUpdateCoordinator):
     * ``rain_within_2h`` — whether any precipitation is forecast within the
       2-hour horizon (drives the "rain expected" binary sensor). Its metadata
       carries the full 25-point 5-minute forecast series as ``samples``.
+    * ``peak_1h`` — the wettest rolling hour wholly in the future, summed from
+      twelve 5-minute steps (identical to the RS member for that window). Its
+      metadata carries those 13 rolling hours as ``rolling_1h``. Used unless
+      the ``full_rolling_series`` option hands the sensor to RS.
 
     precipitation → dict[str, value], metadata → dict[str, ProductMetadata]
     """
@@ -201,12 +316,15 @@ class RadvorRV(BaseProductUpdateCoordinator):
         )
 
     async def _fetch_and_parse(self, ts: datetime) -> tuple[dict, dict]:
-        """Fetch one tar archive and derive the RV entity payloads."""
+        """Fetch one tar archive and decode it off the event loop."""
         response = await async_get(self._get_url(ts), self.async_client)
+        return await self.hass.async_add_executor_job(self._parse, response.content, ts)
 
-        tar_bytes = BytesIO(response.content)
-        prefix = f"composite_rv_{ts.strftime('%Y%m%d_%H%M')}"
-        row, col = self.index
+    def _parse(self, content: bytes, ts: datetime) -> tuple[dict, dict]:
+        """Derive the RV entity payloads from the tar bytes (blocking)."""
+        cells = _read_tar_cells(
+            content, f"composite_rv_{ts.strftime('%Y%m%d_%H%M')}", LEADS, self.index, "RV"
+        )
 
         # Per-lead 5-minute cell values (mm) and window bounds, aligned to LEADS.
         values: list[float | None] = []
@@ -214,33 +332,21 @@ class RadvorRV(BaseProductUpdateCoordinator):
         ends: list[datetime | None] = []
         base_ts: datetime | None = None
 
-        with tarfile.open(fileobj=tar_bytes, mode="r") as tf:
-            for lead in LEADS:
-                member_name = f"{prefix}_{lead:03d}-hd5"
-                try:
-                    f = tf.extractfile(member_name)
-                except KeyError:
-                    f = None
-                if f is None:
-                    _LOGGER.warning("RV tar member not found: %s", member_name)
-                    values.append(None)
-                    starts.append(None)
-                    ends.append(None)
-                    continue
+        for lead in LEADS:
+            cell = cells[lead]
+            if cell is None:
+                values.append(None)
+                starts.append(None)
+                ends.append(None)
+                continue
 
-                _data, _what = read_odim_composite(
-                    BytesIO(f.read()), expected_shape=RS_GRID_SHAPE
-                )
-                val = float(_data[row, col])
-                values.append(None if np.isnan(val) else val)
-
-                data_start = _parse_odim_ts(_what.get("startdate"), _what.get("starttime"))
-                data_end = _parse_odim_ts(_what.get("enddate"), _what.get("endtime"))
-                starts.append(data_start)
-                ends.append(data_end)
-                # Base run time T = end of the analysis window (lead 0).
-                if lead == 0 and data_end is not None:
-                    base_ts = data_end
+            data_start, data_end = _odim_window(cell[1])
+            values.append(cell[0])
+            starts.append(data_start)
+            ends.append(data_end)
+            # Base run time T = end of the analysis window (lead 0).
+            if lead == 0 and data_end is not None:
+                base_ts = data_end
 
         # The user configures the threshold as an intensity (mm/h); the
         # detection works on 5-minute accumulations, so convert back to mm/5min.
@@ -299,6 +405,18 @@ class RadvorRV(BaseProductUpdateCoordinator):
             samples=_samples(LEADS),
         )
 
+        # Rolling hour ending at T+L = the twelve 5-minute steps L-55..L.
+        windows = [(None, None)] * len(LEADS)
+        for lead in FUTURE_HOUR_LEADS:
+            start = starts[(lead - 60 + LEAD_STEP) // LEAD_STEP]
+            end = ends[lead // LEAD_STEP]
+            if start is None and end is not None:
+                start = end - timedelta(minutes=60)
+            windows[lead // LEAD_STEP] = (start, end)
+        peak_1h, peak_meta = _peak_hour_payload(
+            rolling_hour_sums(values), windows, FUTURE_HOUR_LEADS, "RV", base_ts
+        )
+
         data = {
             "max_060": bucket_max_intensity(values, HOUR1_LEADS),
             "max_120": bucket_max_intensity(values, HOUR2_LEADS),
@@ -307,6 +425,7 @@ class RadvorRV(BaseProductUpdateCoordinator):
             "end_in": end_in,
             "end_at": _at(end_in),
             "rain_within_2h": start_in is not None,
+            "peak_1h": peak_1h,
         }
         metadata = {
             "max_060": hour1_meta,
@@ -316,6 +435,7 @@ class RadvorRV(BaseProductUpdateCoordinator):
             "end_in": timing_meta,
             "end_at": timing_meta,
             "rain_within_2h": rain_meta,
+            "peak_1h": peak_meta,
         }
         return data, metadata
 
@@ -361,11 +481,14 @@ class HymecNG(BaseProductUpdateCoordinator):
         )
 
     async def _fetch_and_parse(self, ts: datetime) -> tuple[str | None, ProductMetadata]:
-        """Fetch one ODIM_H5 file and return the cell's precipitation-type label."""
+        """Fetch one ODIM_H5 file and decode it off the event loop."""
         response = await async_get(self._get_url(ts), self.async_client)
+        return await self.hass.async_add_executor_job(self._parse, response.content)
 
+    def _parse(self, content: bytes) -> tuple[str | None, ProductMetadata]:
+        """Return the cell's precipitation-type label (blocking)."""
         raw, dataset_what, moment_what = read_odim_classification(
-            BytesIO(response.content), expected_shape=RS_GRID_SHAPE
+            BytesIO(content), expected_shape=RS_GRID_SHAPE
         )
         row, col = self.index
         value = int(raw[row, col])
@@ -411,21 +534,27 @@ class RadolanProduct(BaseProductUpdateCoordinator, ABC):
 
     @cached_property
     def index(self) -> tuple[int, int]:
-        """Return the nearest-cell (row, col) in the RADOLAN 900×900 WGS84 grid."""
-        lat, lon = self.coords
-        grid = _radolan_wgs84_grid()
-        dist_sq = (grid[:, :, 1] - lat) ** 2 + (grid[:, :, 0] - lon) ** 2
-
-        return np.unravel_index(np.argmin(dist_sq), dist_sq.shape)
+        """Return the (row, col) of the RADOLAN 900×900 cell holding the location."""
+        return get_radolan_grid_index(*self.coords, *self.EXPECTED_SHAPE)
 
     @abstractmethod
     def _get_url(self, ts: datetime) -> str:
         """Return the bz2 file URL for the given release timestamp."""
 
-    async def _fetch_and_parse(self, ts: datetime) -> tuple[float, ProductMetadata]:
-        """Fetch one bz2 RADOLAN file and return (scalar_value, ProductMetadata)."""
+    async def _fetch_and_parse(self, ts: datetime) -> tuple[float | None, ProductMetadata]:
+        """Fetch one bz2 RADOLAN file and decode it off the event loop."""
         response = await async_get(self._get_url(ts), self.async_client)
-        f = bz2.open(BytesIO(response.content))
+        return await self.hass.async_add_executor_job(self._parse, response.content)
+
+    def _parse(self, content: bytes) -> tuple[float | None, ProductMetadata]:
+        """Return (scalar_value, ProductMetadata) from the bz2 bytes (blocking).
+
+        The value is ``None`` where the cell holds no data (radar outage, masked
+        cell, outside coverage), as for RS/RV/HymecNG. The reader marks those
+        cells with the ``nodataflag`` sentinel (-9999), not NaN, and passing it
+        on showed -9999 mm and counted as a dry hour for the dry streak.
+        """
+        f = bz2.open(BytesIO(content))
         data, raw = read_radolan_composite(f)
 
         if data.shape != self.EXPECTED_SHAPE:
@@ -438,7 +567,11 @@ class RadolanProduct(BaseProductUpdateCoordinator, ABC):
         interval = raw.get("intervalseconds")
         data_start = dt_end - timedelta(seconds=interval) if (dt_end and interval) else None
 
-        return float(data[self.index]), ProductMetadata(
+        value = float(data[self.index])
+        if value == raw.get("nodataflag", -9999) or value != value:  # sentinel or NaN
+            value = None
+
+        return value, ProductMetadata(
             source_product=raw.get("producttype"),
             source_timestamp=dt_end,
             data_start=data_start,

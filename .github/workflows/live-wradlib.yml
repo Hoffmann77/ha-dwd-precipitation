@@ -1,0 +1,56 @@
+name: Live wradlib comparison
+
+# Correctness monitor: downloads today's DWD files for every product and checks
+# that our parser (location lookup + decode) gives the same cell and value as
+# pure wradlib for a fixed set of locations, plus identical full grids.
+# Scheduled (never gates PRs); opens/updates a tracking issue on failure.
+#
+# Run it by hand (Actions -> Live wradlib comparison -> Run workflow) to check
+# your own coordinates against the newest files, e.g. where the radar shows
+# rain right now. The values per location land in the job summary.
+on:
+  schedule:
+    - cron: "30 6 * * *"   # daily 06:30 UTC, clear of live.yml
+  workflow_dispatch:
+    inputs:
+      locations:
+        description: >-
+          Locations instead of the fixed set, "name=lat,lon" or "lat,lon",
+          separated by ";" (e.g. "Home=52.52,13.405; 48.137,11.576")
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  live-wradlib:
+    name: Our parser vs. wradlib (live)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+      - name: Install wradlib-comparison dependencies
+        run: uv sync --only-group wradlib-comparison
+      - name: Compare against wradlib on live DWD files
+        env:
+          # Via env, never interpolated into the script: it is free text.
+          DWD_LOCATIONS: ${{ inputs.locations }}
+        run: uv run pytest tests/live_wradlib -m live -v
+
+      # A manual run reports to whoever started it; only scheduled runs file issues.
+      - name: Open / update tracking issue on failure
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          TITLE="Live wradlib comparison failing"
+          BODY="The scheduled comparison of our parser against wradlib on live DWD files failed: a location resolved to a different cell, a value differed, or a file no longer decodes the same way (or could not be downloaded). Run: $RUN_URL"
+          num=$(gh issue list --state open --search "$TITLE in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$num" ]; then
+            gh issue comment "$num" --body "$BODY"
+          else
+            gh issue create --title "$TITLE" --body "$BODY"
+          fi

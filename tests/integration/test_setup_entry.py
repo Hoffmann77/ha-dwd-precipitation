@@ -11,7 +11,7 @@ Run with:
 from __future__ import annotations
 
 from contextlib import ExitStack, contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -35,16 +35,30 @@ from custom_components.dwd_precipitation.products import (
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("full_rolling_series", [False, True])
 async def test_entry_setup_creates_sensors_with_correct_values(
-    hass: HomeAssistant,
+    hass: HomeAssistant, full_rolling_series: bool
 ) -> None:
-    """Full entry setup with mocked _fetch_and_parse; verify coordinators + sensor states."""
+    """Full entry setup with mocked _fetch_and_parse; verify coordinators + sensor states.
+
+    Run with the full-rolling-series option off and on: the peak-hour sensor
+    reads RV or RS respectively, told apart here by giving the two different
+    peaks (in reality they agree).
+    """
     ts = datetime(2025, 6, 1, 12, 0, tzinfo=timezone.utc)
-    rs_data = [1.5, 2.0, None]
+    rs_data = [1.5, 2.0, None, 6.5]
     rs_meta = [
         {"product": "ACRR", "datetime": ts, "lead_time_minutes": 0},
         {"product": "ACRR", "datetime": ts, "lead_time_minutes": 60},
         {},
+        ProductMetadata(
+            source_product="RS",
+            source_timestamp=ts,
+            lead_time_minutes=75,
+            data_start=ts + timedelta(minutes=15),
+            data_end=ts + timedelta(minutes=75),
+            rolling_1h=[{"lead": 75, "start": None, "end": None, "value": 6.5}],
+        ),
     ]
     rw_meta = {"producttype": "RW", "datetime": datetime(2025, 6, 1, 12, 50)}
     rv_timing = ProductMetadata(source_product="RV", source_timestamp=ts)
@@ -56,14 +70,23 @@ async def test_entry_setup_creates_sensors_with_correct_values(
         "end_in": 30,
         "end_at": ts,
         "rain_within_2h": True,
+        "peak_1h": 4.0,
     }
     rv_meta = {key: rv_timing for key in rv_data}
+    rv_meta["peak_1h"] = ProductMetadata(
+        source_product="RV",
+        source_timestamp=ts,
+        lead_time_minutes=90,
+        data_start=ts + timedelta(minutes=30),
+        data_end=ts + timedelta(minutes=90),
+        rolling_1h=[{"lead": 90, "start": None, "end": None, "value": 4.0}],
+    )
     hymec_meta = ProductMetadata(source_product="HymecNG_top_view", source_timestamp=ts)
 
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={"name": "Home", "latitude": 51.05, "longitude": 13.73},
-        options={},
+        options={"full_rolling_series": full_rolling_series},
     )
     entry.add_to_hass(hass)
 
@@ -105,7 +128,7 @@ async def test_entry_setup_creates_sensors_with_correct_values(
     coordinators = entry.runtime_data.coordinators
     assert set(coordinators) == {"rs", "rv", "hymecng", "rw", "sf", "sf_2350"}
     assert coordinators["rw"].data.data == approx(3.2)
-    assert coordinators["rs"].data.data == [1.5, 2.0, None]
+    assert coordinators["rs"].data.data == [1.5, 2.0, None, 6.5]
     assert coordinators["rv"].data.data["max_060"] == approx(48.0)
     assert coordinators["hymecng"].data.data == "snow"
 
@@ -128,6 +151,23 @@ async def test_entry_setup_creates_sensors_with_correct_values(
     state = hass.states.get(rs_000_entry.entity_id)
     assert state is not None
     assert float(state.state) == approx(1.5)
+
+    # The peak-hour sensor reads whichever product the option selects, and
+    # carries that product's window and rolling-hour series.
+    peak_entry = next(
+        e
+        for e in ent_reg.entities.values()
+        if e.domain == "sensor" and e.unique_id.endswith("radvor_peak_1h_120")
+    )
+    state = hass.states.get(peak_entry.entity_id)
+    assert state is not None
+    peak, start, end = (
+        (6.5, "12:15", "13:15") if full_rolling_series else (4.0, "12:30", "13:30")
+    )
+    assert float(state.state) == approx(peak)
+    assert state.attributes["window_start"] == f"2025-06-01T{start}:00+00:00"
+    assert state.attributes["window_end"] == f"2025-06-01T{end}:00+00:00"
+    assert state.attributes["forecast_rolling_1h"][0]["value"] == approx(peak)
 
     # The peak-intensity sensor reports the extrapolated mm/h rate.
     max_060_entry = next(
@@ -174,6 +214,7 @@ RV_DATA = {
     "end_in": 30,
     "end_at": RV_TS,
     "rain_within_2h": True,
+    "peak_1h": 0.0,
 }
 RV_META = {
     key: ProductMetadata(source_product="RV", source_timestamp=RV_TS)
@@ -182,7 +223,10 @@ RV_META = {
 
 # What each product's _fetch_and_parse returns when it is meant to succeed.
 WORKING_PRODUCTS = {
-    RadvorRS: ([1.5, 2.0, None], [{}, {}, {}]),
+    RadvorRS: (
+        [1.5, 2.0, None, 6.5],
+        [{}, {}, {}, ProductMetadata(source_product="RS", source_timestamp=RV_TS)],
+    ),
     RadvorRV: (RV_DATA, RV_META),
     HymecNG: ("snow", {}),
     RadolanRW: (3.2, {}),

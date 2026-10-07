@@ -12,10 +12,9 @@ import bz2
 import json
 from pathlib import Path
 
-import numpy as np
 import pytest
 
-from radar import get_radolan_grid, read_radolan_composite
+from radar import get_radolan_grid_index, read_radolan_composite
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
 RW_BZ2 = FIXTURES / "radolan_rw_sample.bin.bz2"
@@ -53,14 +52,33 @@ def test_expected_value_at_cell(rw):
 
 
 def test_grid_index_matches_recorded_cell(rw):
-    """Our WGS84 grid's nearest cell to the recorded lat/lon == recorded (row, col).
+    """The production lookup puts the recorded lat/lon at the recorded (row, col).
 
-    Mirrors the production nearest-cell logic (RadolanProduct.index) and checks
-    it against the fixture's pyproj/wradlib-derived coordinates.
+    The fixture's lat/lon is the centre of that cell on wradlib's grid, so the
+    cell is unambiguous.
     """
     meta, _data, _attrs = rw
-    grid = get_radolan_grid(*meta["grid_shape"], wgs84=True)
-    lat, lon = meta["lat"], meta["lon"]
-    dist_sq = (grid[:, :, 1] - lat) ** 2 + (grid[:, :, 0] - lon) ** 2
-    row, col = np.unravel_index(np.argmin(dist_sq), dist_sq.shape)
-    assert (int(row), int(col)) == (meta["grid_row"], meta["grid_col"])
+    cell = get_radolan_grid_index(meta["lat"], meta["lon"], *meta["grid_shape"])
+    assert cell == (meta["grid_row"], meta["grid_col"])
+
+
+# Cells wradlib's 900x900 grid gives for these locations (the reference tier
+# re-derives them; pinned here so the check also runs without wradlib).
+@pytest.mark.parametrize(
+    ("lat", "lon", "cell"),
+    [
+        (53.5511, 9.9937, (744, 523)),    # Hamburg
+        (52.5200, 13.4050, (633, 762)),   # Berlin
+        (47.9990, 7.8421, (98, 351)),     # Freiburg
+        (48.1374, 11.5755, (113, 648)),   # Munich
+        (50.9375, 6.9603, (447, 299)),    # Cologne
+    ],
+)
+def test_grid_index_matches_wradlib_pins(lat, lon, cell):
+    assert get_radolan_grid_index(lat, lon) == cell
+
+
+def test_grid_index_clamps_off_grid_locations():
+    """A location off the 900 km grid gets the nearest edge cell, never a wrap."""
+    assert get_radolan_grid_index(56.5, 20.0) == (899, 899)
+    assert get_radolan_grid_index(45.0, 0.0) == (0, 0)

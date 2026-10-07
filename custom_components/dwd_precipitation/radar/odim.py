@@ -33,8 +33,10 @@ RS_WHERE = {
         " +x_0=543196.83521776402 +y_0=3622588.8619310022"
         " +units=m +a=6378137 +b=6356752.3142451802 +no_defs"
     ),
-    "LL_lat": 45.696,
-    "LL_lon": 3.567,
+    # Outer corner of the south-west pixel, at the precision DWD stores it.
+    # Rounding it to 3 decimals would move the grid by ~50 m.
+    "LL_lat": 45.696425377390064,
+    "LL_lon": 3.5669946350078914,
     "xscale": 1000.0,
     "yscale": 1000.0,
     "ysize": 1200,
@@ -125,6 +127,35 @@ def _require_plain_dataset(dset, expected_shape=None):
     return dset
 
 
+def _open_composite(hf, dataset: str, moment: str, expected_shape):
+    """Return ``(dset, dataset_what, what)`` for a composite's payload, checked."""
+    dataset_what = {
+        k: _normalise_attr_value(v)
+        for k, v in _resolve_hard(hf, f"{dataset}/what").attrs.items()
+    }
+    what = {
+        k: _normalise_attr_value(v)
+        for k, v in _resolve_hard(hf, f"{dataset}/{moment}/what").attrs.items()
+    }
+    dset = _require_plain_dataset(
+        _resolve_hard(hf, f"{dataset}/{moment}/data"), expected_shape
+    )
+    return dset, dataset_what, what
+
+
+def _scale(raw, what):
+    """Turn raw ACRR counts into mm: nodata → NaN, undetect → 0.0."""
+    gain     = float(what["gain"])
+    offset   = float(what["offset"])
+    nodata   = int(what["nodata"])
+    undetect = int(round(float(what.get("undetect", 0))))
+
+    data = raw.astype(np.float32) * gain + offset
+    data[raw == nodata]   = np.nan
+    data[raw == undetect] = 0.0
+    return data
+
+
 def read_odim_composite(
     fileobj,
     dataset: str = "dataset1",
@@ -144,29 +175,36 @@ def read_odim_composite(
     which bounds the array allocation.
     """
     with h5py.File(fileobj, "r") as hf:
-        dataset_what = {
-            k: _normalise_attr_value(v)
-            for k, v in _resolve_hard(hf, f"{dataset}/what").attrs.items()
-        }
-        what = {
-            k: _normalise_attr_value(v)
-            for k, v in _resolve_hard(hf, f"{dataset}/{moment}/what").attrs.items()
-        }
-        dset = _require_plain_dataset(
-            _resolve_hard(hf, f"{dataset}/{moment}/data"), expected_shape
-        )
+        dset, dataset_what, what = _open_composite(hf, dataset, moment, expected_shape)
         raw = dset[:]
 
-    gain     = float(what["gain"])
-    offset   = float(what["offset"])
-    nodata   = int(what["nodata"])
-    undetect = int(round(float(what.get("undetect", 0))))
+    return _scale(raw, what), dataset_what
 
-    data = raw.astype(np.float32) * gain + offset
-    data[raw == nodata]   = np.nan
-    data[raw == undetect] = 0.0
 
-    return data, dataset_what
+def read_odim_composite_cell(
+    fileobj,
+    row: int,
+    col: int,
+    dataset: str = "dataset1",
+    moment: str = "data1",
+    expected_shape=None,
+):
+    """Read one cell of a Cartesian ODIM_H5 composite.
+
+    Returns (value, dataset_what): the same float32 value
+    :func:`read_odim_composite` would hold at ``[row, col]`` (NaN for nodata),
+    with the same untrusted-input checks. DWD stores the whole grid as a single
+    compressed chunk, so libhdf5 still inflates it; what this saves is scaling
+    and masking 1.3 million cells to keep one, which is most of the cost.
+    """
+    with h5py.File(fileobj, "r") as hf:
+        dset, dataset_what, what = _open_composite(hf, dataset, moment, expected_shape)
+        rows, cols = dset.shape
+        if not (0 <= row < rows and 0 <= col < cols):
+            raise ValueError(f"Cell ({row}, {col}) is outside the {dset.shape} grid")
+        raw = dset[row:row + 1, col:col + 1]
+
+    return _scale(raw, what)[0, 0], dataset_what
 
 
 def read_odim_classification(
@@ -208,8 +246,17 @@ def read_odim_classification(
 
 
 def get_rs_grid_index(lat: float, lon: float, where: dict | None = None):
-    """Return (row, col) of the RS grid cell nearest to (lat, lon).
+    """Return (row, col) of the RS grid cell containing (lat, lon).
 
+    ODIM_H5 corner attributes (``LL_lon``/``LL_lat`` …) are the *outer*
+    corners of the edge pixels, not pixel centres: DWD's LL corner projects to
+    (-500 m, -1 199 500 m), and its pixel centres sit on whole kilometres (the
+    RV format description puts the centre of the north-west pixel at the
+    projection origin). So the cell is found by flooring the offset from the
+    corner; rounding it picks a neighbouring cell for about three locations in
+    four.
+
+    The result can lie outside the grid; :func:`rs_grid_contains` checks that.
     Uses the fixed RS grid parameters by default; pass a custom where dict
     to override (e.g. for testing or future grid changes).
     """
@@ -229,9 +276,9 @@ def get_rs_grid_index(lat: float, lon: float, where: dict | None = None):
     x_ll, y_ll = _lonlat_to_xy(float(where["LL_lon"]), float(where["LL_lat"]), x_0, y_0)
     x_pt, y_pt = _lonlat_to_xy(lon, lat, x_0, y_0)
 
-    col = int(round((x_pt - x_ll) / xscale))
+    col = math.floor((x_pt - x_ll) / xscale)
     # Row 0 is the top (highest y); y_ll is the southernmost (lowest y)
-    row = int(ysize - 1 - round((y_pt - y_ll) / yscale))
+    row = ysize - 1 - math.floor((y_pt - y_ll) / yscale)
     return row, col
 
 

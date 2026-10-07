@@ -30,6 +30,7 @@ from custom_components.dwd_precipitation.dry_streak import (
 )
 from homeassistant.components.sensor import SensorDeviceClass
 from custom_components.dwd_precipitation.sensor import (
+    _peak_hour_sensor,
     TimespanWithoutPrecipitationSensor,
     PrecipitationSensorEntity,
     PrecipitationSensorEntityDescription,
@@ -267,3 +268,62 @@ def test_timing_keys_are_stable_across_modes():
         "radvor_rv_precipitation_start",
         "radvor_rv_precipitation_end",
     }
+
+
+def _peak_sensor(metadata, extra=False) -> PrecipitationSensorEntity:
+    """The peak sensor as RS feeds it (full rolling series option on)."""
+    return _make_sensor_with_desc(
+        _peak_hour_sensor(True),
+        data=[0.0, 1.0, 2.0, 6.5],
+        metadata=[None, None, None, metadata],
+        extra=extra,
+    )
+
+
+def test_peak_hour_sensor_source_follows_option():
+    """Off: RV feeds it; on: RS. One key either way, so the entity survives."""
+    rv, rs = _peak_hour_sensor(False), _peak_hour_sensor(True)
+    assert (rv.product_key, rs.product_key) == ("rv", "rs")
+    assert rv.key == rs.key == "radvor_peak_1h_120"
+    assert rv.translation_key == rs.translation_key
+
+    meta = ProductMetadata(source_product="RV", source_timestamp=None, rolling_1h=[])
+    sensor = _make_sensor_with_desc(
+        rv, data={"peak_1h": 4.2}, metadata={"peak_1h": meta}
+    )
+    assert sensor.native_value == 4.2
+    assert sensor.extra_state_attributes == {
+        "window_start": None,
+        "window_end": None,
+        "forecast_rolling_1h": [],
+    }
+
+
+def test_peak_hour_sensor_always_exposes_window_and_series():
+    series = [{"lead": 90, "start": None, "end": None, "value": 6.5}]
+    meta = ProductMetadata(
+        source_product="RS",
+        source_timestamp=datetime(2026, 5, 18, 16, 0, tzinfo=UTC),
+        lead_time_minutes=90,
+        data_start=datetime(2026, 5, 18, 16, 30, tzinfo=UTC),
+        data_end=datetime(2026, 5, 18, 17, 30, tzinfo=UTC),
+        rolling_1h=series,
+    )
+    sensor = _peak_sensor(meta)
+    assert sensor.native_value == 6.5
+    assert sensor.extra_state_attributes == {
+        "window_start": "2026-05-18T16:30:00+00:00",
+        "window_end": "2026-05-18T17:30:00+00:00",
+        "forecast_rolling_1h": series,
+    }
+    # The series is kept out of the recorder, like the RV 5-minute one.
+    assert "forecast_rolling_1h" in PrecipitationSensorEntity._unrecorded_attributes
+
+
+def test_peak_hour_sensor_dry_forecast_has_null_window():
+    meta = ProductMetadata(
+        source_product="RS", source_timestamp=None, rolling_1h=[],
+    )
+    attrs = _peak_sensor(meta).extra_state_attributes
+    assert attrs["window_start"] is None
+    assert attrs["window_end"] is None
