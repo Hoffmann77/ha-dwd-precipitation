@@ -124,7 +124,7 @@ Open **Settings > Devices & Services > DWD Precipitation > Configure**. None of 
 - **How "Precipitation start" and "Precipitation end" report** (default: clock time): show a clock time or the minutes until the event. The other form is always available as an attribute.
 - **When "Precipitation end" counts rain as over** (default: first dry gap): see `Precipitation end` below.
 - **Rain needed to reset the dry-streak counter (mm)** (default: 1.0): `Precipitation now` at or above this value resets `Timespan without precipitation`.
-- **Full rolling-hour series (decodes all RS forecast steps)** (default: off): extends the `forecast_rolling_1h` attribute of `Peak hourly precipitation next 2h` from the 13 hours that lie wholly ahead to all 25, adding the 12 that end 5–55 minutes from now and so include rain that has already fallen. The sensor's value does not change. Roughly doubles the processing time per update, which can matter on small devices such as a Raspberry Pi.
+- **Include the past hour in the hourly forecast series** (default: off): makes the `forecast_rolling_1h` attribute of `Peak hourly precipitation next 2h` start one hour earlier, so the first entries also include rain that has already fallen and a chart shows the past hour and the forecast as one curve. The sensor's value does not change. Roughly doubles the processing time per update, which can matter on small devices such as a Raspberry Pi.
 
 ## Entity details
 
@@ -135,7 +135,7 @@ For the full two-hour forecast total, add `Precipitation next 1h` and `Precipita
 - **Precipitation now** (mm): rain that fell in the past 60 minutes. This is a total, not a mm/h rate. It covers the same window as `Precipitation last 1h` but updates every 5 minutes (radar only).
 - **Precipitation next 1h** (mm): forecast total for the next 0–60 min.
 - **Precipitation next 1–2h** (mm): forecast total for 60–120 min from now.
-- **Peak hourly precipitation next 2h** (mm): the most rain forecast to fall in any 60-minute window within the next 2 h, checked in 5-minute steps. A downpour that straddles the one-hour mark shows here in full, where `Precipitation next 1h` and `next 1–2h` each only see part of it. This matches how DWD's heavy-rain warnings are defined (amount per hour), so it suits alert automations. `0` when no rain is forecast. By default it is summed from the RV 5-minute forecast, which gives exactly the RS figure; see the *Full rolling-hour series* option.
+- **Peak hourly precipitation next 2h** (mm): the most rain forecast to fall in any 60-minute window within the next 2 h, checked in 5-minute steps. A downpour that straddles the one-hour mark shows here in full, where `Precipitation next 1h` and `next 1–2h` each only see part of it. This matches how DWD's heavy-rain warnings are defined (amount per hour), so it suits alert automations. `0` when no rain is forecast. The hours it compares are listed in the `forecast_rolling_1h` attribute.
 - **Timespan without precipitation** (days): time since `Precipitation now` last reached the reset threshold. Survives restarts; rain during downtime is caught up from the RADOLAN totals on startup.
 
 ### RADVOR RV: nowcast in 5-min steps · every 5 min · 2 h horizon
@@ -167,7 +167,7 @@ Always present:
 | `minutes_until` / `at` | `Precipitation start`, `Precipitation end`, `Precipitation expected` | The form *not* shown as the state: whole minutes until the event, or its ISO-8601 UTC time. The binary sensor carries both, pointing at the forecast start (`null` when no rain is expected) |
 | `forecast_5min` | `Precipitation expected` | The full 25-point RV forecast (0–120 min in 5-minute steps); each point has `lead`, `start`, `end`, `value` (mm) and `intensity` (mm/h). Not recorded in history |
 | `window_start` / `window_end` | `Peak hourly precipitation next 2h` | ISO-8601 UTC start and end of the wettest hour; `null` when no rain is forecast. If two windows tie, the earlier one |
-| `forecast_rolling_1h` | `Peak hourly precipitation next 2h` | The rolling-hour forecast: for each 5-minute step `lead`, the mm expected in the 60 minutes ending then (`start` to `end`). By default the 13 hours wholly ahead (`lead` 60–120), which are the ones the sensor compares. With *Full rolling-hour series* on, all 25 (`lead` 0–120); lead 0 is then the past hour and equals `Precipitation now`. Not recorded in history |
+| `forecast_rolling_1h` | `Peak hourly precipitation next 2h` | The hourly forecast series the sensor picks its value from: one entry every 5 minutes, each the mm of rain in the hour from `start` to `end`. At 14:00 the entries run from 14:00–15:00 to 15:00–16:00 (13 entries); the sensor shows the largest. With *Include the past hour in the hourly forecast series* on, the series starts one hour earlier, at 13:00–14:00 (25 entries); the first entry then equals `Precipitation now`. `lead` is the minutes from now to `end`. Not recorded in history |
 | `hours_without_precipitation` | `Timespan without precipitation` | The dry streak in hours; `null` until the counter has started |
 | `dry_since` | `Timespan without precipitation` | ISO-8601 UTC time of the rain that last reset the counter |
 
