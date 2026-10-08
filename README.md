@@ -18,7 +18,7 @@ Radarbasierte Niederschlagsmessungen und -vorhersagen des Deutschen Wetterdienst
 
 - **Standortgenau:** Die Werte stammen aus der etwa 1 km großen Radar-Gitterzelle, in der deine Koordinaten liegen
 - **Live:** Die Nowcast-Sensoren werden alle 5 Minuten aktualisiert
-- **Zwei-Stunden-Vorhersage:** vorhergesagte Mengen, Spitzenintensität sowie Beginn und Ende des Regens
+- **Zwei-Stunden-Vorhersage:** vorhergesagte Mengen, Spitzenintensität, die nasseste Stunde und Beginn und Ende des Regens
 - **Niederschlagsart:** Regen, Nieselregen, Schnee, Schneeregen, Graupel, Hagel, gefrierender Regen
 - **Gemessene Mengen:** letzte Stunde, letzte 24 Stunden, gestern und ein Zähler für Tage ohne Regen
 - **Langzeitsummen:** fortlaufende Regensummen für die Statistik von Home Assistant, damit Wochen-, Monats- und Jahressummen ohne weiteres funktionieren
@@ -152,8 +152,8 @@ Für die gesamte vorhergesagte Menge der zwei Stunden addierst du `Precipitation
 - **Precipitation now** (mm): Regen, der in den letzten 60 Minuten gefallen ist. Das ist eine Menge, keine Rate in mm/h. Deckt denselben Zeitraum ab wie `Precipitation last 1h`, wird aber alle 5 Minuten aktualisiert (nur Radar).
 - **Precipitation next 1h** (mm): vorhergesagte Menge für die nächsten 0–60 min.
 - **Precipitation next 1–2h** (mm): vorhergesagte Menge für 60–120 min ab jetzt.
-- **Peak hourly precipitation next 2h** (mm): die größte Regenmenge, die in irgendeinem 60-Minuten-Fenster innerhalb der nächsten 2 h fallen soll, geprüft in 5-Minuten-Schritten. Ein Wolkenbruch, der über die Stundengrenze reicht, erscheint hier vollständig, während `Precipitation next 1h` und `next 1–2h` jeweils nur einen Teil sehen. Das entspricht der Definition der DWD-Starkregenwarnungen (Menge pro Stunde) und eignet sich daher für Warn-Automationen. `0`, wenn kein Regen vorhergesagt ist. Die verglichenen Stunden stehen im Attribut `forecast_rolling_1h`.
-- **Timespan without precipitation** (Tage): Zeit, seit `Precipitation now` zuletzt die Rücksetzschwelle erreicht hat. Übersteht Neustarts; Regen während einer Ausfallzeit wird beim Start aus den RADOLAN-Mengen nachgeholt.
+- **Peak hourly precipitation next 2h** (mm): die größte Regenmenge, die in irgendeinem 60-Minuten-Fenster innerhalb der nächsten 2 h fallen soll, geprüft in 5-Minuten-Schritten. Berechnet standardmäßig aus der RV-5-Minuten-Vorhersage und aus RS, wenn *Vergangene Stunde in die stündliche Vorhersagereihe aufnehmen* eingeschaltet ist; der Wert ist in beiden Fällen gleich, deshalb bleiben Entität und Verlauf beim Umschalten erhalten. Ein Wolkenbruch, der über die Stundengrenze reicht, erscheint hier vollständig, während `Precipitation next 1h` und `next 1–2h` jeweils nur einen Teil sehen. Das entspricht der Definition der DWD-Starkregenwarnungen (Menge pro Stunde) und eignet sich daher für Warn-Automationen. `0`, wenn kein Regen vorhergesagt ist. Die verglichenen Stunden stehen im Attribut `forecast_rolling_1h`.
+- **Timespan without precipitation** (Tage): Zeit, seit `Precipitation now` zuletzt die Rücksetzschwelle erreicht hat. Übersteht Neustarts; Regen während einer Ausfallzeit wird beim Start aus den RADOLAN-Mengen nachgeholt. Ein Wert ohne Daten (`unknown`) setzt ihn nicht zurück.
 
 ### RADVOR RV: Nowcast in 5-Minuten-Schritten · alle 5 min · Horizont 2 h
 
@@ -190,9 +190,11 @@ Die Umkreis-Werte kommen aus derselben RV-Datei wie die übrigen RV-Sensoren und
 - **Precipitation last 24h** (mm): Regen der gleitenden letzten 24 Stunden. Stündlich aktualisiert.
 - **Precipitation yesterday** (mm): Menge des vorherigen Kalendertags. Einmal täglich aktualisiert, gegen 00:20 Uhr deutscher Ortszeit.
 
+Alle drei sind `unknown`, wenn die DWD-Datei für deine Gitterzelle keine Daten enthält (zum Beispiel bei einem Radarausfall), statt einen Platzhalterwert zu melden.
+
 ### Fortlaufende Summen: für Statistiken · stündlich / täglich
 
-Zwei immer weiter wachsende Summen (State-Class `total_increasing`) für die Langzeitstatistik von Home Assistant, die Statistik-Diagrammkarte und den Helfer [Verbrauchszähler (Utility Meter)](https://www.home-assistant.io/integrations/utility_meter/). Nutze sie für tägliche, wöchentliche, monatliche oder jährliche Regensummen; die anderen Sensoren sind Momentaufnahmen und lassen sich über die Zeit nicht korrekt aufsummieren. Beide beginnen bei 0, wenn die Integration eingerichtet wird.
+Zwei immer weiter wachsende Summen (State-Class `total_increasing`) für die Langzeitstatistik von Home Assistant, die Statistik-Diagrammkarte und den Helfer [Verbrauchszähler (Utility Meter)](https://www.home-assistant.io/integrations/utility_meter/). Nutze sie für tägliche, wöchentliche, monatliche oder jährliche Regensummen; die anderen Sensoren sind Momentaufnahmen und lassen sich über die Zeit nicht korrekt aufsummieren. Beide beginnen bei 0, wenn die Integration eingerichtet wird, und behalten ihre Summe über Neustarts. Sie bleiben verfügbar, solange der DWD nichts veröffentlicht, weil die bisher gezählte Summe weiterhin stimmt; *Sensoren als nicht verfügbar anzeigen, wenn die Daten veraltet sind* gilt für sie nicht. Dateien ohne Daten für deine Gitterzelle addieren nichts.
 
 - **Precipitation total (hourly)** (mm): addiert jeden Wert von `Precipitation last 1h` einmal. Innerhalb der Stunde aktuell und daher geeignet für Automationen wie „wie viel Regen seit heute Morgen“.
 - **Precipitation total (daily)** (mm): addiert jeden Wert von `Precipitation yesterday` einmal. Der Regen von heute erscheint erst am nächsten Morgen, aber da es nur eine Datei pro Tag gibt, ist das die robusteste Wahl für Monats- und Jahreswerte. An den beiden Tagen der Zeitumstellung liegen die 23:50-Zeitfenster 23 bzw. 25 Stunden auseinander, während jede Datei 24 Stunden abdeckt. Dadurch wird im Frühjahr eine Stunde doppelt gezählt und im Herbst eine ausgelassen.
@@ -207,12 +209,12 @@ Immer vorhanden:
 | Attribut | Entitäten | Beschreibung |
 |-----------|----------|-------------|
 | `minutes_until` / `at` | `Precipitation start`, `Precipitation end`, `Precipitation expected`, `Precipitation start nearby` | Die Form, die *nicht* als Zustand angezeigt wird: ganze Minuten bis zum Ereignis oder dessen Zeitpunkt in ISO-8601 (UTC). Der Binärsensor hat beide, bezogen auf den vorhergesagten Beginn (`null`, wenn kein Regen erwartet wird) |
-| `forecast_5min` | `Precipitation expected` | Die vollständige RV-Vorhersage mit 25 Punkten (0–120 min in 5-Minuten-Schritten); jeder Punkt hat `lead`, `start`, `end`, `value` (mm) und `intensity` (mm/h), dazu `intensity_area` (mm/h, nasseste Zelle im Umkreis von 1,5 km) und `nearest_km` (nächster Niederschlag im 5-km-Umkreis, `null` = keiner). Wird nicht im Verlauf gespeichert |
+| `forecast_5min` | `Precipitation expected` | Die vollständige RV-Vorhersage mit 25 Punkten (0–120 min in 5-Minuten-Schritten); jeder Punkt hat `lead` (Minuten ab jetzt), `start`, `end`, `value` (mm in diesen 5 Minuten) und `intensity` (mm/h), dazu `intensity_area` (mm/h, nasseste Zelle im Umkreis von 1,5 km) und `nearest_km` (nächster Niederschlag im 5-km-Umkreis, `null` = keiner). `value` und `intensity` sind `null` bei einem Schritt ohne Daten. Wird nicht im Verlauf gespeichert |
 | `window_start` / `window_end` | `Peak hourly precipitation next 2h` | Beginn und Ende der nassesten Stunde in ISO-8601 (UTC); `null`, wenn kein Regen vorhergesagt ist. Bei Gleichstand das frühere Fenster |
 | `forecast_rolling_1h` | `Peak hourly precipitation next 2h` | Die stündliche Vorhersagereihe, aus der der Sensor seinen Wert nimmt: ein Eintrag alle 5 Minuten, jeweils die mm Regen in der Stunde von `start` bis `end`. Um 14:00 laufen die Einträge von 14:00–15:00 bis 15:00–16:00 (13 Einträge); der Sensor zeigt den größten. Mit *Vergangene Stunde in die stündliche Vorhersagereihe aufnehmen* beginnt die Reihe eine Stunde früher, bei 13:00–14:00 (25 Einträge); der erste Eintrag entspricht dann `Precipitation now`. `lead` sind die Minuten von jetzt bis `end`. Wird nicht im Verlauf gespeichert |
 | `hours_without_precipitation` | `Timespan without precipitation` | Die Trockenphase in Stunden; `null`, bis der Zähler gestartet ist |
 | `dry_since` | `Timespan without precipitation` | Zeitpunkt (ISO-8601, UTC) des Regens, der den Zähler zuletzt zurückgesetzt hat |
-| `counted_until` | `Precipitation total (hourly)`, `Precipitation total (daily)` | Ende (ISO-8601, UTC) des neuesten DWD-Zeitfensters, das in der Summe enthalten ist |
+| `counted_until` | `Precipitation total (hourly)`, `Precipitation total (daily)` | Ende (ISO-8601, UTC) des neuesten DWD-Zeitfensters, das in der Summe enthalten ist; `null`, bis die erste Datei da ist. Später nachgeholte Dateien werden addiert, ohne den Wert zurückzusetzen |
 | `bearing` / `direction` | `Nearest precipitation` | Richtung des nächsten Niederschlags in Grad (0 = Norden, 90 = Osten) und als Himmelsrichtung; `null`, wenn es am Standort selbst regnet |
 
 Beim Sensor **Rain warning**:
@@ -230,14 +232,14 @@ Beim Sensor **Rain warning**:
 | `lead_time_min` | aktuell eingestellte Vorwarnzeit |
 | `forecast_age_min` / `forecast_remaining_horizon_min` | Alter der Vorhersage und verbleibender Horizont in Minuten. Werden nicht im Verlauf gespeichert |
 
-Mit **Metadaten als Sensorattribute anzeigen** hat jeder DWD-Sensor zusätzlich:
+Mit **Metadaten als Sensorattribute anzeigen** hat jeder DWD-Sensor außer `Precipitation expected`, den beiden fortlaufenden Summen und `Timespan without precipitation` zusätzlich:
 
 | Attribut | Beschreibung |
 |-----------|-------------|
 | `source_product` | DWD-Produktkennung aus dem Dateikopf (z. B. `"RADVOR-RS"`, `"RW"`) |
 | `source_timestamp` | Bezugszeit der DWD-Datei in UTC. Bei RADVOR die Analysezeit vor dem Vorhersagevorlauf, bei RADOLAN das Ende des Messzeitraums |
-| `lead_time_minutes` | Vorhersagevorlauf in Minuten (`0`, `60` oder `120` bei RADVOR, das Ende der nassesten Stunde bei `Peak hourly precipitation next 2h`; `null` bei RADOLAN) |
-| `data_start` / `data_end` | Beginn und Ende (ISO-8601, UTC) des Zeitraums, den der Wert abdeckt; `null` bei Werten ohne Zeitraum |
+| `lead_time_minutes` | Vorhersagevorlauf in Minuten (`0`, `60` oder `120` bei RADVOR, das Ende der nassesten Stunde bei `Peak hourly precipitation next 2h`, dort `null`, wenn kein Regen vorhergesagt ist; `null` bei RADOLAN) |
+| `data_start` / `data_end` | Beginn und Ende (ISO-8601, UTC) des Zeitraums, den der Wert abdeckt (bei `Peak hourly precipitation next 2h` die nasseste Stunde, wie `window_start` / `window_end`); fehlen bei Werten ohne Zeitraum |
 
 <a id="de-blueprint"></a>
 ## Blueprint „DWD Regenwarnung“
@@ -263,6 +265,10 @@ Pro Regenereignis kommt genau eine Meldung, zum Beispiel „In 20 Minuten beginn
 **Sensoren bleiben nach der Einrichtung `unavailable`.** Prüfe das Log von Home Assistant auf Fehler und ob `opendata.dwd.de` aus deinem Netzwerk erreichbar ist. Sind nur einige Sensoren betroffen, laufen die anderen DWD-Produkte unabhängig davon weiter.
 
 **`Precipitation type` zeigt `unknown`.** Der Standort liegt außerhalb der HymecNG-Radarabdeckung.
+
+**`Precipitation last 1h`, `last 24h` oder `yesterday` zeigt `unknown`.** Die DWD-Datei enthält keine Daten für deine Gitterzelle, meist wegen eines Radarausfalls. Die nächste Datei füllt den Wert normalerweise wieder; die fortlaufenden Summen überspringen dieses Zeitfenster.
+
+**Nach einem DWD-Ausfall bleiben alte Werte stehen.** *Sensoren als nicht verfügbar anzeigen, wenn die Daten veraltet sind* ist ausgeschaltet, deshalb bleibt der letzte Wert erhalten. Schalte die Option ein, damit die Sensoren stattdessen `unavailable` melden.
 
 ## Datenquelle
 
@@ -298,7 +304,7 @@ Radar-based precipitation measurements and forecasts from the German Weather Ser
 
 - **Location-precise:** values come from the ~1 km radar grid cell containing your coordinates
 - **Live:** the nowcast sensors refresh every 5 minutes
-- **Two-hour forecast:** forecast totals, peak intensity, and when rain starts and stops
+- **Two-hour forecast:** forecast totals, peak intensity, the wettest hour ahead, and when rain starts and stops
 - **Precipitation type:** rain, drizzle, snow, sleet, graupel, hail, freezing rain
 - **Measured totals:** past hour, past 24 hours, yesterday, and a days-without-rain counter
 - **Long-term totals:** running rain totals for Home Assistant's statistics, so weekly, monthly and yearly sums work out of the box
@@ -411,7 +417,7 @@ After installation, restart Home Assistant. To add DWD Precipitation to your Hom
 
 Open **Settings > Devices & Services > DWD Precipitation > Configure**. None of the options affect how often data is fetched.
 
-- **Add technical details to each sensor:**(default: off): adds the source attributes listed under [Attributes](#attributes).
+- **Add technical details to each sensor** (default: off): adds the source attributes listed under [Attributes](#attributes).
 - **Show sensors as unavailable when the data is out of date** (default: on): if DWD does not publish a new file in time, sensors report `unavailable` instead of keeping the last value. See [Troubleshooting](#troubleshooting) for how long "in time" is. The missing file keeps being retried either way.
 - **Rain detection threshold (mm per hour)** (default: 0): how much forecast rain counts as rain for `Precipitation start`, `Precipitation end` and `Precipitation expected`. 0 means any amount DWD detects; around 0.5 ignores drizzle.
 - **How "Precipitation start" and "Precipitation end" report** (default: clock time): show a clock time or the minutes until the event. The other form is always available as an attribute.
@@ -430,8 +436,8 @@ For the full two-hour forecast total, add `Precipitation next 1h` and `Precipita
 - **Precipitation now** (mm): rain that fell in the past 60 minutes. This is a total, not a mm/h rate. It covers the same window as `Precipitation last 1h` but updates every 5 minutes (radar only).
 - **Precipitation next 1h** (mm): forecast total for the next 0–60 min.
 - **Precipitation next 1–2h** (mm): forecast total for 60–120 min from now.
-- **Peak hourly precipitation next 2h** (mm): the most rain forecast to fall in any 60-minute window within the next 2 h, checked in 5-minute steps. A downpour that straddles the one-hour mark shows here in full, where `Precipitation next 1h` and `next 1–2h` each only see part of it. This matches how DWD's heavy-rain warnings are defined (amount per hour), so it suits alert automations. `0` when no rain is forecast. The hours it compares are listed in the `forecast_rolling_1h` attribute.
-- **Timespan without precipitation** (days): time since `Precipitation now` last reached the reset threshold. Survives restarts; rain during downtime is caught up from the RADOLAN totals on startup.
+- **Peak hourly precipitation next 2h** (mm): the most rain forecast to fall in any 60-minute window within the next 2 h, checked in 5-minute steps. Calculated from the RV 5-minute forecast by default, and from RS when *Include the past hour in the hourly forecast series* is on; the value is identical either way, so switching the option keeps the entity and its history. A downpour that straddles the one-hour mark shows here in full, where `Precipitation next 1h` and `next 1–2h` each only see part of it. This matches how DWD's heavy-rain warnings are defined (amount per hour), so it suits alert automations. `0` when no rain is forecast. The hours it compares are listed in the `forecast_rolling_1h` attribute.
+- **Timespan without precipitation** (days): time since `Precipitation now` last reached the reset threshold. Survives restarts; rain during downtime is caught up from the RADOLAN totals on startup. A reading without data (`unknown`) does not reset it.
 
 ### RADVOR RV: nowcast in 5-min steps · every 5 min · 2 h horizon
 
@@ -468,9 +474,11 @@ The neighbourhood values come from the same RV file as the other RV sensors and 
 - **Precipitation last 24h** (mm): rain that fell in the rolling past 24 hours. Updated hourly.
 - **Precipitation yesterday** (mm): total for the previous calendar day. Updated once a day, around 00:20 German local time.
 
+All three are `unknown` when DWD has no data for your grid cell in that file (for example during a radar outage), rather than reporting a placeholder value.
+
 ### Running totals: for statistics · hourly / daily
 
-Two ever-growing totals (state class `total_increasing`), for Home Assistant's long-term statistics, the statistics graph card, and the [Utility Meter](https://www.home-assistant.io/integrations/utility_meter/) helper. Use them for daily, weekly, monthly or yearly rain sums; the other sensors are snapshots and do not add up correctly over time. Both start at 0 when the integration is set up.
+Two ever-growing totals (state class `total_increasing`), for Home Assistant's long-term statistics, the statistics graph card, and the [Utility Meter](https://www.home-assistant.io/integrations/utility_meter/) helper. Use them for daily, weekly, monthly or yearly rain sums; the other sensors are snapshots and do not add up correctly over time. Both start at 0 when the integration is set up and keep their total across restarts. They stay available while DWD is not publishing, because the total counted so far is still correct; *Show sensors as unavailable when the data is out of date* does not apply to them. Files without data for your grid cell add nothing.
 
 - **Precipitation total (hourly)** (mm): adds each `Precipitation last 1h` value once. Up to date within the hour, so it suits "how much rain since this morning" automations.
 - **Precipitation total (daily)** (mm): adds each `Precipitation yesterday` value once. Today's rain only appears the next morning, but a single file a day makes it the most robust choice for monthly and yearly figures. On the two DST changeover days the 23:50 windows are 23 or 25 hours apart while each file covers 24 hours, so one hour is counted twice in spring and missed in autumn.
@@ -484,12 +492,12 @@ Always present:
 | Attribute | Entities | Description |
 |-----------|----------|-------------|
 | `minutes_until` / `at` | `Precipitation start`, `Precipitation end`, `Precipitation expected`, `Precipitation start nearby` | The form *not* shown as the state: whole minutes until the event, or its ISO-8601 UTC time. The binary sensor carries both, pointing at the forecast start (`null` when no rain is expected) |
-| `forecast_5min` | `Precipitation expected` | The full 25-point RV forecast (0–120 min in 5-minute steps); each point has `lead`, `start`, `end`, `value` (mm) and `intensity` (mm/h), plus `intensity_area` (mm/h, wettest cell within 1.5 km) and `nearest_km` (nearest precipitation within 5 km, `null` = none). Not recorded in history |
+| `forecast_5min` | `Precipitation expected` | The full 25-point RV forecast (0–120 min in 5-minute steps); each point has `lead` (minutes from now), `start`, `end`, `value` (mm in those 5 minutes) and `intensity` (mm/h), plus `intensity_area` (mm/h, wettest cell within 1.5 km) and `nearest_km` (nearest precipitation within 5 km, `null` = none). `value` and `intensity` are `null` for a step without data. Not recorded in history |
 | `window_start` / `window_end` | `Peak hourly precipitation next 2h` | ISO-8601 UTC start and end of the wettest hour; `null` when no rain is forecast. If two windows tie, the earlier one |
 | `forecast_rolling_1h` | `Peak hourly precipitation next 2h` | The hourly forecast series the sensor picks its value from: one entry every 5 minutes, each the mm of rain in the hour from `start` to `end`. At 14:00 the entries run from 14:00–15:00 to 15:00–16:00 (13 entries); the sensor shows the largest. With *Include the past hour in the hourly forecast series* on, the series starts one hour earlier, at 13:00–14:00 (25 entries); the first entry then equals `Precipitation now`. `lead` is the minutes from now to `end`. Not recorded in history |
 | `hours_without_precipitation` | `Timespan without precipitation` | The dry streak in hours; `null` until the counter has started |
 | `dry_since` | `Timespan without precipitation` | ISO-8601 UTC time of the rain that last reset the counter |
-| `counted_until` | `Precipitation total (hourly)`, `Precipitation total (daily)` | ISO-8601 UTC end of the newest DWD window included in the total |
+| `counted_until` | `Precipitation total (hourly)`, `Precipitation total (daily)` | ISO-8601 UTC end of the newest DWD window included in the total; `null` until the first file arrives. Missed files fetched later are added without moving it back |
 | `bearing` / `direction` | `Nearest precipitation` | Direction of the nearest precipitation in degrees (0 = north, 90 = east) and as a compass point; `null` when it is raining at the location itself |
 
 On the **Rain warning** sensor:
@@ -507,14 +515,14 @@ On the **Rain warning** sensor:
 | `lead_time_min` | Currently set lead time |
 | `forecast_age_min` / `forecast_remaining_horizon_min` | Age of the forecast and remaining horizon in minutes. Not recorded in history |
 
-With **Add technical details to each sensor** enabled, every DWD sensor also has:
+With **Add technical details to each sensor** enabled, every DWD sensor except `Precipitation expected`, the two running totals and `Timespan without precipitation` also has:
 
 | Attribute | Description |
 |-----------|-------------|
 | `source_product` | DWD product identifier from the file header (e.g. `"RADVOR-RS"`, `"RW"`) |
 | `source_timestamp` | UTC reference time of the DWD file. For RADVOR, the analysis time before the forecast lead; for RADOLAN, the end of the measurement window |
-| `lead_time_minutes` | Forecast lead in minutes (`0`, `60` or `120` for RADVOR, the end of the wettest hour for `Peak hourly precipitation next 2h`; `null` for RADOLAN) |
-| `data_start` / `data_end` | ISO-8601 UTC start and end of the period the value covers; `null` for values without a period |
+| `lead_time_minutes` | Forecast lead in minutes (`0`, `60` or `120` for RADVOR, the end of the wettest hour for `Peak hourly precipitation next 2h`, `null` there when no rain is forecast; `null` for RADOLAN) |
+| `data_start` / `data_end` | ISO-8601 UTC start and end of the period the value covers (for `Peak hourly precipitation next 2h`, the wettest hour, same as `window_start` / `window_end`); omitted for values without a period |
 
 ## Blueprint "DWD rain warning"
 
@@ -538,6 +546,10 @@ Exactly one message is sent per rain event, for example "In 20 Minuten beginnt l
 **Sensors stay `unavailable` after setup.** Check the Home Assistant log for errors and verify that `opendata.dwd.de` is reachable from your network. If only some sensors are affected, the other DWD products keep working independently.
 
 **`Precipitation type` shows `unknown`.** The location is outside the HymecNG radar coverage.
+
+**`Precipitation last 1h`, `last 24h` or `yesterday` shows `unknown`.** DWD's file has no data for your grid cell, usually because of a radar outage. The next file normally fills it again; the running totals skip that window.
+
+**Old values persist after a DWD outage.** *Show sensors as unavailable when the data is out of date* is turned off, so the last value is kept. Turn it on to have sensors report `unavailable` instead.
 
 ## Data source
 
