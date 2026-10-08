@@ -53,8 +53,8 @@ Namen mit **`next <N>`** („nächste <N>“) sind Vorhersagen.
 - **Precipitation start** („Niederschlagsbeginn“, Uhrzeit oder min): wann der Regen beginnt; `unknown`, wenn innerhalb von 2 h keiner kommt
 - **Precipitation end** („Niederschlagsende“, Uhrzeit oder min): wann der Regen aufhört; `unknown`, wenn er länger als 2 h anhält
 - **Precipitation expected** („Niederschlag erwartet“, Binärsensor): `on`, wenn innerhalb von 2 h Regen vorhergesagt ist
-- **Precipitation start nearby** („Niederschlagsbeginn Umkreis“, Uhrzeit oder min): wann der Regen im Umkreis von etwa 1 km beginnt; `unknown`, wenn innerhalb von 2 h keiner kommt Nur mit der Option *Umgebung des Standorts auswerten*.
-- **Nearest precipitation** („Nächster Niederschlag“, km): Entfernung zum nächsten Niederschlag im 5-km-Umkreis, mit Himmelsrichtung als Attribut; `unknown`, wenn im Umkreis nichts fällt Nur mit der Option *Umgebung des Standorts auswerten*.
+- **Precipitation start nearby** („Niederschlagsbeginn Umkreis“, Uhrzeit oder min): wann der Regen im Umkreis von etwa 1 km beginnt; `unknown`, wenn innerhalb von 2 h keiner kommt. Nur mit der Option *Umgebung des Standorts auswerten*.
+- **Nearest precipitation** („Nächster Niederschlag“, km): Entfernung zum nächsten Niederschlag im 5-km-Umkreis, mit Himmelsrichtung als Attribut; `unknown`, wenn im Umkreis nichts fällt. Nur mit der Option *Umgebung des Standorts auswerten*.
 
 **HymecNG: Niederschlagsart · Aktualisierung alle 5 min**
 
@@ -339,8 +339,8 @@ Names ending in **`next <N>`** are forecasts.
 - **Precipitation start** (time or min): when rain begins; `unknown` if none within 2 h
 - **Precipitation end** (time or min): when rain stops; `unknown` if it lasts beyond 2 h
 - **Precipitation expected** (binary sensor): `on` if rain is forecast within 2 h
-- **Precipitation start nearby** (time or min): when rain begins within about 1 km; `unknown` if none within 2 h Only with the *Evaluate the area around the location* option.
-- **Nearest precipitation** (km): distance to the nearest precipitation within 5 km, with the compass direction as an attribute; `unknown` if nothing is falling nearby Only with the *Evaluate the area around the location* option.
+- **Precipitation start nearby** (time or min): when rain begins within about 1 km; `unknown` if none within 2 h. Only with the *Evaluate the area around the location* option.
+- **Nearest precipitation** (km): distance to the nearest precipitation within 5 km, with the compass direction as an attribute; `unknown` if nothing is falling nearby. Only with the *Evaluate the area around the location* option.
 
 **HymecNG: precipitation type · updated every 5 min**
 
