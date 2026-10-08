@@ -258,6 +258,15 @@ Der Blueprint macht aus der Regenwarnung eine fertige Automation. Er liegt in di
 
 Pro Regenereignis kommt genau eine Meldung, zum Beispiel „In 20 Minuten beginnt leichter Regen für 35 Minuten.“ oder „Es regnet bereits, noch etwa 20 Minuten.“
 
+<a id="de-kachel"></a>
+## Dashboard-Kachel „DWD Regenwarnung“
+
+Eine fertige Kachel liegt unter [`dashboards/dwd_regenwarnung_kachel.yaml`](dashboards/dwd_regenwarnung_kachel.yaml). Sie zeigt den nächsten Regen als Text, färbt das Symbol nach Art und Stärke und legt die Vorhersage der nächsten zwei Stunden als Farbverlauf in den Hintergrund: trocken transparent, Niesel blassblau, Regen blau, starker Regen violett, Unwetter und Eisregen rot, Schnee weiß.
+
+1. Installiere [Mushroom](https://github.com/piitaya/lovelace-mushroom) und [card-mod](https://github.com/thomasloven/lovelace-card-mod) über HACS.
+2. Bearbeite das Dashboard, wähle **Karte hinzufügen > Manuell** und füge den Inhalt der Datei ein.
+3. Ersetze in der Zeile `entity:` den Platzhalter `sensor.DEIN_STANDORT_regenwarnung` durch deinen `Rain warning`-Sensor. Den Binärsensor `Precipitation expected` mit der Vorhersagekurve findet die Kachel selbst über das DWD-Gerät.
+
 <a id="de-fehlerbehebung"></a>
 ## Fehlerbehebung
 
@@ -540,6 +549,14 @@ The blueprint turns the rain warning into a ready-made automation. It lives in t
 | Trockenzeit (dry time until an event ends) | 15 min | how long the warning must be `dry` before a new event is reported again |
 
 Exactly one message is sent per rain event, for example "In 20 Minuten beginnt leichter Regen für 35 Minuten." ("Light rain starts in 20 minutes for 35 minutes.") or "Es regnet bereits, noch etwa 20 Minuten." ("It is already raining, about 20 more minutes.").
+
+## Dashboard tile "DWD rain warning"
+
+A ready-made tile lives at [`dashboards/dwd_regenwarnung_kachel.yaml`](dashboards/dwd_regenwarnung_kachel.yaml). It shows the next rain as text, colours the icon by type and intensity, and draws the forecast for the next two hours as a gradient in the background: dry transparent, drizzle pale blue, rain blue, heavy rain violet, severe weather and freezing rain red, snow white. Its texts are in German.
+
+1. Install [Mushroom](https://github.com/piitaya/lovelace-mushroom) and [card-mod](https://github.com/thomasloven/lovelace-card-mod) through HACS.
+2. Edit your dashboard, choose **Add card > Manual** and paste the file's content.
+3. In the `entity:` line, replace the placeholder `sensor.DEIN_STANDORT_regenwarnung` with your `Rain warning` sensor. The tile finds the `Precipitation expected` binary sensor with the forecast curve on its own, through the DWD device.
 
 ## Troubleshooting
 
