@@ -51,6 +51,12 @@ AREA_SCAN_RADIUS_KM = 5.0
 # to at least this value for them.
 AREA_MIN_INTENSITY = 0.3
 
+# Turns the neighbourhood evaluation on or off. Off: RV reads only the
+# location's own cell (as before the feature), the area sensors are not
+# created and the rain warning works on the own cell alone.
+CONF_NEIGHBOURHOOD = "neighbourhood_evaluation"
+DEFAULT_NEIGHBOURHOOD = True
+
 CONF_PRECIPITATION_END_ALGORITHM = "precipitation_end_algorithm"
 
 # Which algorithm derives the RV "precipitation end" from the 5-minute forecast

@@ -22,6 +22,7 @@ from homeassistant.const import (
     UnitOfVolumetricFlux,
 )
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_time_interval
@@ -341,6 +342,13 @@ def _rv_timing_sensors(
     )
 
 
+# Entities that exist only with the neighbourhood evaluation on (radar.area).
+AREA_SENSOR_KEYS = frozenset({
+    "radvor_rv_nearest_precipitation",
+    "radvor_rv_area_precipitation_start",
+})
+
+
 def _plain_value(value: Any) -> Any:
     """Return values suitable for Home Assistant state attributes."""
     if isinstance(value, datetime):
@@ -373,6 +381,19 @@ async def async_setup_entry(
         + HYMECNG_SENSORS
         + RADOLAN_SENSORS
     )
+
+    if not coordinators["rv"].neighbourhood:
+        entity_descriptions = tuple(
+            d for d in entity_descriptions if d.key not in AREA_SENSOR_KEYS
+        )
+        # Drop the area entities left over from when the option was on, so
+        # they do not linger as "no longer provided" in the entity list.
+        registry = er.async_get(hass)
+        for key in AREA_SENSOR_KEYS:
+            if entity_id := registry.async_get_entity_id(
+                "sensor", DOMAIN, f"{entry.entry_id}_{key}"
+            ):
+                registry.async_remove(entity_id)
 
     entities: list[SensorEntity] = [
         PrecipitationSensorEntity(
@@ -797,6 +818,7 @@ class RainWarningSensor(SensorEntity):
             samples,
             dt_util.utcnow(),
             lead_time=self._settings.lead_time,
+            use_area=self._rv.neighbourhood,
             type_here=hy.data if hy is not None else None,
             type_nearby=getattr(self._hymecng, "nearby_type", None),
         )

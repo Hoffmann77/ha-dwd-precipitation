@@ -53,8 +53,8 @@ Namen mit **`next <N>`** („nächste <N>“) sind Vorhersagen.
 - **Precipitation start** („Niederschlagsbeginn“, Uhrzeit oder min): wann der Regen beginnt; `unknown`, wenn innerhalb von 2 h keiner kommt
 - **Precipitation end** („Niederschlagsende“, Uhrzeit oder min): wann der Regen aufhört; `unknown`, wenn er länger als 2 h anhält
 - **Precipitation expected** („Niederschlag erwartet“, Binärsensor): `on`, wenn innerhalb von 2 h Regen vorhergesagt ist
-- **Precipitation start nearby** („Niederschlagsbeginn Umkreis“, Uhrzeit oder min): wann der Regen im Umkreis von etwa 1 km beginnt; `unknown`, wenn innerhalb von 2 h keiner kommt
-- **Nearest precipitation** („Nächster Niederschlag“, km): Entfernung zum nächsten Niederschlag im 5-km-Umkreis, mit Himmelsrichtung als Attribut; `unknown`, wenn im Umkreis nichts fällt
+- **Precipitation start nearby** („Niederschlagsbeginn Umkreis“, Uhrzeit oder min): wann der Regen im Umkreis von etwa 1 km beginnt; `unknown`, wenn innerhalb von 2 h keiner kommt Nur mit der Option *Umgebung des Standorts auswerten*.
+- **Nearest precipitation** („Nächster Niederschlag“, km): Entfernung zum nächsten Niederschlag im 5-km-Umkreis, mit Himmelsrichtung als Attribut; `unknown`, wenn im Umkreis nichts fällt Nur mit der Option *Umgebung des Standorts auswerten*.
 
 **HymecNG: Niederschlagsart · Aktualisierung alle 5 min**
 
@@ -139,6 +139,7 @@ Starte Home Assistant nach der Installation neu. Um DWD Precipitation zu deiner 
 - **Wann „Niederschlagsende“ den Regen als beendet ansieht** (Standard: erste trockene Lücke): siehe `Precipitation end` unten.
 - **Regenmenge, die den Trockenzähler zurücksetzt (mm)** (Standard: 1,0): `Precipitation now` ab diesem Wert setzt `Timespan without precipitation` zurück.
 - **Vergangene Stunde in die stündliche Vorhersagereihe aufnehmen** (Standard: aus): lässt das Attribut `forecast_rolling_1h` von `Peak hourly precipitation next 2h` eine Stunde früher beginnen. Die ersten Einträge enthalten dann auch Regen, der schon gefallen ist, und ein Diagramm zeigt die vergangene Stunde und die Vorhersage als eine durchgehende Kurve. Der Wert des Sensors ändert sich nicht. Verdoppelt etwa die Rechenzeit pro Aktualisierung, was auf kleinen Geräten wie einem Raspberry Pi spürbar sein kann.
+- **Umgebung des Standorts auswerten** (Standard: an): wertet zusätzlich die Radarzellen rund um den Standort aus. Regen im Umkreis von etwa 1 km zählt dann für die Regenwarnung, und `Nearest precipitation` sowie `Precipitation start nearby` werden angelegt. Ausgeschaltet wird nur die eigene 1-km-Zelle genutzt, wie im Original; die beiden Umkreis-Sensoren werden entfernt, und `forecast_5min` enthält kein `intensity_area` / `nearest_km`.
 
 Die Umkreis-Sensoren nutzen die **Schwelle für Regenerkennung**, aber mindestens 0,3 mm/h: Weil dort das Maximum über mehrere Zellen genommen wird, würden einzelne Störpixel sonst zu oft anschlagen. Die Regenwarnung hat feste Werte (siehe [Regenwarnung](#de-regenwarnung)) und hängt von keiner Option ab; einstellbar ist nur die Vorwarnzeit über ihren Regler.
 
@@ -176,7 +177,7 @@ Die Umkreis-Werte kommen aus derselben RV-Datei wie die übrigen RV-Sensoren und
 <a id="de-regenwarnung"></a>
 ### Regenwarnung · jede Minute
 
-- **Rain warning**: `dry`, `soon` oder `rain`. Grundlage ist die RV-Vorhersage im Umkreis von etwa 1 km in 5-Minuten-Schritten. Der Sensor rechnet bei neuen Daten, bei einer geänderten Vorwarnzeit und zusätzlich jede Minute neu, weil alle Angaben relativ zu „jetzt“ sind.
+- **Rain warning**: `dry`, `soon` oder `rain`. Grundlage ist die RV-Vorhersage im Umkreis von etwa 1 km in 5-Minuten-Schritten. Der Sensor rechnet bei neuen Daten, bei einer geänderten Vorwarnzeit und zusätzlich jede Minute neu, weil alle Angaben relativ zu „jetzt“ sind. Ist *Umgebung des Standorts auswerten* ausgeschaltet, zählt nur die eigene Zelle, und die Niederschlagsart kommt nur vom Standort selbst.
   - Ein 5-Minuten-Schritt gilt als nass ab **0,3 mm/h**.
   - Ein Regenereignis zählt nur, wenn es **mindestens 10 Minuten** dauert **oder 1,0 mm/h** erreicht. Kürzere, schwache Flecken sind meist Radarrauschen und lösten früher Fehlalarme aus. Ein Ereignis, das bis zum Ende des Vorhersagehorizonts reicht, zählt immer.
   - `rain`: Das erste relevante Ereignis läuft bereits. `soon`: Es beginnt innerhalb der Vorwarnzeit. Sonst `dry`.
@@ -338,8 +339,8 @@ Names ending in **`next <N>`** are forecasts.
 - **Precipitation start** (time or min): when rain begins; `unknown` if none within 2 h
 - **Precipitation end** (time or min): when rain stops; `unknown` if it lasts beyond 2 h
 - **Precipitation expected** (binary sensor): `on` if rain is forecast within 2 h
-- **Precipitation start nearby** (time or min): when rain begins within about 1 km; `unknown` if none within 2 h
-- **Nearest precipitation** (km): distance to the nearest precipitation within 5 km, with the compass direction as an attribute; `unknown` if nothing is falling nearby
+- **Precipitation start nearby** (time or min): when rain begins within about 1 km; `unknown` if none within 2 h Only with the *Evaluate the area around the location* option.
+- **Nearest precipitation** (km): distance to the nearest precipitation within 5 km, with the compass direction as an attribute; `unknown` if nothing is falling nearby Only with the *Evaluate the area around the location* option.
 
 **HymecNG: precipitation type · updated every 5 min**
 
@@ -424,6 +425,7 @@ Open **Settings > Devices & Services > DWD Precipitation > Configure**. None of 
 - **When "Precipitation end" counts rain as over** (default: first dry gap): see `Precipitation end` below.
 - **Rain needed to reset the dry-streak counter (mm)** (default: 1.0): `Precipitation now` at or above this value resets `Timespan without precipitation`.
 - **Include the past hour in the hourly forecast series** (default: off): makes the `forecast_rolling_1h` attribute of `Peak hourly precipitation next 2h` start one hour earlier, so the first entries also include rain that has already fallen and a chart shows the past hour and the forecast as one curve. The sensor's value does not change. Roughly doubles the processing time per update, which can matter on small devices such as a Raspberry Pi.
+- **Evaluate the area around the location** (default: on): also evaluates the radar cells around the location. Rain within about 1 km then counts for the rain warning, and `Nearest precipitation` and `Precipitation start nearby` are created. When off, only your own 1 km cell is used, as in the original; the two neighbourhood sensors are removed, and `forecast_5min` carries no `intensity_area` / `nearest_km`.
 
 The neighbourhood sensors use the **Rain detection threshold**, but at least 0.3 mm/h: because they take the maximum over several cells, single noisy pixels would trigger them too often otherwise. The rain warning uses fixed values (see [Rain warning](#rain-warning)) and does not depend on any option; only its lead time is adjustable, through its slider.
 
@@ -460,7 +462,7 @@ The neighbourhood values come from the same RV file as the other RV sensors and 
 <a id="rain-warning"></a>
 ### Rain warning · every minute
 
-- **Rain warning**: `dry`, `soon` or `rain`. Based on the RV forecast within about 1 km in 5-minute steps. The sensor re-evaluates on new data, on a changed lead time and additionally every minute, because every value is relative to "now".
+- **Rain warning**: `dry`, `soon` or `rain`. Based on the RV forecast within about 1 km in 5-minute steps. The sensor re-evaluates on new data, on a changed lead time and additionally every minute, because every value is relative to "now". With *Evaluate the area around the location* off, only your own cell counts, and the precipitation type comes from the location alone.
   - A 5-minute step counts as wet from **0.3 mm/h**.
   - A rain event only counts if it lasts **at least 10 minutes** **or reaches 1.0 mm/h**. Shorter, faint specks are usually radar noise and used to cause false alarms. An event that reaches the end of the forecast horizon always counts.
   - `rain`: the first relevant event is already under way. `soon`: it starts within the lead time. Otherwise `dry`.

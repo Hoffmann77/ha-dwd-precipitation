@@ -46,6 +46,8 @@ from .const import (
     AREA_MIN_INTENSITY,
     AREA_NEAR_RADIUS_KM,
     AREA_SCAN_RADIUS_KM,
+    CONF_NEIGHBOURHOOD,
+    DEFAULT_NEIGHBOURHOOD,
     CONF_FULL_ROLLING_SERIES,
     DEFAULT_FULL_ROLLING_SERIES,
     CONF_PRECIPITATION_THRESHOLD,
@@ -363,15 +365,17 @@ class RadvorRV(BaseProductUpdateCoordinator):
         )
         threshold = threshold_mmh / STEPS_PER_HOUR
         area_threshold = max(threshold_mmh, AREA_MIN_INTENSITY) / STEPS_PER_HOUR
+        neighbourhood = self.neighbourhood
 
         # The cells around the location come out of the same inflate as the
         # location's own cell, so the neighbourhood costs no extra decoding.
+        # With the option off the window is just the own cell.
         tar_windows = _read_tar_windows(
             content,
             f"composite_rv_{ts.strftime('%Y%m%d_%H%M')}",
             LEADS,
             self.index,
-            int(AREA_SCAN_RADIUS_KM),
+            int(AREA_SCAN_RADIUS_KM) if neighbourhood else 0,
             "RV",
         )
 
@@ -399,10 +403,14 @@ class RadvorRV(BaseProductUpdateCoordinator):
             val = float(window[crow, ccol])
             data_start, data_end = _odim_window(what)
             values.append(None if np.isnan(val) else val)
-            area_values.append(area_max(window, crow, ccol, AREA_NEAR_RADIUS_KM))
-            nearest.append(
-                nearest_rain(window, crow, ccol, area_threshold, AREA_SCAN_RADIUS_KM)
-            )
+            if neighbourhood:
+                area_values.append(area_max(window, crow, ccol, AREA_NEAR_RADIUS_KM))
+                nearest.append(
+                    nearest_rain(window, crow, ccol, area_threshold, AREA_SCAN_RADIUS_KM)
+                )
+            else:
+                area_values.append(None)
+                nearest.append(None)
             starts.append(data_start)
             ends.append(data_end)
             # Base run time T = end of the analysis window (lead 0).
@@ -413,8 +421,10 @@ class RadvorRV(BaseProductUpdateCoordinator):
             CONF_PRECIPITATION_END_ALGORITHM, DEFAULT_PRECIPITATION_END_ALGORITHM
         )
         start_in, end_in = detect_start_end(values, threshold, end_algorithm)
-        area_start_in, area_end_in = detect_start_end(
-            area_values, area_threshold, end_algorithm
+        area_start_in, area_end_in = (
+            detect_start_end(area_values, area_threshold, end_algorithm)
+            if neighbourhood
+            else (None, None)
         )
 
         def _at(minutes: int | None) -> datetime | None:
@@ -429,7 +439,7 @@ class RadvorRV(BaseProductUpdateCoordinator):
                 value = values[i]
                 area_value = area_values[i]
                 near = nearest[i]
-                out.append({
+                sample = {
                     "lead": lead,
                     "start": starts[i].isoformat() if starts[i] else None,
                     "end": ends[i].isoformat() if ends[i] else None,
@@ -440,15 +450,17 @@ class RadvorRV(BaseProductUpdateCoordinator):
                         if value is not None
                         else None
                     ),
+                }
+                if neighbourhood:
                     # Wettest cell within AREA_NEAR_RADIUS_KM, as mm/h.
-                    "intensity_area": (
+                    sample["intensity_area"] = (
                         round(area_value * STEPS_PER_HOUR, 2)
                         if area_value is not None
                         else None
-                    ),
+                    )
                     # Closest rain within AREA_SCAN_RADIUS_KM (None = none).
-                    "nearest_km": near[0] if near is not None else None,
-                })
+                    sample["nearest_km"] = near[0] if near is not None else None
+                out.append(sample)
             return out
 
         def _bucket_meta(leads: list[int], lead_minutes: int) -> ProductMetadata:
@@ -494,14 +506,6 @@ class RadvorRV(BaseProductUpdateCoordinator):
             "end_at": _at(end_in),
             "rain_within_2h": start_in is not None,
             "peak_1h": peak_1h,
-            "area_start_in": area_start_in,
-            "area_start_at": _at(area_start_in),
-            "area_end_in": area_end_in,
-            "area_end_at": _at(area_end_in),
-            # Latest analysis (lead 0): where the closest rain is right now.
-            "nearest_km": nearest[0][0] if nearest[0] is not None else None,
-            "nearest_bearing": nearest[0][1] if nearest[0] is not None else None,
-            "nearest_direction": compass(nearest[0][1]) if nearest[0] is not None else None,
         }
         metadata = {
             "max_060": hour1_meta,
@@ -512,18 +516,33 @@ class RadvorRV(BaseProductUpdateCoordinator):
             "end_at": timing_meta,
             "rain_within_2h": rain_meta,
             "peak_1h": peak_meta,
-            "area_start_in": timing_meta,
-            "area_start_at": timing_meta,
-            "area_end_in": timing_meta,
-            "area_end_at": timing_meta,
-            "nearest_km": ProductMetadata(
-                source_product="RV",
-                source_timestamp=base_ts,
-                lead_time_minutes=0,
-                data_start=starts[0],
-                data_end=ends[0],
-            ),
         }
+        if neighbourhood:
+            data.update({
+                "area_start_in": area_start_in,
+                "area_start_at": _at(area_start_in),
+                "area_end_in": area_end_in,
+                "area_end_at": _at(area_end_in),
+                # Latest analysis (lead 0): where the closest rain is right now.
+                "nearest_km": nearest[0][0] if nearest[0] is not None else None,
+                "nearest_bearing": nearest[0][1] if nearest[0] is not None else None,
+                "nearest_direction": (
+                    compass(nearest[0][1]) if nearest[0] is not None else None
+                ),
+            })
+            metadata.update({
+                "area_start_in": timing_meta,
+                "area_start_at": timing_meta,
+                "area_end_in": timing_meta,
+                "area_end_at": timing_meta,
+                "nearest_km": ProductMetadata(
+                    source_product="RV",
+                    source_timestamp=base_ts,
+                    lead_time_minutes=0,
+                    data_start=starts[0],
+                    data_end=ends[0],
+                ),
+            })
         return data, metadata
 
 
@@ -590,8 +609,12 @@ class HymecNG(BaseProductUpdateCoordinator):
         # Type of the closest precipitation around the location (classes 2..10
         # are actual precipitation). Used by the rain warning to name what is
         # approaching before it reaches the own cell.
-        nearby = nearest_class(
-            raw, row, col, range(2, len(PRECIP_TYPE_BY_INDEX)), AREA_SCAN_RADIUS_KM
+        nearby = (
+            nearest_class(
+                raw, row, col, range(2, len(PRECIP_TYPE_BY_INDEX)), AREA_SCAN_RADIUS_KM
+            )
+            if self.neighbourhood
+            else None
         )
         self.nearby_type = PRECIP_TYPE_BY_INDEX[nearby] if nearby is not None else None
 

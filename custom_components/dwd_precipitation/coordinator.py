@@ -28,7 +28,12 @@ from homeassistant.helpers.event import (
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
-from .const import CONF_UNAVAILABLE_WHEN_STALE, DEFAULT_UNAVAILABLE_WHEN_STALE
+from .const import (
+    CONF_NEIGHBOURHOOD,
+    CONF_UNAVAILABLE_WHEN_STALE,
+    DEFAULT_NEIGHBOURHOOD,
+    DEFAULT_UNAVAILABLE_WHEN_STALE,
+)
 from .utils import get_previous_multiple
 
 _LOGGER = logging.getLogger(__name__)
@@ -546,6 +551,11 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
         """Cancel fast polling and reset the backoff ramp."""
         self._cancel_fast_poll()
         self._fast_poll_failures = 0
+
+    @property
+    def neighbourhood(self) -> bool:
+        """Whether the cells around the location are evaluated too (radar.area)."""
+        return self.config_entry.options.get(CONF_NEIGHBOURHOOD, DEFAULT_NEIGHBOURHOOD)
 
     # ------------------------------------------------------------------
     # Abstract interface — subclasses implement these
