@@ -124,11 +124,24 @@
       },
       "area_precipitation_start": {
         "name": "Precipitation start nearby"
+      },
+      "rain_warning": {
+        "name": "Rain warning",
+        "state": {
+          "dry": "Dry",
+          "soon": "Rain soon",
+          "rain": "Raining"
+        }
       }
     },
     "binary_sensor": {
       "precipitation_expected": {
         "name": "Precipitation expected"
+      }
+    },
+    "number": {
+      "warning_lead_time": {
+        "name": "Rain warning lead time"
       }
     }
   }

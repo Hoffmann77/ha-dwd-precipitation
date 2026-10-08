@@ -1,0 +1,156 @@
+blueprint:
+  name: DWD Regenwarnung
+  description: >-
+    Meldet Niederschlag inklusive Art nur einmal pro Niederschlagsereignis.
+    Nutzt den Sensor „Regenwarnung“ der DWD-Precipitation-Integration (Umkreis-Version).
+    Die Vorwarnzeit stellst du am Regler „Vorwarnzeit Regenwarnung“ derselben Integration ein.
+    In den Aktionen steht der fertige Meldungstext als {{ message_text }} zur Verfügung.
+  domain: automation
+  input:
+    warning_sensor:
+      name: Regenwarnung-Sensor
+      description: Sensor „Regenwarnung“ der DWD-Precipitation-Integration.
+      selector:
+        entity:
+          filter:
+            - integration: dwd_precipitation
+              domain: sensor
+    rain_sensor:
+      name: Regensensor (optional)
+      description: >-
+        Meldet das Radar „Es regnet bereits“, der Regensensor ist aber trocken,
+        heißt es stattdessen „Es kann gleich zu regnen beginnen“.
+      default: ""
+      selector:
+        entity:
+          filter:
+            - domain: [binary_sensor, sensor]
+    push_actions:
+      name: Benachrichtigung
+      description: >-
+        Aktionen für die Push-Meldung, z. B. notify.pushover mit
+        message: "{{ message_text }}". Läuft rund um die Uhr.
+      default: []
+      selector:
+        action: {}
+    announce_actions:
+      name: Durchsage
+      description: >-
+        Aktionen für Sprachdurchsagen, z. B. notify.send_message an Echo-Geräte mit
+        message: "{{ message_text }}". Laufen nur im Zeitfenster unten.
+      default: []
+      selector:
+        action: {}
+    announce_after:
+      name: Durchsagen ab
+      default: "06:30:00"
+      selector:
+        time: {}
+    announce_before:
+      name: Durchsagen bis
+      default: "21:30:00"
+      selector:
+        time: {}
+    dry_minutes:
+      name: Trockenzeit bis zum Ende eines Ereignisses (Minuten)
+      description: Erst wenn es so lange trocken bleibt, kann eine neue Meldung kommen.
+      default: 15
+      selector:
+        number:
+          min: 5
+          max: 60
+          step: 5
+          unit_of_measurement: min
+
+variables:
+  warning_sensor: !input warning_sensor
+  rain_sensor: !input rain_sensor
+
+triggers:
+  - trigger: state
+    entity_id: !input warning_sensor
+    to:
+      - soon
+      - rain
+conditions:
+  - condition: template
+    value_template: "{{ states(warning_sensor) in ['soon', 'rain'] }}"
+actions:
+  - variables:
+      sensor_state: "{{ states(warning_sensor) }}"
+      starts_in: "{{ state_attr(warning_sensor, 'rain_starts_in_min') | int(0) }}"
+      next_length: "{{ state_attr(warning_sensor, 'next_length') | int(0) }}"
+      next_open_end: "{{ state_attr(warning_sensor, 'next_open_end') | bool(false) }}"
+      current_open_end: "{{ state_attr(warning_sensor, 'current_open_end') | bool(false) }}"
+      current_remaining: "{{ state_attr(warning_sensor, 'current_remaining_min') | int(0) }}"
+      horizon: "{{ state_attr(warning_sensor, 'forecast_remaining_horizon_min') | int(60) }}"
+      art: "{{ state_attr(warning_sensor, 'precipitation_type') | default('', true) }}"
+      stufe: "{{ state_attr(warning_sensor, 'next_intensity_level') | default('leicht', true) }}"
+      # Regensensor vor Ort (optional): trocken = "off"/"dry". Ohne Sensor oder
+      # wenn er nicht erreichbar ist, bleibt es bei "Es regnet bereits".
+      regensensor_trocken: >-
+        {{ rain_sensor not in [none, ''] and states(rain_sensor) in ['off', 'dry'] }}
+      message_text: >-
+        {%- set nomen = {
+          'rain': 'Regen', 'drizzle': 'Nieselregen', 'freezing_drizzle': 'gefrierender Nieselregen',
+          'freezing_rain': 'gefrierender Regen', 'sleet': 'Schneeregen', 'snow': 'Schneefall',
+          'graupel': 'Graupel', 'hail': 'Hagel', 'large_hail': 'Hagel mit großen Körnern',
+          'thunderstorm': 'Gewitterregen' } -%}
+        {%- set laeuft = {
+          'rain': 'Es regnet bereits', 'drizzle': 'Es nieselt bereits',
+          'freezing_drizzle': 'Es fällt bereits gefrierender Nieselregen',
+          'freezing_rain': 'Es fällt bereits gefrierender Regen', 'sleet': 'Es fällt bereits Schneeregen',
+          'snow': 'Es schneit bereits', 'graupel': 'Es graupelt bereits', 'hail': 'Es hagelt bereits',
+          'large_hail': 'Es hagelt bereits mit großen Körnern', 'thunderstorm': 'Es gewittert bereits' } -%}
+        {%- set wort = nomen.get(art, 'Niederschlag') -%}
+        {#- Hagel ohne Stärkeangabe, sonst z. B. "mäßiger Schneefall" (alle Nomen sind maskulin) -#}
+        {%- set phrase = wort if art in ['hail', 'large_hail'] else stufe ~ 'er ' ~ wort -%}
+        {%- set wann = 'In wenigen Minuten' if starts_in <= 2 else 'In ' ~ starts_in ~ ' Minuten' -%}
+        {%- set beginnt = {
+          'rain': 'zu regnen', 'drizzle': 'zu nieseln', 'snow': 'zu schneien', 'graupel': 'zu graupeln',
+          'hail': 'zu hageln', 'large_hail': 'zu hageln', 'thunderstorm': 'zu gewittern' } -%}
+        {%- if sensor_state == 'rain' and regensensor_trocken -%}
+          {#- Radar meldet Regen, der Regensensor ist aber noch trocken -#}
+          {%- if art in beginnt -%}
+            Es kann gleich {{ beginnt[art] }} beginnen.
+          {%- else -%}
+            Es kann gleich {{ phrase }} beginnen.
+          {%- endif -%}
+        {%- elif sensor_state == 'rain' -%}
+          {%- set satz = laeuft.get(art, 'Es fällt bereits Niederschlag') -%}
+          {%- if current_open_end -%}
+            {{ satz }}, voraussichtlich mindestens {{ horizon }} Minuten.
+          {%- else -%}
+            {{ satz }}, noch etwa {{ current_remaining }} Minuten.
+          {%- endif -%}
+        {%- else -%}
+          {%- if next_open_end -%}
+            {{ wann }} beginnt {{ phrase }}, voraussichtlich mindestens {{ next_length }} Minuten.
+          {%- elif next_length > 0 -%}
+            {{ wann }} beginnt {{ phrase }} für {{ next_length }} Minuten.
+          {%- else -%}
+            {{ wann }} ist {{ wort }} möglich.
+          {%- endif -%}
+        {%- endif -%}
+        {%- if art in ['freezing_drizzle', 'freezing_rain'] %} Achtung, Glättegefahr!{% endif -%}
+  - choose: []
+    default: !input push_actions
+  # Durchsagen nur im eingestellten Zeitfenster. Als "if" statt als Bedingung,
+  # damit das Warten auf "trocken" auch nachts läuft und nicht mehrfach meldet.
+  - if:
+      - condition: time
+        after: !input announce_after
+        before: !input announce_before
+    then:
+      - choose: []
+        default: !input announce_actions
+  # Ereignis gilt erst als beendet, wenn es die eingestellte Zeit trocken bleibt.
+  # So erzeugt eine kurze Lücke im Radarbild keine zweite Meldung.
+  - wait_for_trigger:
+      - trigger: state
+        entity_id: !input warning_sensor
+        to: dry
+        for:
+          minutes: !input dry_minutes
+mode: single
+max_exceeded: silent

@@ -105,3 +105,22 @@ def nearest_rain(
     if dist[i] == 0:
         return 0.0, None
     return round(float(dist[i]), 1), round(bearing_deg(int(drow[i]), int(dcol[i])))
+
+
+def nearest_class(
+    grid: np.ndarray,
+    row: int,
+    col: int,
+    classes,
+    radius_km: float = DEFAULT_SCAN_RADIUS_KM,
+) -> int | None:
+    """Return the value of the nearest cell whose value is in ``classes``.
+
+    For classification grids (HymecNG): e.g. "what type is the precipitation
+    closest to the location". ``None`` when no such cell is within reach.
+    """
+    values, _dist, _off = _window(grid, row, col, radius_km)
+    hits = np.flatnonzero(np.isin(values, list(classes)))
+    if hits.size == 0:
+        return None
+    return int(values[int(hits[0])])

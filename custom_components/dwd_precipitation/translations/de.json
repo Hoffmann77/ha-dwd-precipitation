@@ -124,11 +124,24 @@
       },
       "area_precipitation_start": {
         "name": "Niederschlagsbeginn Umkreis"
+      },
+      "rain_warning": {
+        "name": "Regenwarnung",
+        "state": {
+          "dry": "Trocken",
+          "soon": "Regen in Kürze",
+          "rain": "Regen"
+        }
       }
     },
     "binary_sensor": {
       "precipitation_expected": {
         "name": "Niederschlag erwartet"
+      }
+    },
+    "number": {
+      "warning_lead_time": {
+        "name": "Vorwarnzeit Regenwarnung"
       }
     }
   }

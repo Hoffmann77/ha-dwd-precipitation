@@ -11,7 +11,7 @@ from .radar.nowcast import (
 
 DOMAIN = "dwd_precipitation"
 
-PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR]
+PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.NUMBER]
 
 CONF_COORDS = "coordinates"
 

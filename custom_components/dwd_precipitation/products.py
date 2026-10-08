@@ -41,7 +41,7 @@ from .radar.nowcast import (
     peak_rolling_hour,
     rolling_hour_sums,
 )
-from .radar.area import area_max, compass, nearest_rain
+from .radar.area import area_max, compass, nearest_class, nearest_rain
 from .const import (
     AREA_MIN_INTENSITY,
     AREA_NEAR_RADIUS_KM,
@@ -555,6 +555,10 @@ class HymecNG(BaseProductUpdateCoordinator):
     # is still informative.
     OVERDUE_GRACE = DEFAULT_OVERDUE_GRACE
 
+    # Type of the closest precipitation within AREA_SCAN_RADIUS_KM, refreshed
+    # with every parse (see radar.area.nearest_class).
+    nearby_type: str | None = None
+
     @cached_property
     def index(self) -> tuple[int, int]:
         """Return (row, col) in the HymecNG grid (identical to RS/RV)."""
@@ -582,6 +586,14 @@ class HymecNG(BaseProductUpdateCoordinator):
 
         nodata = int(round(float(moment_what.get("nodata", 255))))
         undetect = int(round(float(moment_what.get("undetect", 254))))
+
+        # Type of the closest precipitation around the location (classes 2..10
+        # are actual precipitation). Used by the rain warning to name what is
+        # approaching before it reaches the own cell.
+        nearby = nearest_class(
+            raw, row, col, range(2, len(PRECIP_TYPE_BY_INDEX)), AREA_SCAN_RADIUS_KM
+        )
+        self.nearby_type = PRECIP_TYPE_BY_INDEX[nearby] if nearby is not None else None
 
         if value == nodata:
             precip_type: str | None = None          # outside radar coverage
