@@ -9,7 +9,8 @@ Radarbasierte Niederschlagsmessungen und -vorhersagen des Deutschen Wetterdienst
 
 *English version: see [below](#english-version).*
 
-> [!WICHTIG]
+> [!IMPORTANT]
+> **⚠️ Wichtig:**
 > Diese Integration funktioniert **nur** für Standorte **in Deutschland** und in Gebieten direkt an der deutschen Grenze.
 > Die Radarkomposite des DWD decken andere Länder nicht ab.
 
@@ -33,7 +34,8 @@ Namen mit **`last <N>`** („letzte <N>“) sind gemessene Mengen über den Zeit
 
 Namen mit **`next <N>`** („nächste <N>“) sind Vorhersagen.
 
-> [!HINWEIS]
+> [!Note]
+> **ℹ️ Hinweis:**
 > **`next 1–2h`** ist die *zweite* Stunde voraus (60–120 min), nicht die kommenden zwei Stunden.
 
 **RADVOR RS: Radar-Nowcast · Aktualisierung alle 5 min**
