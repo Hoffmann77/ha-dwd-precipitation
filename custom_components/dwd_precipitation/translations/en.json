@@ -118,6 +118,12 @@
           "hail": "Hail",
           "large_hail": "Large hail"
         }
+      },
+      "nearest_precipitation": {
+        "name": "Nearest precipitation"
+      },
+      "area_precipitation_start": {
+        "name": "Precipitation start nearby"
       }
     },
     "binary_sensor": {

@@ -16,6 +16,7 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
+    UnitOfLength,
     UnitOfPrecipitationDepth,
     UnitOfTime,
     UnitOfVolumetricFlux,
@@ -234,6 +235,22 @@ RADVOR_RV_SENSORS = (
         product_key="rv",
         access_fn=lambda d: d["max_120"],
     ),
+    # Closest rain around the location in the latest analysis (radar.area).
+    PrecipitationSensorEntityDescription(
+        key="radvor_rv_nearest_precipitation",
+        translation_key="nearest_precipitation",
+        icon="mdi:map-marker-distance",
+        native_unit_of_measurement=UnitOfLength.KILOMETERS,
+        device_class=SensorDeviceClass.DISTANCE,
+        suggested_display_precision=1,
+        state_class=SensorStateClass.MEASUREMENT,
+        product_key="rv",
+        access_fn=lambda d: d["nearest_km"],
+        attrs_fn=lambda d: {
+            "bearing": d["nearest_bearing"],
+            "direction": d["nearest_direction"],
+        },
+    ),
 )
 
 
@@ -281,6 +298,16 @@ def _rv_timing_sensors(
                 access_fn=lambda d: d["end_in"],
                 attrs_fn=lambda d: {"at": d["end_at"]},
             ),
+            PrecipitationSensorEntityDescription(
+                key="radvor_rv_area_precipitation_start",
+                translation_key="area_precipitation_start",
+                native_unit_of_measurement=UnitOfTime.MINUTES,
+                device_class=SensorDeviceClass.DURATION,
+                state_class=SensorStateClass.MEASUREMENT,
+                product_key="rv",
+                access_fn=lambda d: d["area_start_in"],
+                attrs_fn=lambda d: {"at": d["area_start_at"]},
+            ),
         )
 
     # Default: absolute timestamp, with the minutes-until value as an attribute.
@@ -300,6 +327,14 @@ def _rv_timing_sensors(
             product_key="rv",
             access_fn=lambda d: d["end_at"],
             attrs_fn=lambda d: {"minutes_until": d["end_in"]},
+        ),
+        PrecipitationSensorEntityDescription(
+            key="radvor_rv_area_precipitation_start",
+            translation_key="area_precipitation_start",
+            device_class=SensorDeviceClass.TIMESTAMP,
+            product_key="rv",
+            access_fn=lambda d: d["area_start_at"],
+            attrs_fn=lambda d: {"minutes_until": d["area_start_in"]},
         ),
     )
 

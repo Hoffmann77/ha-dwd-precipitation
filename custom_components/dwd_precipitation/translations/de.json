@@ -118,6 +118,12 @@
           "hail": "Hagel",
           "large_hail": "Großer Hagel"
         }
+      },
+      "nearest_precipitation": {
+        "name": "Nächster Niederschlag"
+      },
+      "area_precipitation_start": {
+        "name": "Niederschlagsbeginn Umkreis"
       }
     },
     "binary_sensor": {

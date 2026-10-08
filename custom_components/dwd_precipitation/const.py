@@ -39,6 +39,18 @@ START_END_MODE_TIMESTAMP = "timestamp"
 START_END_MODE_DURATION = "duration"
 DEFAULT_START_END_MODE = START_END_MODE_TIMESTAMP
 
+# Neighbourhood evaluation (radar.area). A single 1 km cell is a noisy point
+# sample, so the RV forecast is also evaluated over the cells around the
+# location: "rain within AREA_NEAR_RADIUS_KM" (1.5 km = own cell + 8 neighbours)
+# drives the area start/end sensors, and the closest rain within
+# AREA_SCAN_RADIUS_KM is reported with distance and direction.
+AREA_NEAR_RADIUS_KM = 1.5
+AREA_SCAN_RADIUS_KM = 5.0
+# mm/h; noise floor for the area features. Taking the maximum over several
+# cells amplifies single-cell speckle, so the configured threshold is raised
+# to at least this value for them.
+AREA_MIN_INTENSITY = 0.3
+
 CONF_PRECIPITATION_END_ALGORITHM = "precipitation_end_algorithm"
 
 # Which algorithm derives the RV "precipitation end" from the 5-minute forecast
