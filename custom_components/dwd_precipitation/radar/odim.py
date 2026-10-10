@@ -207,6 +207,34 @@ def read_odim_composite_cell(
     return _scale(raw, what)[0, 0], dataset_what
 
 
+def read_odim_composite_window(
+    fileobj,
+    row: int,
+    col: int,
+    radius: int,
+    dataset: str = "dataset1",
+    moment: str = "data1",
+    expected_shape=None,
+):
+    """Read a square of cells around (row, col) from a Cartesian ODIM_H5 composite.
+
+    Returns (window, dataset_what, (crow, ccol)): the scaled float32 values of
+    the cells within ``radius`` rows/columns of (row, col), clipped at the grid
+    edge, and the position of (row, col) inside the window. Same untrusted-input
+    checks and the same cost profile as :func:`read_odim_composite_cell` — the
+    chunk is inflated once, only the window is scaled.
+    """
+    with h5py.File(fileobj, "r") as hf:
+        dset, dataset_what, what = _open_composite(hf, dataset, moment, expected_shape)
+        rows, cols = dset.shape
+        if not (0 <= row < rows and 0 <= col < cols):
+            raise ValueError(f"Cell ({row}, {col}) is outside the {dset.shape} grid")
+        r0, c0 = max(row - radius, 0), max(col - radius, 0)
+        raw = dset[r0:min(row + radius + 1, rows), c0:min(col + radius + 1, cols)]
+
+    return _scale(raw, what), dataset_what, (row - r0, col - c0)
+
+
 def read_odim_classification(
     fileobj,
     dataset: str = "dataset1",

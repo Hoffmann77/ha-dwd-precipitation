@@ -11,7 +11,7 @@ from .radar.nowcast import (
 
 DOMAIN = "dwd_precipitation"
 
-PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR]
+PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.NUMBER]
 
 CONF_COORDS = "coordinates"
 
@@ -38,6 +38,24 @@ CONF_START_END_MODE = "start_end_mode"
 START_END_MODE_TIMESTAMP = "timestamp"
 START_END_MODE_DURATION = "duration"
 DEFAULT_START_END_MODE = START_END_MODE_TIMESTAMP
+
+# Neighbourhood evaluation (radar.area). A single 1 km cell is a noisy point
+# sample, so the RV forecast is also evaluated over the cells around the
+# location: "rain within AREA_NEAR_RADIUS_KM" (1.5 km = own cell + 8 neighbours)
+# drives the area start/end sensors, and the closest rain within
+# AREA_SCAN_RADIUS_KM is reported with distance and direction.
+AREA_NEAR_RADIUS_KM = 1.5
+AREA_SCAN_RADIUS_KM = 5.0
+# mm/h; noise floor for the area features. Taking the maximum over several
+# cells amplifies single-cell speckle, so the configured threshold is raised
+# to at least this value for them.
+AREA_MIN_INTENSITY = 0.3
+
+# Turns the neighbourhood evaluation on or off. Off: RV reads only the
+# location's own cell (as before the feature), the area sensors are not
+# created and the rain warning works on the own cell alone.
+CONF_NEIGHBOURHOOD = "neighbourhood_evaluation"
+DEFAULT_NEIGHBOURHOOD = True
 
 CONF_PRECIPITATION_END_ALGORITHM = "precipitation_end_algorithm"
 

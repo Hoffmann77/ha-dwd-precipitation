@@ -1,0 +1,191 @@
+type: custom:mushroom-template-card
+# Kachel "DWD Regenwarnung" für die Integration DWD Precipitation.
+# Benötigt: Mushroom (custom:mushroom-template-card) und card-mod, beide über HACS.
+# Einzige Anpassung: hier den Sensor "Regenwarnung" / "Rain warning" eintragen.
+# Die Vorhersagekurve holt sich die Kachel selbst vom Binärsensor
+# "Niederschlag erwartet" desselben DWD-Geräts.
+entity: sensor.DEIN_STANDORT_regenwarnung
+icon: |-
+  {% set starts_in = state_attr(entity, 'rain_starts_in_min') %}
+  {% if states(entity) == 'rain' %}
+    mdi:weather-pouring
+  {% elif states(entity) == 'soon' and starts_in is number and starts_in <= 5 %}
+    mdi:weather-rainy
+  {% else %}
+    mdi:weather-cloudy
+  {% endif %}
+primary: >-
+  {%- macro dauer(min) -%}
+    {%- set m = min | int(0) -%}
+    {%- if m >= 60 -%}{{ m // 60 }} Std.{{ ' ' ~ (m % 60) ~ ' Min.' if m % 60 else '' }}
+    {%- else -%}{{ m }} Minuten{%- endif -%}
+  {%- endmacro %}
+  {% set raining_now = states(entity) == 'rain' %}
+  {% set current_open_end = state_attr(entity, 'current_open_end') | bool(false) %}
+  {% set current_remaining = state_attr(entity, 'current_remaining_min') %}
+  {% set starts_in = state_attr(entity, 'rain_starts_in_min') %}
+  {% set has_next = starts_in is number %}
+  {% set rain_soon = states(entity) == 'soon' and has_next and starts_in <= 5 %}
+  {% set next_length = state_attr(entity, 'next_length') | int(0) %}
+  {% set next_open_end = state_attr(entity, 'next_open_end') | bool(false) %}
+  {% set next_start = (now() + timedelta(minutes=starts_in)) if has_next else none %}
+  {% set horizon = state_attr(entity, 'forecast_remaining_horizon_min') | int(60) %}
+
+  {% if states(entity) in ['unavailable', 'unknown'] %}
+    Keine Nowcast-Daten verfügbar.
+
+  {% elif raining_now %}
+    {% if current_open_end %}
+      Es regnet noch mindestens {{ horizon }} Minuten.
+    {% else %}
+      Es regnet noch {{ current_remaining }} Minuten.
+    {% endif %}
+
+  {% elif rain_soon %}
+    {% if next_open_end %}
+      In {{ starts_in }} Minuten beginnt Regen, voraussichtlich mindestens {{ next_length }} Minuten.
+    {% elif next_length > 0 %}
+      In {{ starts_in }} Minuten beginnt Regen für {{ next_length }} Minuten.
+    {% else %}
+      In {{ starts_in }} Minuten beginnt Regen.
+    {% endif %}
+
+  {% elif next_start is not none %}
+    {% if next_open_end %}
+      In {{ dauer(starts_in) }} beginnt Regen, voraussichtlich mindestens {{ next_length }} Minuten.
+    {% elif next_length > 0 %}
+      In {{ dauer(starts_in) }} beginnt Regen für {{ next_length }} Minuten.
+    {% else %}
+      Nächster Regen in {{ dauer(starts_in) }}.
+    {% endif %}
+
+  {% else %}
+    Kein Regen in den nächsten {{ horizon }} Minuten.
+  {% endif %}
+secondary: >-
+  {% set ns = namespace(cur=none, max=0.0) %}
+  {% for w in state_attr(device_entities(device_id(entity)) | select('match', 'binary_sensor') | first | default(''), 'forecast_5min') or [] %}
+    {% if w.end and as_datetime(w.end) > now() %}
+      {% set i = w.intensity | float(0) %}
+      {% if ns.cur is none %}{% set ns.cur = i %}{% endif %}
+      {% set ns.max = [ns.max, i] | max %}
+    {% endif %}
+  {% endfor %}
+  {% set raining_now = states(entity) == 'rain' %}
+  {% set starts_in = state_attr(entity, 'rain_starts_in_min') %}
+  {% set rain_soon = states(entity) == 'soon' and starts_in is number and starts_in <= 5 %}
+  {% set current_p = ns.cur | float(0) %}
+  {% set max_p = ns.max | round(1) %}
+  {% set nomen = {'rain': 'Regen', 'drizzle': 'Nieselregen', 'freezing_drizzle': 'gefrierender Nieselregen',
+    'freezing_rain': 'gefrierender Regen', 'sleet': 'Schneeregen', 'snow': 'Schneefall', 'graupel': 'Graupel',
+    'hail': 'Hagel', 'large_hail': 'Hagel mit großen Körnern', 'thunderstorm': 'Gewitterregen'} %}
+  {% set art = state_attr(entity, 'precipitation_type') or '' %}
+  {% set stufe = state_attr(entity, 'next_intensity_level') or 'leicht' %}
+  {% set wort = nomen.get(art, 'Niederschlag') %}
+  {% set intensity_text = wort if art in ['hail', 'large_hail'] else stufe ~ 'er ' ~ wort %}
+
+  {% if states(entity) in ['unavailable', 'unknown'] %}
+    DWD Nowcast nicht erreichbar
+  {% elif raining_now %}
+    Jetzt: {{ intensity_text }} · {{ current_p }} mm/h · max. {{ max_p }} mm/h
+  {% elif rain_soon %}
+    Bald: {{ intensity_text }} · Start in {{ starts_in }} Min. · max. {{ max_p }} mm/h
+  {% else %}
+    Aktuell trocken · Maximal im Fenster: {{ max_p }} mm/h
+  {% endif %}
+multiline_secondary: true
+color: >-
+  {% set ns = namespace(cur=none, max=0.0) %}
+  {% for w in state_attr(device_entities(device_id(entity)) | select('match', 'binary_sensor') | first | default(''), 'forecast_5min') or [] %}
+    {% if w.end and as_datetime(w.end) > now() %}
+      {% set i = w.intensity | float(0) %}
+      {% if ns.cur is none %}{% set ns.cur = i %}{% endif %}
+      {% set ns.max = [ns.max, i] | max %}
+    {% endif %}
+  {% endfor %}
+  {% set max_p = ns.max %}
+  {#- Farbschema wie der Hintergrund: Art vor Intensität (DWD-Schwellen in mm/h) -#}
+  {% set art = state_attr(entity, 'precipitation_type') or '' %}
+  {% if max_p <= 0 %}grey
+  {% elif art in ['freezing_drizzle', 'freezing_rain'] %}red
+  {% elif art == 'snow' %}white
+  {% elif art in ['hail', 'large_hail', 'thunderstorm'] or max_p >= 25 %}red
+  {% elif max_p >= 10 %}purple
+  {% elif max_p >= 1.0 %}blue
+  {% else %}grey
+  {% endif %}
+badge_icon: >-
+  {% set ns = namespace(cur=none, max=0.0) %}
+  {% for w in state_attr(device_entities(device_id(entity)) | select('match', 'binary_sensor') | first | default(''), 'forecast_5min') or [] %}
+    {% if w.end and as_datetime(w.end) > now() %}
+      {% set i = w.intensity | float(0) %}
+      {% if ns.cur is none %}{% set ns.cur = i %}{% endif %}
+      {% set ns.max = [ns.max, i] | max %}
+    {% endif %}
+  {% endfor %}
+  {% set max_p = ns.max %}
+  {% set starts_in = state_attr(entity, 'rain_starts_in_min') %}
+  {% if max_p >= 6 %}mdi:alert
+  {% elif states(entity) == 'soon' and starts_in is number and starts_in <= 5 %}mdi:umbrella
+  {% endif %}
+badge_color: >-
+  {% set ns = namespace(cur=none, max=0.0) %}
+  {% for w in state_attr(device_entities(device_id(entity)) | select('match', 'binary_sensor') | first | default(''), 'forecast_5min') or [] %}
+    {% if w.end and as_datetime(w.end) > now() %}
+      {% set i = w.intensity | float(0) %}
+      {% if ns.cur is none %}{% set ns.cur = i %}{% endif %}
+      {% set ns.max = [ns.max, i] | max %}
+    {% endif %}
+  {% endfor %}
+  {% set max_p = ns.max %}
+  {% set starts_in = state_attr(entity, 'rain_starts_in_min') %}
+  {% if max_p >= 6 %}red
+  {% elif states(entity) == 'soon' and starts_in is number and starts_in <= 5 %}blue
+  {% endif %}
+fill_container: true
+layout: horizontal
+tap_action:
+  action: more-info
+hold_action:
+  action: more-info
+card_mod:
+  style: |
+    {% set forecast = state_attr(device_entities(device_id(config.entity)) | select('match', 'binary_sensor') | first | default(''), 'forecast_5min') %}
+    ha-card {
+      {% if forecast is not none and forecast | count > 1 %}
+      background-image:
+        linear-gradient(
+          90deg
+          {% set duration = as_timestamp(forecast[-1].end) - now() | as_timestamp %}
+          {% if duration <= 0 %}{% set duration = 1 %}{% endif %}
+          {#- Farbschema: trocken transparent, Niesel schwach blassblau, Regen blau,
+                starker Regen violett, Unwetter rot, Schnee weiß, Eisregen rot.
+                Die Art gilt für das ganze Ereignis (Sensor-Attribut). -#}
+          {% set art = state_attr(config.entity, 'precipitation_type') or '' %}
+          {% for item in forecast %}
+            {% set ts = as_timestamp(item.start) %}
+            {% set pos = (((ts - (now() | as_timestamp)) / duration) * 100) | round %}
+            {% set y = item.intensity | float(0) %}
+            {% if y <= 0 %}{% set farbe = 'hsla(0, 0%, 100%, 0)' %}
+            {% elif art in ['freezing_drizzle', 'freezing_rain'] %}{% set farbe = 'hsla(0, 100%, 50%, 0.5)' %}
+            {% elif art == 'snow' %}{% set farbe = 'hsla(0, 0%, 100%, 0.85)' %}
+            {% elif art in ['hail', 'large_hail', 'thunderstorm'] or y >= 25 %}{% set farbe = 'hsla(0, 100%, 50%, 0.5)' %}
+            {% elif y >= 10 %}{% set farbe = 'hsla(280, 100%, 50%, 0.5)' %}
+            {% elif y >= 1.0 %}{% set farbe = 'hsla(210, 100%, 50%, 0.45)' %}
+            {% else %}{% set farbe = 'hsla(200, 80%, 75%, 0.25)' %}
+            {% endif %}
+            {% if pos >= -4 %}
+              , {{ farbe }} {{ [pos, 0] | max }}%
+            {% endif %}
+          {% endfor %}
+        );
+      {% endif %}
+    }
+    mushroom-state-info {
+      padding-right: 8px;
+    }
+    .primary, .secondary {
+      text-shadow: 0 1px 2px rgba(0,0,0,0.15);
+    }
+grid_options:
+  columns: full
