@@ -62,6 +62,20 @@ def _rs_what(base: datetime, lead: int) -> dict:
     }
 
 
+
+def _as_window(read_cell):
+    """Serve RV's neighbourhood window read from a per-cell mock.
+
+    RV reads a square around the location (``read_odim_composite_window``);
+    these tests only care about the location's own cell, so each lead becomes
+    a 1x1 window holding the cell value.
+    """
+    def _read(fileobj, row, col, _radius, **kw):
+        value, what = read_cell(fileobj, row, col, **kw)
+        return np.full((1, 1), value, dtype=np.float32), what, (0, 0)
+    return _read
+
+
 async def _rs_fetch(ts: datetime, values: dict[int, float], full: bool = True):
     """Run RadvorRS._fetch_and_parse, serving each decoded lead from ``values``."""
     decoded: list[int] = []
@@ -196,7 +210,7 @@ async def test_rv_fetch_derives_buckets_and_timing() -> None:
             "async_get",
             new=AsyncMock(return_value=AsyncResponse(content=make_rv_tar(ts))),
         ),
-        patch.object(products, "read_odim_composite_cell", side_effect=lambda _f, _r, _c, **_kw: next(reads)),
+        patch.object(products, "read_odim_composite_window", side_effect=_as_window(lambda _f, _r, _c, **_kw: next(reads))),
     ):
         data, meta = await coord._fetch_and_parse(ts)
 
@@ -254,7 +268,7 @@ async def test_rv_threshold_from_options_suppresses_light_rain() -> None:
             "async_get",
             new=AsyncMock(return_value=AsyncResponse(content=make_rv_tar(ts))),
         ),
-        patch.object(products, "read_odim_composite_cell", side_effect=lambda _f, _r, _c, **_kw: next(reads)),
+        patch.object(products, "read_odim_composite_window", side_effect=_as_window(lambda _f, _r, _c, **_kw: next(reads))),
     ):
         data, _meta = await coord._fetch_and_parse(ts)
 
@@ -289,7 +303,7 @@ async def test_rv_threshold_is_interpreted_as_mm_per_hour() -> None:
             "async_get",
             new=AsyncMock(return_value=AsyncResponse(content=make_rv_tar(ts))),
         ),
-        patch.object(products, "read_odim_composite_cell", side_effect=lambda _f, _r, _c, **_kw: next(reads)),
+        patch.object(products, "read_odim_composite_window", side_effect=_as_window(lambda _f, _r, _c, **_kw: next(reads))),
     ):
         data, _meta = await coord._fetch_and_parse(ts)
 
@@ -323,7 +337,7 @@ async def test_rv_end_algorithm_option_selects_clearing() -> None:
             "async_get",
             new=AsyncMock(return_value=AsyncResponse(content=make_rv_tar(ts))),
         ),
-        patch.object(products, "read_odim_composite_cell", side_effect=lambda _f, _r, _c, **_kw: next(episode_reads)),
+        patch.object(products, "read_odim_composite_window", side_effect=_as_window(lambda _f, _r, _c, **_kw: next(episode_reads))),
     ):
         episode, _ = await coord._fetch_and_parse(ts)
     assert episode["start_in"] == 5
@@ -338,7 +352,7 @@ async def test_rv_end_algorithm_option_selects_clearing() -> None:
             "async_get",
             new=AsyncMock(return_value=AsyncResponse(content=make_rv_tar(ts))),
         ),
-        patch.object(products, "read_odim_composite_cell", side_effect=lambda _f, _r, _c, **_kw: next(clearing_reads)),
+        patch.object(products, "read_odim_composite_window", side_effect=_as_window(lambda _f, _r, _c, **_kw: next(clearing_reads))),
     ):
         clearing, _ = await coord._fetch_and_parse(ts)
     assert clearing["start_in"] == 5
@@ -520,7 +534,7 @@ async def _rv_fetch(ts: datetime, values: dict[int, float | None]):
             "async_get",
             new=AsyncMock(return_value=AsyncResponse(content=make_rv_tar(ts))),
         ),
-        patch.object(products, "read_odim_composite_cell", side_effect=_read),
+        patch.object(products, "read_odim_composite_window", side_effect=_as_window(_read)),
     ):
         data, meta = await coord._fetch_and_parse(ts)
     assert coord.hass.executor_jobs == 1

@@ -239,7 +239,7 @@ def test_dry_streak_extra_data_roundtrip():
 # --- merged start/end sensors ------------------------------------------
 
 def test_timestamp_mode_state_is_time_with_minutes_attribute():
-    start, end = _rv_timing_sensors(START_END_MODE_TIMESTAMP)
+    start, end, _area = _rv_timing_sensors(START_END_MODE_TIMESTAMP)
     assert start.device_class is SensorDeviceClass.TIMESTAMP
     assert start.key == "radvor_rv_precipitation_start"
     assert end.key == "radvor_rv_precipitation_end"
@@ -251,7 +251,7 @@ def test_timestamp_mode_state_is_time_with_minutes_attribute():
 
 
 def test_duration_mode_state_is_minutes_with_time_attribute():
-    start, _end = _rv_timing_sensors(START_END_MODE_DURATION)
+    start, _end, _area = _rv_timing_sensors(START_END_MODE_DURATION)
     assert start.device_class is SensorDeviceClass.DURATION
     assert start.key == "radvor_rv_precipitation_start"
 
@@ -267,6 +267,7 @@ def test_timing_keys_are_stable_across_modes():
     assert ts_keys == dur_keys == {
         "radvor_rv_precipitation_start",
         "radvor_rv_precipitation_end",
+        "radvor_rv_area_precipitation_start",
     }
 
 
