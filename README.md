@@ -62,7 +62,7 @@ Names ending in **`next <N>`** are forecasts.
 - **Precipitation total (hourly)** (mm): running total of all rain since setup, grows once an hour. For "rain this week" and same-day automations
 - **Precipitation total (daily)** (mm): the same, built from `Precipitation yesterday`, grows once a day. For monthly and yearly statistics
 
-See [Entity details](#entity-details) for the full behaviour of each sensor and its attributes.
+See [Entity details](#entity-details) for the full behaviour of each sensor and its attributes, and [How DWD data is interpreted](#how-dwd-data-is-interpreted) for what the underlying DWD files contain.
 
 ## Screenshots
 
@@ -206,6 +206,116 @@ With **Add technical details to each sensor** enabled, every DWD sensor except `
 **`Precipitation last 1h`, `last 24h` or `yesterday` shows `unknown`.** DWD's file has no data for your grid cell, usually because of a radar outage. The next file normally fills it again; the running totals skip that window.
 
 **Old values persist after a DWD outage.** *Show sensors as unavailable when the data is out of date* is turned off, so the last value is kept. Turn it on to have sensors report `unavailable` instead.
+
+## How DWD data is interpreted
+
+This section describes how we understand the DWD files behind each sensor. It is based on the files' own metadata and on comparisons against live data, not on an official DWD statement. Each point says whether it was **verified** or is our **reading**.
+
+### The products at a glance
+
+| Product | One grid cell holds | Window per value | Measured or forecast | Rain gauges used | New file |
+|---------|---------------------|------------------|----------------------|------------------|----------|
+| **RV** | rain amount (mm) | 5 min | lead 0 measured, leads 5–120 forecast | no | every 5 min, 25 members |
+| **RS** | rain amount (mm) | 60 min, rolling | mixed (see below) | no | every 5 min, 25 members |
+| **HymecNG** | precipitation *type* class | none (snapshot) | measured | no | every 5 min, 1 member |
+| **RADOLAN RW** | rain amount (mm) | 60 min, ending HH:50 | measured | **yes** | hourly |
+| **RADOLAN SF** | rain amount (mm) | 24 h, ending HH:50 | measured | **yes** | hourly |
+
+A *lead* is the member's offset in minutes from the release time **T** (the time in the file name). Each member names its own window in its `startdate`/`starttime` and `enddate`/`endtime` attributes. Each member also carries DWD's `how/simulated` flag: `False` for observations, `True` for forecasts. **Verified** on live files: in both RV and RS only `_000` has `simulated=False`.
+
+### RV: one measured step, then the forecast
+
+```
+composite_rv_YYYYMMDD_HHMM.tar          release T
+├── _000   T-5    -> T        measured   simulated=False   <- "the last 5 minutes"
+├── _005   T      -> T+5      forecast   simulated=True
+├── _010   T+5    -> T+10     forecast
+│   ...
+└── _120   T+115  -> T+120    forecast
+```
+
+Each member is the rain amount in its 5 minutes. Multiply it by 12 to get a rate in mm/h, which is how the `Peak intensity` sensors and the `intensity` field of `forecast_5min` are computed. Lead 0 is the most current *measured* rain the integration receives. Today it appears only as the first entry (`lead` 0) of the `forecast_5min` attribute.
+
+### RS: RV summed into rolling hours
+
+Each RS member is a 60-minute total ending at T + lead, so neighbouring members overlap by 55 minutes. DWD builds the past part from the **measured lead 0 of earlier RV releases**, not from a forecast shifted back in time:
+
+```
+RS release T = 16:10 UTC
+
+            the past hour (measured)               |            the next hour (forecast)
+          15:10                              16:10 | 16:10                              17:10
+5-min     [m][m][m][m][m][m][m][m][m][m][m][m]     | [f][f][f][f][f][f][f][f][f][f][f][f]
+steps      ^                                ^      |  ^                                ^
+           lead 0 of RV 15:15      lead 0 of RV    |  RV 16:10 lead 5     RV 16:10 lead 60
+                                   16:10           |
+
+RS _000 = [m] x 12                 15:10 -> 16:10     simulated=False   "Precipitation now"
+RS _030 = [m] x 6  + [f] x 6       15:40 -> 16:40     simulated=True
+RS _060 = [f] x 12                 16:10 -> 17:10     simulated=True    "Precipitation next 1h"
+RS _120 = RV 16:10 leads 65..120   17:10 -> 18:10     simulated=True    "Precipitation next 1-2h"
+
+[m] = a 5-minute radar measurement, the lead 0 of the RV release ending at that step
+[f] = a 5-minute forecast step from the current RV release
+```
+
+**Verified** on 2026-10-11 against every cell of the German grid, for the RS releases at 12:05 and 16:10 UTC:
+
+| Comparison | 16:10 | 12:05 |
+|------------|-------|-------|
+| RS `_000` = sum of RV lead 0 from the 12 releases T-55 ... T | identical in every cell | identical except 0.10 % of cells, max 0.024 mm |
+| RS `_060` = sum of RV leads 5–60 of release T | identical | identical except 0.06 % of cells, max 0.011 mm |
+| RS `_030` = 6 past lead-0 steps + RV leads 5–30 of T | identical | identical except 0.12 % of cells, max 0.024 mm |
+| RS `_120` = sum of RV leads 65–120 of release T | identical | identical except 0.06 % of cells, max 0.010 mm |
+
+"Identical" means equal within the 0.001 mm resolution of the files. The few small differences appear in the purely forecast `_060` as well, so they don't come from reprocessed measurements. Our guess is that DWD sums values that have not yet been rounded to 0.001 mm. Re-run the check with [`scripts/verify_rs_rv.py`](scripts/verify_rs_rv.py) on any of the files DWD currently keeps (about the last two days).
+
+What this means for the sensors:
+
+- **`Precipitation now` is a measured value**, but it is the total of the **last hour**, not the rain falling right now. A shower that began 5 minutes ago barely shows; one that ended 50 minutes ago still counts. That is why it suits the reset threshold of `Timespan without precipitation`, where a short radar blip should not count as rain.
+- **`Peak hourly precipitation next 2h` gives the same value from RV or RS** because RS *is* summed RV. With *Include the past hour in the hourly forecast series* on, the first entries of `forecast_rolling_1h` are the measured/forecast mixtures shown for `_030` above.
+- At the edge of radar coverage, RV marks a forecast step as "no data" where RS reports 0. The integration counts such a step as 0, the same as RS does.
+
+### HymecNG: a snapshot, not a period
+
+```
+composite_HymecNG_YYYYMMDD_HHMM_000-hd5    release T
+└── _000   starttime = endtime = T        measured   simulated=False
+```
+
+Each cell holds a class (rain, snow, sleet, hail, ...) for the moment T. **Verified:** the file's start and end time are the same. There is no forecast of precipitation type, so `Precipitation type` describes the latest radar scan and changes in 5-minute steps.
+
+### RADOLAN RW / SF: radar corrected with rain gauges
+
+RW and SF are analyses: radar estimates corrected against DWD's network of rain gauges. They are the most accurate measured totals available here. The cost is speed: an RW window ends at HH:50 and the file arrives about 28 minutes later. So `Precipitation last 1h` can describe an hour that ended up to about 90 minutes ago. RS `_000` covers the same 60 minutes, radar only, but is never more than about 5 minutes old.
+
+### How fresh each value is
+
+| Sensor | Window of the value | Available on OpenData |
+|--------|---------------------|-----------------------|
+| `Precipitation now` | T-60 -> T | about 4 min after T |
+| RV lead 0 (`forecast_5min`, lead 0) | T-5 -> T | about 4 min after T |
+| `Precipitation type` | at T | about 2–3 min after T |
+| `Precipitation last 1h` | HH-1:50 -> HH:50 | about 28 min after HH:50 |
+| `Precipitation last 24h` | 24 h ending HH:50 | about 28 min after HH:50 |
+
+On top of this, each installation waits a fixed extra 0–30 s before fetching, so that not every installation hits DWD at the same second.
+
+### Accuracy
+
+DWD doesn't attach an accuracy figure to these files, and we don't quote one. What we can say:
+
+- **RV, RS and HymecNG are radar-only.** Radar measures reflectivity, which is converted to a rain rate. That conversion is the main source of error, together with:
+  - signal loss behind heavy rain cells
+  - mountains blocking the beam
+  - the beam overshooting low drizzle far from a radar
+  - melting snow at the freezing level ("bright band") reading as heavy rain
+  - snow amounts generally
+  
+  For one grid cell over one hour, expect radar-only totals to be off by tens of percent at times, in either direction.
+- **RW and SF are gauge-adjusted** and are the better choice for "how much really fell". This is why the running totals are built from them, not from RS.
+- **The forecast leads (`simulated=True`)** move the current rain field forward in time. They grow less reliable with lead time, and they cannot predict showers that have not formed yet.
+- **Radar outages:** every ODIM file lists the radar sites it used (`nodes`) and any that were down (`missing_nodes`, `incomplete_nodes`). A missing radar near your location is the most common reason one reading is clearly wrong.
 
 ## Data source
 

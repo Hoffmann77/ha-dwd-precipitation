@@ -364,7 +364,12 @@ and the rolling-hour series as `rolling_1h`. Two products can feed it, and
   windows that straddle now. ~+140 ms per release.
 
 The two are interchangeable by construction: RS *is* summed RV, verified on
-live data to 0.000 mm in every cell. A missing RV step counts as 0 because that
+live data (`scripts/verify_rs_rv.py`): every cell within the 0.001 mm resolution
+on some releases, and on others all but ~0.1 % of cells, those off by at most
+~0.02 mm (likely DWD summing unrounded values). The past part of RS comes from
+the measured lead 0 of earlier RV releases (`how/simulated=False`), not from a
+back-shifted forecast; see the README's "How DWD data is interpreted".
+A missing RV step counts as 0 because that
 is what RS reports at the coverage edge, and both round to the ODIM 0.001 mm
 resolution (`MM_DECIMALS`). Keep it that way — flipping the option must not
 move the state, and a test asserts both paths give the same peak, window and
