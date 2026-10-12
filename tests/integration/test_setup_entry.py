@@ -28,6 +28,7 @@ from custom_components.dwd_precipitation.coordinator import ProductMetadata
 from custom_components.dwd_precipitation.products import (
     HymecNG,
     RadolanRW,
+    RadolanRW10,
     RadolanSF,
     RadolanSFLastYesterday,
     RadvorRS,
@@ -279,6 +280,7 @@ WORKING_PRODUCTS = {
     RadvorRV: (RV_DATA, RV_META),
     HymecNG: ("snow", {}),
     RadolanRW: (3.2, {}),
+    RadolanRW10: (2.7, {}),
     RadolanSF: (12.5, {}),
     RadolanSFLastYesterday: (24.0, {}),
 }
@@ -453,7 +455,52 @@ async def test_dry_streak_sensor_binds_to_the_configured_source(
     assert entry.minor_version == 2
     if minor_version == 1:
         assert entry.options[CONF_DRY_STREAK_SOURCE] == bound_to
-    assert _dry_streak_sensor(hass).coordinator is entry.runtime_data.coordinators[bound_to]
+    # An RW dry streak counts RW's 10-minute runs.
+    key = "rw_10min" if bound_to == "rw" else bound_to
+    assert _dry_streak_sensor(hass).coordinator is entry.runtime_data.coordinators[key]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("options", "built", "rw_sensor_on"),
+    [
+        # Nothing uses the 10-minute runs: no coordinator, no requests.
+        ({CONF_DRY_STREAK_SOURCE: "rs"}, False, "rw"),
+        ({CONF_DRY_STREAK_SOURCE: "rs", "rw_last_hour_mode": "fixed"}, False, "rw"),
+        # The dry streak alone needs them; the sensor stays on fixed hours.
+        ({CONF_DRY_STREAK_SOURCE: "rw"}, True, "rw"),
+        # The sensor asks for the sliding hour.
+        ({CONF_DRY_STREAK_SOURCE: "rs", "rw_last_hour_mode": "sliding"}, True, "rw_10min"),
+    ],
+)
+async def test_sliding_rw_is_built_only_when_used(
+    hass: HomeAssistant, options: dict, built: bool, rw_sensor_on: str
+) -> None:
+    """rw_10min exists only for the option or the dry streak that use it."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"name": "Home", "latitude": 51.05, "longitude": 13.73},
+        options=options,
+        minor_version=2,
+    )
+    entry.add_to_hass(hass)
+
+    with _patched_products():
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    coordinators = entry.runtime_data.coordinators
+    assert ("rw_10min" in coordinators) is built
+    # The hourly total always adds the fixed hours.
+    total = next(
+        entity
+        for platform in async_get_platforms(hass, DOMAIN)
+        for entity in platform.entities.values()
+        if entity.unique_id.endswith("_radolan_rw_total")
+    )
+    assert total.coordinator is coordinators["rw"]
+    expected = {"rw": 3.2, "rw_10min": 2.7}[rw_sensor_on]
+    assert float(_state_for(hass, "radolan_rw").state) == approx(expected)
 
 
 @pytest.mark.asyncio

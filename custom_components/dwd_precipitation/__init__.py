@@ -21,6 +21,7 @@ from .products import (
     RadvorRV,
     HymecNG,
     RadolanRW,
+    RadolanRW10,
     RadolanSF,
     RadolanSFLastYesterday,
 )
@@ -30,6 +31,7 @@ PRODUCT_CLASSES: tuple[type[BaseProductUpdateCoordinator], ...] = (
     RadvorRV,
     HymecNG,
     RadolanRW,
+    RadolanRW10,
     RadolanSF,
     RadolanSFLastYesterday,
 )
@@ -53,8 +55,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: MyConfigEntry) -> bool:
     lat = entry.data["latitude"]
     lon = entry.data["longitude"]
 
+    # Products that exist for one option are only built when it is in use, so
+    # an entry never fetches what none of its entities show.
     product_coordinators: list[BaseProductUpdateCoordinator] = [
-        cls(hass, entry, client, lat, lon) for cls in PRODUCT_CLASSES
+        cls(hass, entry, client, lat, lon)
+        for cls in PRODUCT_CLASSES
+        if cls.is_needed(entry.options)
     ]
 
     # Refresh every product concurrently. async_refresh() records a failure on

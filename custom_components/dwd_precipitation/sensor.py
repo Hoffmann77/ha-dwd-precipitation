@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any
 
@@ -36,6 +36,11 @@ from .const import (
     CONF_DRY_STREAK_SOURCE,
     DEFAULT_DRY_STREAK_SOURCE,
     DRY_STREAK_SOURCE_RS,
+    DRY_STREAK_SOURCE_RW,
+    CONF_RW_LAST_HOUR_MODE,
+    DEFAULT_RW_LAST_HOUR_MODE,
+    RW_LAST_HOUR_SLIDING,
+    RW_SLIDING_KEY,
     CONF_START_END_MODE,
     DEFAULT_START_END_MODE,
     START_END_MODE_DURATION,
@@ -105,6 +110,21 @@ RADOLAN_SENSORS = (
         access_fn=lambda d: d,
     ),
 )
+
+
+def _radolan_sensors(rw_mode: str) -> tuple[PrecipitationSensorEntityDescription, ...]:
+    """Return the RADOLAN sensors, the last-1h one bound to the chosen RW runs.
+
+    The key stays radolan_rw either way, so switching keeps the entity, its id
+    and its history; only the hour it shows changes from a fixed one to the
+    latest sliding one.
+    """
+    if rw_mode != RW_LAST_HOUR_SLIDING:
+        return RADOLAN_SENSORS
+    return tuple(
+        replace(d, product_key=RW_SLIDING_KEY) if d.key == "radolan_rw" else d
+        for d in RADOLAN_SENSORS
+    )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -354,7 +374,9 @@ async def async_setup_entry(
         + RADVOR_RV_SENSORS
         + _rv_timing_sensors(mode)
         + HYMECNG_SENSORS
-        + RADOLAN_SENSORS
+        + _radolan_sensors(
+            entry.options.get(CONF_RW_LAST_HOUR_MODE, DEFAULT_RW_LAST_HOUR_MODE)
+        )
     )
 
     entities: list[SensorEntity] = [
@@ -370,12 +392,19 @@ async def async_setup_entry(
     )
     # Changing the source reloads the entry, so binding once at setup is enough.
     # The unique id does not depend on it, so the entity and its persisted
-    # dry_since survive a switch.
+    # dry_since survive a switch. RW counts its 10-minute runs: as strongly
+    # gauge-adjusted as HH:50, and a reset shows up to an hour sooner.
     dry_streak_source = entry.options.get(
         CONF_DRY_STREAK_SOURCE, DEFAULT_DRY_STREAK_SOURCE
     )
     entities.append(
-        TimespanWithoutPrecipitationSensor(coordinators[dry_streak_source])
+        TimespanWithoutPrecipitationSensor(
+            coordinators[
+                RW_SLIDING_KEY
+                if dry_streak_source == DRY_STREAK_SOURCE_RW
+                else dry_streak_source
+            ]
+        )
     )
 
     async_add_entities(entities)
