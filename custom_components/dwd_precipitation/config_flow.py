@@ -7,7 +7,7 @@ import logging
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.core import callback
-from homeassistant.data_entry_flow import FlowResult
+from homeassistant.data_entry_flow import FlowResult, section
 from homeassistant.helpers import selector
 from homeassistant.const import CONF_NAME
 
@@ -29,10 +29,24 @@ from .const import (
     RAIN_END_ALGO_CLEARING,
     CONF_PRECIPITATION_RESET_THRESHOLD,
     DEFAULT_PRECIPITATION_RESET_THRESHOLD,
+    CONF_DRY_STREAK_SOURCE,
+    DEFAULT_DRY_STREAK_SOURCE,
+    DRY_STREAK_SOURCE_RW,
+    DRY_STREAK_SOURCE_RS,
     CONF_FULL_ROLLING_SERIES,
     DEFAULT_FULL_ROLLING_SERIES,
+    CONF_RAIN_EVENT_THRESHOLD,
+    DEFAULT_RAIN_EVENT_THRESHOLD,
+    CONF_RW_LAST_HOUR_MODE,
+    DEFAULT_RW_LAST_HOUR_MODE,
+    RW_LAST_HOUR_FIXED,
+    RW_LAST_HOUR_SLIDING,
 )
 from .radar import rs_grid_contains
+
+# The collapsed part of the options form. Only the form is nested: its values
+# are stored flat with the others (see OptionsFlowHandler.async_step_init).
+SECTION_ADVANCED = "advanced_options"
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -42,27 +56,25 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
     """Handle options flow for DWD Precipitation."""
 
     async def async_step_init(self, user_input=None) -> FlowResult:
-        """Manage the options."""
-        if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
+        """Manage the options.
 
-        schema = vol.Schema(
+        The form nests the rarely needed options in a collapsed section, but
+        they are stored flat like the rest: every option keeps its key, so
+        nothing reading ``entry.options`` notices the section and no
+        migration is needed.
+        """
+        if user_input is not None:
+            data = {k: v for k, v in user_input.items() if k != SECTION_ADVANCED}
+            data.update(user_input.get(SECTION_ADVANCED, {}))
+            return self.async_create_entry(title="", data=data)
+
+        options = self.config_entry.options
+        advanced = vol.Schema(
             {
                 vol.Optional(
-                    CONF_EXTRA_ATTRIBUTES,
-                    default=self.config_entry.options.get(CONF_EXTRA_ATTRIBUTES, False),
-                ): selector.BooleanSelector(),
-                vol.Optional(
-                    CONF_UNAVAILABLE_WHEN_STALE,
-                    default=self.config_entry.options.get(
-                        CONF_UNAVAILABLE_WHEN_STALE,
-                        DEFAULT_UNAVAILABLE_WHEN_STALE,
-                    ),
-                ): selector.BooleanSelector(),
-                vol.Optional(
-                    CONF_PRECIPITATION_THRESHOLD,
-                    default=self.config_entry.options.get(
-                        CONF_PRECIPITATION_THRESHOLD, DEFAULT_PRECIPITATION_THRESHOLD
+                    CONF_RAIN_EVENT_THRESHOLD,
+                    default=options.get(
+                        CONF_RAIN_EVENT_THRESHOLD, DEFAULT_RAIN_EVENT_THRESHOLD
                     ),
                 ): selector.NumberSelector(
                     selector.NumberSelectorConfig(
@@ -73,23 +85,20 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     )
                 ),
                 vol.Optional(
-                    CONF_START_END_MODE,
-                    default=self.config_entry.options.get(
-                        CONF_START_END_MODE, DEFAULT_START_END_MODE
+                    CONF_RW_LAST_HOUR_MODE,
+                    default=options.get(
+                        CONF_RW_LAST_HOUR_MODE, DEFAULT_RW_LAST_HOUR_MODE
                     ),
                 ): selector.SelectSelector(
                     selector.SelectSelectorConfig(
-                        options=[
-                            START_END_MODE_TIMESTAMP,
-                            START_END_MODE_DURATION,
-                        ],
-                        translation_key=CONF_START_END_MODE,
+                        options=[RW_LAST_HOUR_FIXED, RW_LAST_HOUR_SLIDING],
+                        translation_key=CONF_RW_LAST_HOUR_MODE,
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),
                 vol.Optional(
                     CONF_PRECIPITATION_END_ALGORITHM,
-                    default=self.config_entry.options.get(
+                    default=options.get(
                         CONF_PRECIPITATION_END_ALGORITHM, DEFAULT_PRECIPITATION_END_ALGORITHM
                     ),
                 ): selector.SelectSelector(
@@ -103,8 +112,55 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     )
                 ),
                 vol.Optional(
+                    CONF_FULL_ROLLING_SERIES,
+                    default=options.get(
+                        CONF_FULL_ROLLING_SERIES, DEFAULT_FULL_ROLLING_SERIES
+                    ),
+                ): selector.BooleanSelector(),
+                vol.Optional(
+                    CONF_UNAVAILABLE_WHEN_STALE,
+                    default=options.get(
+                        CONF_UNAVAILABLE_WHEN_STALE,
+                        DEFAULT_UNAVAILABLE_WHEN_STALE,
+                    ),
+                ): selector.BooleanSelector(),
+            }
+        )
+        schema = vol.Schema(
+            {
+                vol.Optional(
+                    CONF_EXTRA_ATTRIBUTES,
+                    default=options.get(CONF_EXTRA_ATTRIBUTES, False),
+                ): selector.BooleanSelector(),
+                vol.Optional(
+                    CONF_PRECIPITATION_THRESHOLD,
+                    default=options.get(
+                        CONF_PRECIPITATION_THRESHOLD, DEFAULT_PRECIPITATION_THRESHOLD
+                    ),
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=0,
+                        step=0.1,
+                        unit_of_measurement="mm/h",
+                        mode=selector.NumberSelectorMode.BOX,
+                    )
+                ),
+                vol.Optional(
+                    CONF_START_END_MODE,
+                    default=options.get(CONF_START_END_MODE, DEFAULT_START_END_MODE),
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=[
+                            START_END_MODE_TIMESTAMP,
+                            START_END_MODE_DURATION,
+                        ],
+                        translation_key=CONF_START_END_MODE,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+                vol.Optional(
                     CONF_PRECIPITATION_RESET_THRESHOLD,
-                    default=self.config_entry.options.get(
+                    default=options.get(
                         CONF_PRECIPITATION_RESET_THRESHOLD, DEFAULT_PRECIPITATION_RESET_THRESHOLD
                     ),
                 ): selector.NumberSelector(
@@ -116,11 +172,21 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     )
                 ),
                 vol.Optional(
-                    CONF_FULL_ROLLING_SERIES,
-                    default=self.config_entry.options.get(
-                        CONF_FULL_ROLLING_SERIES, DEFAULT_FULL_ROLLING_SERIES
+                    CONF_DRY_STREAK_SOURCE,
+                    default=options.get(
+                        CONF_DRY_STREAK_SOURCE, DEFAULT_DRY_STREAK_SOURCE
                     ),
-                ): selector.BooleanSelector(),
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=[
+                            DRY_STREAK_SOURCE_RW,
+                            DRY_STREAK_SOURCE_RS,
+                        ],
+                        translation_key=CONF_DRY_STREAK_SOURCE,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+                vol.Required(SECTION_ADVANCED): section(advanced, {"collapsed": True}),
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)
@@ -131,7 +197,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
-    MINOR_VERSION = 1
+    # 1.2: options carry CONF_DRY_STREAK_SOURCE (see async_migrate_entry).
+    MINOR_VERSION = 2
 
     @staticmethod
     @callback
@@ -164,9 +231,13 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "coordinates_out_of_range"
 
             if not errors:
+                # Store the source explicitly rather than leaving it to the
+                # read-time default, so a later change of the default never
+                # moves an existing install.
                 return self.async_create_entry(
                     title=data[CONF_NAME],
                     data=data,
+                    options={CONF_DRY_STREAK_SOURCE: DEFAULT_DRY_STREAK_SOURCE},
                 )
 
         return self.async_show_form(

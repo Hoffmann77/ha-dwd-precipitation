@@ -164,6 +164,41 @@ async def test_rs_without_option_decodes_only_the_three_hours() -> None:
     assert [m.lead_time_minutes for m in meta[:3]] == [0, 60, 120]
 
 
+
+@pytest.mark.asyncio
+async def test_rs_without_option_reads_the_hours_by_range() -> None:
+    """RS: the default mode asks for byte ranges instead of the whole archive."""
+    ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
+    archive = make_rs_tar(ts)
+    calls: list[dict | None] = []
+
+    async def fake_get(url, _client, headers=None, **_kw):
+        calls.append(headers)
+        start, end = (int(x) for x in headers["Range"][6:].split("-"))
+        end = min(end, len(archive) - 1)
+        return AsyncResponse(
+            content=archive[start:end + 1],
+            status=206,
+            headers={"Content-Range": f"bytes {start}-{end}/{len(archive)}"},
+        )
+
+    def _read(fileobj, _row, _col, **_kw):
+        lead = int(fileobj.getvalue())
+        return np.float32(lead), _rs_what(ts, lead)
+
+    coord = _coord(RadvorRS, {"full_rolling_series": False})
+    with (
+        patch.object(products, "async_get", side_effect=fake_get),
+        patch.object(products, "read_odim_composite_cell", side_effect=_read),
+    ):
+        data, _ = await coord._fetch_and_parse(ts)
+
+    assert data[:3] == [0.0, 60.0, 120.0]
+    # The test archive is tiny, so the first window already holds all three.
+    assert len(calls) == 1
+    assert calls[0]["Range"].startswith("bytes=0-")
+    assert coord.hass.executor_jobs == 1
+
 def _rv_what(base: datetime, lead: int) -> dict:
     """ODIM /dataset/what for an RV member: 5-min window [T+lead-5, T+lead]."""
     end = base + timedelta(minutes=lead)
@@ -562,6 +597,35 @@ async def test_rv_peak_hour_matches_rs_for_the_same_rain() -> None:
 
 
 @pytest.mark.asyncio
+async def test_rv_intensity_now_is_the_analysis_step_as_a_rate() -> None:
+    """RV: lead 0 (the 5 minutes ending at T) becomes mm/h, with its window."""
+    ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
+    rv: dict[int, float | None] = {lead: 0.0 for lead in range(0, 121, 5)}
+    # The float32 reading carries noise below the ODIM 0.001 mm resolution.
+    rv.update({0: 0.123, 5: 2.0})
+    data, meta = await _rv_fetch(ts, rv)
+
+    assert data["amount_000"] == 0.123
+    assert data["intensity_000"] == 1.476  # exact at 0.001 mm resolution, not 1.47600001
+    assert meta["intensity_000"].lead_time_minutes == 0
+    assert meta["intensity_000"].source_timestamp == ts
+    assert meta["intensity_000"].data_start == datetime(2026, 5, 18, 15, 55, tzinfo=timezone.utc)
+    assert meta["intensity_000"].data_end == ts
+
+
+@pytest.mark.asyncio
+async def test_rv_intensity_now_is_unknown_without_the_analysis() -> None:
+    """RV: a missing lead-0 member leaves both values None rather than 0."""
+    ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
+    rv: dict[int, float | None] = {lead: 0.0 for lead in range(0, 121, 5)}
+    rv[0] = None
+    data, _ = await _rv_fetch(ts, rv)
+
+    assert data["intensity_000"] is None
+    assert data["amount_000"] is None
+
+
+@pytest.mark.asyncio
 async def test_rv_peak_hour_treats_missing_step_as_dry() -> None:
     """RV: a missing 5-minute member counts as 0, as RS does at the coverage edge."""
     ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
@@ -578,3 +642,207 @@ async def test_rv_peak_hour_treats_missing_step_as_dry() -> None:
         "end": "2026-05-18T17:00:00+00:00",
         "value": pytest.approx(1.0),
     }
+
+
+# ---------------------------------------------------------------------------
+# RV: rain_events glue (fill, track, persist)
+# ---------------------------------------------------------------------------
+
+
+class _FakeStore:
+    """Stands in for homeassistant.helpers.storage.Store."""
+
+    def __init__(self, data=None) -> None:
+        self.data = data
+        self.delays: list[float] = []
+
+    async def async_load(self):
+        return self.data
+
+    def async_delay_save(self, data_func, delay):
+        self.data = data_func()
+        self.delays.append(delay)
+
+    async def async_save(self, data):
+        self.data = data
+
+
+def _rv_release_tar(ts: datetime) -> bytes:
+    """An RV tar whose member payloads name their release and lead."""
+    import io
+    import tarfile
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w", format=tarfile.USTAR_FORMAT) as tf:
+        for lead in range(0, 121, 5):
+            payload = f"{ts:%H%M}:{lead:03d}".encode()
+            info = tarfile.TarInfo(f"composite_rv_{ts:%Y%m%d_%H%M}_{lead:03d}-hd5")
+            info.size = len(payload)
+            tf.addfile(info, io.BytesIO(payload))
+    return buf.getvalue()
+
+
+class _RVWorld:
+    """Serves RV releases (whole or by range) for a rain function."""
+
+    def __init__(self, rain, missing=()) -> None:
+        self.rain = rain  # step end -> mm
+        self.missing = set(missing)  # releases DWD does not serve
+        self.requests: list[tuple[datetime, dict | None]] = []
+
+    async def get(self, url, _client, headers=None, **_kw):
+        stamp = url.rsplit("_", 2)[-2] + url.rsplit("_", 1)[-1][:4]
+        ts = datetime.strptime(stamp, "%Y%m%d%H%M").replace(tzinfo=timezone.utc)
+        self.requests.append((ts, headers))
+        if ts in self.missing:
+            import aiohttp
+            from yarl import URL
+
+            info = aiohttp.RequestInfo(URL(url), "GET", {}, URL(url))
+            raise aiohttp.ClientResponseError(info, (), status=404, message="Not Found")
+        archive = _rv_release_tar(ts)
+        if not headers:
+            return AsyncResponse(content=archive)
+        start, end = (int(x) for x in headers["Range"][6:].split("-"))
+        end = min(end, len(archive) - 1)
+        return AsyncResponse(
+            content=archive[start:end + 1],
+            status=206,
+            headers={"Content-Range": f"bytes {start}-{end}/{len(archive)}"},
+        )
+
+    def read(self, fileobj, _row, _col, **_kw):
+        stamp, lead = fileobj.getvalue().decode().split(":")
+        base = DAY_RV.replace(hour=int(stamp[:2]), minute=int(stamp[2:]))
+        step_end = base + timedelta(minutes=int(lead))
+        return np.float32(self.rain(step_end)), _rv_what(base, int(lead))
+
+
+DAY_RV = datetime(2026, 10, 12, tzinfo=timezone.utc)
+
+
+def _rv_tracked(store=None, options=None):
+    coord = _coord(RadvorRV, options)
+    coord._rain_store = store if store is not None else _FakeStore()
+    coord._rain_state = None
+    return coord
+
+
+async def _rv_release(coord, world, hhmm):
+    ts = DAY_RV.replace(hour=int(hhmm[:2]), minute=int(hhmm[3:]))
+    with (
+        patch.object(products, "async_get", side_effect=world.get),
+        patch.object(products, "read_odim_composite_cell", side_effect=world.read),
+    ):
+        return await coord._fetch_and_parse(ts)
+
+
+def _rain_between(lo, hi, mm=1.0):
+    lo_t = DAY_RV.replace(hour=int(lo[:2]), minute=int(lo[3:]))
+    hi_t = DAY_RV.replace(hour=int(hi[:2]), minute=int(hi[3:]))
+    return lambda t: mm if lo_t < t <= hi_t else 0.0
+
+
+@pytest.mark.asyncio
+async def test_rv_first_release_fills_the_hour_by_range_reads() -> None:
+    world = _RVWorld(_rain_between("13:30", "14:10"))
+    coord = _rv_tracked()
+
+    data, _ = await _rv_release(coord, world, "14:00")
+
+    events = data["rain_events"]
+    assert events["history_complete"] is True
+    assert events["steps"][:12] == [0.0] * 6 + [1.0] * 6
+    event = events["events"][0]
+    assert (event["status"], event["start"]) == ("ongoing", "2026-10-12T13:30:00+00:00")
+    # One whole archive for the release itself, then 11 analyses by range.
+    fills = [h for _, h in world.requests if h]
+    assert len(fills) == 11 and all(h["Range"].startswith("bytes=0-") for h in fills)
+
+
+@pytest.mark.asyncio
+async def test_rv_next_release_fills_nothing_and_keeps_the_id() -> None:
+    world = _RVWorld(_rain_between("13:30", "15:00"))
+    coord = _rv_tracked()
+    first, _ = await _rv_release(coord, world, "14:00")
+    world.requests.clear()
+
+    second, _ = await _rv_release(coord, world, "14:05")
+
+    assert [h for _, h in world.requests] == [None]  # just the release itself
+    assert second["rain_events"]["events"][0]["id"] == first["rain_events"]["events"][0]["id"]
+
+
+@pytest.mark.asyncio
+async def test_rv_failed_fill_stops_the_round_and_warns_once(caplog) -> None:
+    rain = _rain_between("13:30", "15:00")
+    missing = {DAY_RV.replace(hour=13, minute=55)}
+    world = _RVWorld(rain, missing=missing)
+    coord = _rv_tracked()
+
+    data, _ = await _rv_release(coord, world, "14:00")
+    # Newest first: 13:55 fails, and the older steps wait for the next round.
+    assert data["rain_events"]["steps"][:11] == [None] * 11
+    await _rv_release(coord, world, "14:05")
+
+    warnings = [r for r in caplog.records if "to fill the rain_events history" in r.message]
+    assert len(warnings) == 1
+    assert "nothing is wrong with your setup" in warnings[0].message
+    # The RV sensors themselves are unaffected.
+    assert data["max_060"] == pytest.approx(12.0)
+
+
+@pytest.mark.asyncio
+async def test_rv_state_survives_a_restart_through_the_store() -> None:
+    world = _RVWorld(_rain_between("13:30", "15:00"))
+    store = _FakeStore()
+    first, _ = await _rv_release(_rv_tracked(store), world, "14:00")
+
+    restarted = _rv_tracked(_FakeStore(store.data))
+    world.requests.clear()
+    after, _ = await _rv_release(restarted, world, "14:20")
+
+    assert after["rain_events"]["events"][0]["id"] == first["rain_events"]["events"][0]["id"]
+    # Only the 20 minutes of downtime are filled.
+    assert len([h for _, h in world.requests if h]) == 3
+
+
+@pytest.mark.asyncio
+async def test_rv_saves_promptly_only_while_something_is_at_stake() -> None:
+    from custom_components.dwd_precipitation.products import (
+        RAIN_IDLE_SAVE_DELAY,
+        RAIN_SAVE_DELAY,
+    )
+
+    store = _FakeStore()
+    coord = _rv_tracked(store)
+    await _rv_release(coord, _RVWorld(lambda _t: 0.0), "14:00")
+    assert store.delays[-1] == RAIN_IDLE_SAVE_DELAY.total_seconds()
+
+    await _rv_release(coord, _RVWorld(_rain_between("15:00", "15:10")), "14:05")
+    assert store.delays[-1] == RAIN_SAVE_DELAY.total_seconds()
+
+
+@pytest.mark.asyncio
+async def test_rv_unreadable_store_starts_over(caplog) -> None:
+    coord = _rv_tracked(_FakeStore({"measured_start": "not a time", "measured": [1.0]}))
+    data, _ = await _rv_release(coord, _RVWorld(lambda _t: 0.0), "14:00")
+    assert data["rain_events"]["schema"] == 1
+    assert any("Discarding the saved rain_events state" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_rv_tracker_failure_leaves_the_sensors_alone(caplog) -> None:
+    coord = _rv_tracked()
+    with patch.object(products, "update_rain_events", side_effect=RuntimeError("bug")):
+        data, _ = await _rv_release(coord, _RVWorld(lambda _t: 0.0), "14:00")
+    assert data["rain_events"] is None
+    assert data["max_060"] == 0.0
+    assert any("Could not update the rain_events attribute" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_rv_threshold_option_sets_the_wet_step() -> None:
+    coord = _rv_tracked(options={"rain_event_threshold": 0.6})
+    data, _ = await _rv_release(coord, _RVWorld(lambda _t: 0.0), "14:00")
+    assert data["rain_events"]["wet_step_mm"] == 0.05

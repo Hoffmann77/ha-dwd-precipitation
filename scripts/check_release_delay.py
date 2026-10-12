@@ -231,6 +231,12 @@ PRODUCTS: dict[str, ProductSpec] = {
         "RadolanRW",
         lambda ts: f"{_OPENDATA}/radolan/rw/raa01-rw_10000-{ts.strftime('%y%m%d%H%M')}-dwd---bin.hdf5",
     ),
+    # RW's 10-minute runs: the same file family as "rw", on a 10-minute grid.
+    "rw_10min": ProductSpec(
+        "rw_10min",
+        "RadolanRW10",
+        lambda ts: f"{_OPENDATA}/radolan/rw/raa01-rw_10000-{ts.strftime('%y%m%d%H%M')}-dwd---bin.hdf5",
+    ),
     "sf": ProductSpec(
         "sf",
         "RadolanSF",
@@ -246,6 +252,7 @@ TARGET_WINDOW_HOURS: dict[str, float] = {
     "rs": 12,
     "hymecng": 12,
     "rw": 24,
+    "rw_10min": 24,
     "sf": 24,
 }
 
@@ -399,11 +406,11 @@ def _fmt(td: timedelta | None) -> str:
 
 
 def _report_lines(measurements: list[Measurement], grace: timedelta) -> list[str]:
-    header = f"{'product':<8}{'status':<8}{'configured':>12}{'observed':>12}{'overrun':>12}{'grace':>10}"
+    header = f"{'product':<10}{'status':<8}{'configured':>12}{'observed':>12}{'overrun':>12}{'grace':>10}"
     lines = [header, "-" * len(header)]
     for m in measurements:
         lines.append(
-            f"{m.key:<8}{m.status(grace):<8}"
+            f"{m.key:<10}{m.status(grace):<8}"
             f"{_fmt(m.configured):>12}{_fmt(m.observed):>12}"
             f"{_fmt(m.overrun):>12}{_fmt(grace):>10}"
         )

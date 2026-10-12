@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import tarfile
 from abc import ABC, abstractmethod
@@ -10,6 +11,7 @@ from functools import cached_property
 from io import BytesIO
 
 import numpy as np
+from homeassistant.helpers.storage import Store
 
 from .coordinator import (
     DEFAULT_OVERDUE_GRACE,
@@ -17,6 +19,7 @@ from .coordinator import (
     ProductMetadata,
 )
 from .utils import async_get
+from .radar.tar_range import fetch_tar_members, member_names
 from .radar import (
     read_odim_composite_cell,
     read_odim_classification_cell,
@@ -36,7 +39,25 @@ from .radar.nowcast import (
     peak_rolling_hour,
     rolling_hour_sums,
 )
+from .rain_events import (
+    RainEventsState,
+    at_stake,
+    record_measured,
+    steps_to_fill,
+    update as update_rain_events,
+    wet_step_milli,
+)
 from .const import (
+    DOMAIN,
+    CONF_DRY_STREAK_SOURCE,
+    DEFAULT_DRY_STREAK_SOURCE,
+    DRY_STREAK_SOURCE_RW,
+    CONF_RW_LAST_HOUR_MODE,
+    DEFAULT_RW_LAST_HOUR_MODE,
+    RW_LAST_HOUR_SLIDING,
+    RW_SLIDING_KEY,
+    CONF_RAIN_EVENT_THRESHOLD,
+    DEFAULT_RAIN_EVENT_THRESHOLD,
     CONF_FULL_ROLLING_SERIES,
     DEFAULT_FULL_ROLLING_SERIES,
     CONF_PRECIPITATION_THRESHOLD,
@@ -75,34 +96,100 @@ def _parse_odim_ts(date: str | None, time: str | None) -> datetime | None:
 RS_HOURLY_LEADS = (0, 60, 120)
 
 
-def _read_tar_cells(
-    content: bytes, prefix: str, leads, cell: tuple[int, int], label: str
+# A 206 answer is one window of a RADVOR tar, at most a few members of under
+# 1 MB each; anything near this cap is not what was asked for.
+RANGE_MAX_BYTES = 8 * 1024 * 1024
+
+RAIN_EVENTS_STORE_VERSION = 1
+
+# Filling missed analyses may hold an RV update this long, at most.
+RAIN_FILL_BUDGET = timedelta(seconds=30)
+
+# How soon the rain_events state is written: promptly while an event or an
+# unknown step is at stake, otherwise not before shutdown (see
+# RadvorRV._schedule_rain_save).
+RAIN_SAVE_DELAY = timedelta(seconds=10)
+RAIN_IDLE_SAVE_DELAY = timedelta(hours=12)
+
+
+def rain_events_store_key(entry_id: str) -> str:
+    """Return the Store key of one config entry's rain_events state."""
+    return f"{DOMAIN}.{entry_id}.rain_events"
+
+
+def _tar_members(content: bytes, prefix: str, leads) -> dict[str, bytes]:
+    """Return the requested members of a whole RADVOR tar, by name."""
+    out: dict[str, bytes] = {}
+    with tarfile.open(fileobj=BytesIO(content), mode="r") as tf:
+        for name in member_names(prefix, leads):
+            try:
+                f = tf.extractfile(name)
+            except KeyError:
+                continue
+            if f is not None:
+                out[name] = f.read()
+    return out
+
+
+def _decode_cells(
+    members: dict[str, bytes], prefix: str, leads, cell: tuple[int, int], label: str
 ) -> dict[int, tuple[float | None, dict] | None]:
-    """Decode one grid cell from each requested member of a RADVOR tar.
+    """Decode one grid cell from each requested RADVOR member.
 
     Returns ``{lead: (value, dataset_what)}``; ``value`` is ``None`` for nodata,
-    and a member missing from the archive maps to ``None`` (logged).
+    and a member missing from ``members`` maps to ``None`` (logged).
     """
     row, col = cell
     out: dict[int, tuple[float | None, dict] | None] = {}
-    with tarfile.open(fileobj=BytesIO(content), mode="r") as tf:
-        for lead in leads:
-            member_name = f"{prefix}_{lead:03d}-hd5"
-            try:
-                f = tf.extractfile(member_name)
-            except KeyError:
-                f = None
-            if f is None:
-                _LOGGER.warning("%s tar member not found: %s", label, member_name)
-                out[lead] = None
-                continue
+    for lead, name in zip(leads, member_names(prefix, leads)):
+        if (member := members.get(name)) is None:
+            _LOGGER.warning("%s tar member not found: %s", label, name)
+            out[lead] = None
+            continue
 
-            val, what = read_odim_composite_cell(
-                BytesIO(f.read()), row, col, expected_shape=RS_GRID_SHAPE
-            )
-            val = float(val)
-            out[lead] = (None if np.isnan(val) else val, what)
+        val, what = read_odim_composite_cell(
+            BytesIO(member), row, col, expected_shape=RS_GRID_SHAPE
+        )
+        val = float(val)
+        out[lead] = (None if np.isnan(val) else val, what)
     return out
+
+
+def _read_tar_cells(
+    content: bytes, prefix: str, leads, cell: tuple[int, int], label: str
+) -> dict[int, tuple[float | None, dict] | None]:
+    """Decode one grid cell from each requested member of a whole RADVOR tar."""
+    return _decode_cells(_tar_members(content, prefix, leads), prefix, leads, cell, label)
+
+
+async def async_read_tar_members(
+    client, url: str, prefix: str, leads
+) -> dict[str, bytes]:
+    """Fetch only the requested members of a RADVOR tar, by range reads.
+
+    Falls back to the whole archive on anything unexpected (see
+    radar.tar_range); a missing release still raises, like any fetch.
+    """
+    async def fetch(target: str, headers):
+        return await async_get(
+            target, client, headers=headers, partial_max_bytes=RANGE_MAX_BYTES
+        )
+
+    async def whole() -> bytes:
+        return (await async_get(url, client)).content
+
+    result = await fetch_tar_members(
+        fetch, url, member_names(prefix, LEADS), member_names(prefix, leads), whole
+    )
+    _LOGGER.debug(
+        "Read %s member(s) of %s in %s request(s), %s bytes%s",
+        len(result.members),
+        url,
+        result.requests,
+        result.bytes_read,
+        " (whole archive)" if result.whole else "",
+    )
+    return result.members
 
 
 def _odim_window(what: dict) -> tuple[datetime | None, datetime | None]:
@@ -204,15 +291,32 @@ class RadvorRS(BaseProductUpdateCoordinator):
         )
 
     async def _fetch_and_parse(self, ts: datetime) -> tuple[list, list]:
-        """Fetch one tar archive and decode it off the event loop."""
-        response = await async_get(self._get_url(ts), self.async_client)
-        return await self.hass.async_add_executor_job(self._parse, response.content, ts)
+        """Fetch the members this entry decodes, then decode them off the loop.
 
-    def _parse(self, content: bytes, ts: datetime) -> tuple[list, list]:
-        """Derive the RS entity payloads from the tar bytes (blocking)."""
+        All 25 for the full rolling series, so the whole archive; otherwise
+        only the three fixed hours, read by range (~20 % of the bytes).
+        """
+        prefix = f"composite_rs_{ts.strftime('%Y%m%d_%H%M')}"
+        if self.full_rolling_series:
+            response = await async_get(self._get_url(ts), self.async_client)
+            return await self.hass.async_add_executor_job(
+                self._parse_archive, response.content, ts
+            )
+        members = await async_read_tar_members(
+            self.async_client, self._get_url(ts), prefix, RS_HOURLY_LEADS
+        )
+        return await self.hass.async_add_executor_job(self._parse, members, ts)
+
+    def _parse_archive(self, content: bytes, ts: datetime) -> tuple[list, list]:
+        """Derive the RS entity payloads from a whole tar (blocking)."""
+        prefix = f"composite_rs_{ts.strftime('%Y%m%d_%H%M')}"
+        return self._parse(_tar_members(content, prefix, LEADS), ts)
+
+    def _parse(self, members: dict[str, bytes], ts: datetime) -> tuple[list, list]:
+        """Derive the RS entity payloads from its members' bytes (blocking)."""
         full = self.full_rolling_series
-        cells = _read_tar_cells(
-            content,
+        cells = _decode_cells(
+            members,
             f"composite_rs_{ts.strftime('%Y%m%d_%H%M')}",
             LEADS if full else RS_HOURLY_LEADS,
             self.index,
@@ -271,6 +375,8 @@ class RadvorRV(BaseProductUpdateCoordinator):
 
     From the per-cell 5-minute series this coordinator derives:
 
+    * ``intensity_000`` / ``amount_000`` — the analysis (lead 0, the 5 minutes
+      ending at T) as an hourly rate (mm/h) and as the raw amount (mm).
     * ``max_060`` / ``max_120`` — peak intensity (mm/h) over [T, T+60] /
       [T+60, T+120].
     * ``start_in`` / ``start_at`` / ``end_in`` / ``end_at`` — when precipitation
@@ -300,6 +406,21 @@ class RadvorRV(BaseProductUpdateCoordinator):
     # across one whole missed release before dropping the entities.
     OVERDUE_GRACE = DEFAULT_OVERDUE_GRACE
 
+    # rain_events persistence; None leaves the tracker off (tests building the
+    # coordinator without HA).
+    _rain_store: Store | None = None
+    _rain_state: RainEventsState | None = None
+    _rain_saved_ended: str | None = None
+    _rain_fill_failing: bool = False
+    _rain_broken: bool = False
+
+    def __init__(self, hass, entry, async_client, lat, lon) -> None:
+        """Initialize the coordinator and its rain_events store."""
+        super().__init__(hass, entry, async_client, lat, lon)
+        self._rain_store = Store(
+            hass, RAIN_EVENTS_STORE_VERSION, rain_events_store_key(entry.entry_id)
+        )
+
     @cached_property
     def index(self) -> tuple[int, int]:
         """Return (row, col) in the RV composite grid (identical to RS)."""
@@ -314,7 +435,145 @@ class RadvorRV(BaseProductUpdateCoordinator):
     async def _fetch_and_parse(self, ts: datetime) -> tuple[dict, dict]:
         """Fetch one tar archive and decode it off the event loop."""
         response = await async_get(self._get_url(ts), self.async_client)
-        return await self.hass.async_add_executor_job(self._parse, response.content, ts)
+        data, metadata = await self.hass.async_add_executor_job(
+            self._parse, response.content, ts
+        )
+        if self._rain_store is not None:
+            series = metadata["rain_within_2h"]
+            data["rain_events"] = await self._async_rain_events(
+                series.source_timestamp or ts, [s["value"] for s in series.samples]
+            )
+        return data, metadata
+
+    # ------------------------------------------------------------------
+    # rain_events: fill the missed analyses, track, persist
+    # ------------------------------------------------------------------
+
+    async def _async_rain_events(
+        self, base: datetime, values: list[float | None]
+    ) -> dict | None:
+        """Update the rain_events tracker with this release; None if it failed.
+
+        A failure here must not cost the RV sensors their update, so it is
+        logged (once per run of failures) and the attribute is left out.
+        """
+        try:
+            state = await self._async_rain_state()
+            milli = wet_step_milli(
+                self.config_entry.options.get(
+                    CONF_RAIN_EVENT_THRESHOLD, DEFAULT_RAIN_EVENT_THRESHOLD
+                )
+            )
+            # Fill first: a lost release must not look like rain that vanished.
+            await self._async_fill_missed(state, base)
+            view = update_rain_events(state, base, values[0], values[1:], milli)
+        except Exception:
+            if not self._rain_broken:
+                self._rain_broken = True
+                _LOGGER.exception(
+                    "Could not update the rain_events attribute; the other RV "
+                    "sensors are not affected"
+                )
+            return None
+        self._rain_broken = False
+        self._schedule_rain_save(state)
+        return view
+
+    async def _async_rain_state(self) -> RainEventsState:
+        """Return the tracker state, loading it from the store on first use."""
+        if self._rain_state is None:
+            raw = await self._rain_store.async_load()
+            try:
+                self._rain_state = RainEventsState.from_dict(raw) if raw else RainEventsState()
+            except (KeyError, TypeError, ValueError) as err:
+                _LOGGER.warning(
+                    "Discarding the saved rain_events state, which could not be "
+                    "read (%s). Event ids start over; nothing else is affected",
+                    err,
+                )
+                self._rain_state = RainEventsState()
+            self._rain_saved_ended = (self._rain_state.last_ended or {}).get("id")
+        return self._rain_state
+
+    async def _async_fill_missed(self, state: RainEventsState, base: datetime) -> None:
+        """Fetch the analysis of each missed release still in the window.
+
+        Sequential, newest first, within RAIN_FILL_BUDGET; the first failure
+        ends the round and the rest wait for the next release. Each fill reads
+        only the analysis member, ~4-7 % of the archive.
+        """
+        missing = steps_to_fill(state, base)
+        if not missing:
+            return
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + RAIN_FILL_BUDGET.total_seconds()
+        for step_end in missing:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                return
+            try:
+                async with asyncio.timeout(remaining):
+                    value = await self._async_fetch_analysis(step_end)
+            except Exception as err:  # noqa: BLE001 - every failure is retried later
+                _LOGGER.debug("Could not fill the RV analysis of %s: %s", step_end, err)
+                if not self._rain_fill_failing:
+                    self._rain_fill_failing = True
+                    _LOGGER.warning(
+                        "Could not fetch the missed DWD RV release %s to fill "
+                        "the rain_events history (%s). DWD OpenData did not "
+                        "serve it; nothing is wrong with your setup. The step "
+                        "stays unknown and is retried with the next releases",
+                        step_end.strftime("%Y-%m-%d %H:%M UTC"),
+                        err or type(err).__name__,
+                    )
+                return
+            _LOGGER.debug("Filled the RV analysis of %s: %s", step_end, value)
+            record_measured(state, step_end, value)
+        self._rain_fill_failing = False
+
+    async def _async_fetch_analysis(self, step_end: datetime) -> float | None:
+        """Return the analysis (lead 0) of release ``step_end``; None for nodata."""
+        prefix = f"composite_rv_{step_end.strftime('%Y%m%d_%H%M')}"
+        members = await async_read_tar_members(
+            self.async_client, self._get_url(step_end), prefix, [0]
+        )
+        return await self.hass.async_add_executor_job(
+            self._parse_analysis, members, prefix, step_end
+        )
+
+    def _parse_analysis(
+        self, members: dict[str, bytes], prefix: str, step_end: datetime
+    ) -> float | None:
+        """Decode the analysis member of a missed release (blocking)."""
+        cell = _decode_cells(members, prefix, [0], self.index, "RV")[0]
+        if cell is None:
+            raise ValueError(f"{prefix} has no analysis member")
+        _, end = _odim_window(cell[1])
+        if end != step_end:
+            raise ValueError(f"{prefix} analysis ends at {end}, not {step_end}")
+        return round(cell[0], MM_DECIMALS) if cell[0] is not None else None
+
+    def _schedule_rain_save(self, state: RainEventsState) -> None:
+        """Persist the tracker: soon while it matters, else at shutdown.
+
+        Every release changes the state, but on a dry day nothing in it is
+        worth an SD-card write every 5 minutes: losing it in a crash costs
+        one fill round after the restart. The long delay keeps being pushed
+        back by each release, and Home Assistant writes pending saves when
+        it stops.
+        """
+        ended = (state.last_ended or {}).get("id")
+        if at_stake(state) or ended != self._rain_saved_ended:
+            delay = RAIN_SAVE_DELAY
+            self._rain_saved_ended = ended
+        else:
+            delay = RAIN_IDLE_SAVE_DELAY
+        self._rain_store.async_delay_save(state.as_dict, delay.total_seconds())
+
+    async def async_save_rain_events(self) -> None:
+        """Write the tracker now (entry unload), so a reload reads it back."""
+        if self._rain_store is not None and self._rain_state is not None:
+            await self._rain_store.async_save(self._rain_state.as_dict())
 
     def _parse(self, content: bytes, ts: datetime) -> tuple[dict, dict]:
         """Derive the RV entity payloads from the tar bytes (blocking)."""
@@ -337,7 +596,8 @@ class RadvorRV(BaseProductUpdateCoordinator):
                 continue
 
             data_start, data_end = _odim_window(cell[1])
-            values.append(cell[0])
+            # At the ODIM resolution: the float32 reading carries noise below it.
+            values.append(round(cell[0], MM_DECIMALS) if cell[0] is not None else None)
             starts.append(data_start)
             ends.append(data_end)
             # Base run time T = end of the analysis window (lead 0).
@@ -413,7 +673,25 @@ class RadvorRV(BaseProductUpdateCoordinator):
             rolling_hour_sums(values), windows, FUTURE_HOUR_LEADS, "RV", base_ts
         )
 
+        # The analysis (lead 0) is the 5 minutes ending at T: the only measured
+        # step in the release, reported as an hourly rate like the peaks. Both
+        # are rounded to the ODIM resolution; x12 keeps it exact.
+        now_mm = round(values[0], MM_DECIMALS) if values[0] is not None else None
+        now_meta = ProductMetadata(
+            source_product="RV",
+            source_timestamp=base_ts,
+            lead_time_minutes=0,
+            data_start=starts[0],
+            data_end=ends[0],
+        )
+
         data = {
+            "intensity_000": (
+                round(now_mm * STEPS_PER_HOUR, MM_DECIMALS)
+                if now_mm is not None
+                else None
+            ),
+            "amount_000": now_mm,
             "max_060": bucket_max_intensity(values, HOUR1_LEADS),
             "max_120": bucket_max_intensity(values, HOUR2_LEADS),
             "start_in": start_in,
@@ -424,6 +702,8 @@ class RadvorRV(BaseProductUpdateCoordinator):
             "peak_1h": peak_1h,
         }
         metadata = {
+            "intensity_000": now_meta,
+            "amount_000": now_meta,
             "max_060": hour1_meta,
             "max_120": hour2_meta,
             "start_in": timing_meta,
@@ -594,6 +874,41 @@ class RadolanRW(RadolanProduct):
         """Return the HDF5 URL."""
         return _radolan_url("rw", ts)
 
+
+
+class RadolanRW10(RadolanRW):
+    """DWD RADOLAN RW's 10-minute runs: a sliding hour ending at each :x0.
+
+    Same file family as RW (DWD publishes the HH:50 run among them), so it
+    reuses RW's URL and parsing; only the grid is every 10 minutes. Gauge-
+    adjusted as strongly as the HH:50 run, measured against radar-only RS
+    over 285 runs (scripts/compare_rw_runs.py). Only built when the sliding
+    hour is wanted: by the "Precipitation last 1h (gauge-adjusted)" option, or
+    by a dry streak counting RW.
+    """
+
+    PRODUCT_KEY = RW_SLIDING_KEY
+
+    PRODUCT_LABEL = "RW hourly precipitation every 10 min"
+
+    RELEASE_INTERVAL = timedelta(minutes=10)
+
+    # Observed ~26 min after each run's end, like the HH:50 run it includes.
+    RELEASE_DELAY = timedelta(minutes=28)
+
+    RELEASE_OFFSET = timedelta()
+
+    OVERDUE_GRACE = DEFAULT_OVERDUE_GRACE
+
+    @classmethod
+    def is_needed(cls, options) -> bool:
+        """Whether the last-1h sensor or the dry streak follows the sliding hour."""
+        return (
+            options.get(CONF_RW_LAST_HOUR_MODE, DEFAULT_RW_LAST_HOUR_MODE)
+            == RW_LAST_HOUR_SLIDING
+            or options.get(CONF_DRY_STREAK_SOURCE, DEFAULT_DRY_STREAK_SOURCE)
+            == DRY_STREAK_SOURCE_RW
+        )
 
 class RadolanSF(RadolanProduct):
     """DWD RADOLAN SF: 24-hour precipitation analysis."""

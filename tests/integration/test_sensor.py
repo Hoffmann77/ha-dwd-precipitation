@@ -15,6 +15,8 @@ from custom_components.dwd_precipitation import sensor as sensor_module
 from custom_components.dwd_precipitation.const import (
     CONF_EXTRA_ATTRIBUTES,
     CONF_PRECIPITATION_RESET_THRESHOLD,
+    DRY_STREAK_SOURCE_RS,
+    DRY_STREAK_SOURCE_RW,
     START_END_MODE_DURATION,
     START_END_MODE_TIMESTAMP,
 )
@@ -114,12 +116,27 @@ def _make_days_sensor(
     dry_since=None, rs_list=None, meta_list=None, threshold=1.0
 ) -> TimespanWithoutPrecipitationSensor:
     """Build a TimespanWithoutPrecipitationSensor with a stubbed rs coordinator."""
-    sensor = TimespanWithoutPrecipitationSensor.__new__(TimespanWithoutPrecipitationSensor)
-    sensor._dry_since = dry_since
     data = None
     if rs_list is not None:
         data = CoordinatorData(data=rs_list, metadata=meta_list)
+    return _days_sensor_on(DRY_STREAK_SOURCE_RS, data, dry_since, threshold)
+
+
+def _make_rw_days_sensor(
+    dry_since=None, value=None, meta=None, threshold=1.0, empty=False
+) -> TimespanWithoutPrecipitationSensor:
+    """Build the sensor on a stubbed RW coordinator (scalar data and metadata)."""
+    data = None if empty else CoordinatorData(data=value, metadata=meta)
+    return _days_sensor_on(DRY_STREAK_SOURCE_RW, data, dry_since, threshold)
+
+
+def _days_sensor_on(
+    product_key, data, dry_since, threshold
+) -> TimespanWithoutPrecipitationSensor:
+    sensor = TimespanWithoutPrecipitationSensor.__new__(TimespanWithoutPrecipitationSensor)
+    sensor._dry_since = dry_since
     sensor.coordinator = SimpleNamespace(
+        PRODUCT_KEY=product_key,
         config_entry=SimpleNamespace(options={CONF_PRECIPITATION_RESET_THRESHOLD: threshold}),
         data=data,
     )
@@ -183,6 +200,43 @@ def test_process_ignores_missing_and_nan_reading():
         )
         sensor._process()
         assert sensor._dry_since == old
+
+
+@pytest.mark.parametrize("value", [1.0, 4.2])  # at and above the threshold
+def test_process_rw_resets_anchor_to_end_of_the_hour(value):
+    hour_end = datetime(2026, 7, 3, 11, 50, tzinfo=UTC)
+    meta = ProductMetadata(source_product="RW", source_timestamp=hour_end)
+    sensor = _make_rw_days_sensor(
+        dry_since=datetime(2026, 7, 1, tzinfo=UTC), value=value, meta=meta
+    )
+    sensor._process()
+    assert sensor._dry_since == hour_end
+
+
+@pytest.mark.parametrize("value", [0.9, None, float("nan")])
+def test_process_rw_keeps_anchor_when_dry_or_missing(value):
+    old = datetime(2026, 7, 1, tzinfo=UTC)
+    meta = ProductMetadata(
+        source_product="RW", source_timestamp=datetime(2026, 7, 3, 11, 50, tzinfo=UTC)
+    )
+    sensor = _make_rw_days_sensor(dry_since=old, value=value, meta=meta)
+    sensor._process()
+    assert sensor._dry_since == old
+
+
+def test_process_rw_without_data_keeps_anchor():
+    old = datetime(2026, 7, 1, tzinfo=UTC)
+    sensor = _make_rw_days_sensor(dry_since=old, empty=True)
+    sensor._process()
+    assert sensor._dry_since == old
+
+
+def test_process_rw_first_observation_anchors_at_end_of_the_hour():
+    hour_end = datetime(2026, 7, 3, 11, 50, tzinfo=UTC)
+    meta = ProductMetadata(source_product="RW", source_timestamp=hour_end)
+    sensor = _make_rw_days_sensor(dry_since=None, value=0.0, meta=meta)
+    sensor._process()
+    assert sensor._dry_since == hour_end
 
 
 def test_scalar_reading_handles_missing_coordinator():
