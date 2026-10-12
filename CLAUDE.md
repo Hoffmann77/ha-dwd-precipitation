@@ -164,7 +164,7 @@ viewers and Windows consoles mangle typographic punctuation.
 | Class | Key | Format | Update | Description |
 |-------|-----|--------|--------|-------------|
 | `RadvorRS` | `rs` | ODIM_H5 (tar) | 5 min | RADVOR nowcast, 25 rolling 60-min accumulations; exposes the 0/60/120 min leads, plus — only with the `full_rolling_series` option — the wettest future hour with the 25-point rolling-hour series (see "RS product specifics") |
-| `RadvorRV` | `rv` | ODIM_H5 (tar) | 5 min | RV nowcast, 25×5-min grids; derives +1h/+2h peak intensity (mm/h), precip start/end timing (episode/clearing end algorithm, user-selectable), a rain-within-2h flag (whose metadata carries the raw 25-point forecast series, exposed by default), and by default the wettest future hour (see "Peak hourly precipitation") |
+| `RadvorRV` | `rv` | ODIM_H5 (tar) | 5 min | RV nowcast, 25×5-min grids; derives the current intensity (lead 0 × 12, mm/h, with the raw 5-min amount), +1h/+2h peak intensity (mm/h), precip start/end timing (episode/clearing end algorithm, user-selectable), a rain-within-2h flag (whose metadata carries the raw 25-point forecast series, exposed by default), and by default the wettest future hour (see "Peak hourly precipitation") |
 | `HymecNG` | `hymecng` | ODIM_H5 (single .hd5) | 5 min | Precipitation-*type* composite (rain/snow/freezing rain/hail/…); one enum "Precipitation type" sensor |
 | `RadolanRW` | `rw` | RADOLAN binary (.bz2) | 1 h | 1-hour precipitation analysis (gauge-adjusted; same window as RS `_000`) |
 | `RadolanSF` | `sf` | RADOLAN binary (.bz2) | 1 h | 24-hour precipitation analysis |
@@ -186,17 +186,28 @@ A name states a window only when the window is part of the *value*. Two forms:
 
 `next 1–2h` is the 60–120 min window, *not* the coming two hours.
 
-`Precipitation now` (RS `_000`) is the deliberate exception. It is *also* a
-60-minute accumulation ending now — the same window as `Precipitation last 1h`
-(RW) — but it is named for its role, the live figure refreshed every 5 minutes,
-rather than for its window. Two consequences worth keeping in mind:
+RS `_000` and RW measure the *same* window, the 60 minutes ending now, so they
+share the name `Precipitation last 1h` and a parenthesised suffix names the
+source: `(radar)` for RS, `(gauge-adjusted)` for RW. The suffix keeps the head
+noun and the window first, like every other name, so the two sort next to each
+other in the entity list. The whole RADOLAN family carries `(gauge-adjusted)` —
+`Precipitation last 24h (gauge-adjusted)`, `Precipitation yesterday
+(gauge-adjusted)` — so the qualifier means "RADOLAN", not just "the one that
+collides". The running totals do not: nothing collides with them, and they
+already use the parenthesis for their cadence. German: `(Radar)` /
+`(angeeicht)`, DWD's own term for gauge adjustment.
 
-- Because the two names no longer look alike, RW needs no distinguishing
-  qualifier and is plain `Precipitation last 1h`, consistent with the rest of
-  the RADOLAN family.
-- The name no longer states the window, so the README entity table has to. It is
-  mm accumulated over the past hour, **not** a mm/h rate — the reset-threshold
-  option compares against it, so 1.0 mm means "1 mm fell in the last hour".
+RS `_000` used to be `Precipitation now`, named for its role rather than
+its window. That hid the fact that it is mm accumulated over the past hour,
+**not** a rate, and left `now` unavailable for the one sensor that really is
+current. The keys (`radvor_rs_000`, `radolan_rw`, …) did not change, so
+existing installs keep their entity ids; only new installs get the new slugs.
+Never reuse an old slug for a different value — `precipitation_last_1h` was RW
+and is now nobody's, which is why RS did not simply take it.
+
+`Precipitation intensity now` (RV lead 0 × 12, mm/h) is the only `now`: the
+latest 5-minute analysis, ending at the release time. The README states that
+"now" is the analysis window, which ended 4–10 minutes before the value appears.
 
 Everything else carries no window, and should keep it that way. The RV 2 h
 horizon in particular is a property of the *algorithm*, not of the value, so it
@@ -205,10 +216,10 @@ belongs in the docs rather than in four entity names:
 - `Precipitation start` / `Precipitation end` answer *when*; outside the horizon
   the state is simply `unknown`.
 - `Precipitation expected` is a flag; `off` already covers "not in the horizon".
-- `Precipitation type` is the only genuinely instantaneous value, so it needs no
-  qualifier (and `now` would collide with the RS sensor's name).
+- `Precipitation type` is instantaneous too, but as a class rather than an
+  amount it cannot be mistaken for anything else, so it needs no qualifier.
 
-`Precipitation total (hourly)` / `(daily)` are the other exception: they hold
+`Precipitation total (hourly)` / `(daily)` are the exception to the window rule: they hold
 no window at all (an ever-growing sum since setup), so the parenthesis names the
 *cadence* they grow at, which is what tells the two apart. They are
 `TOTAL_INCREASING` and keyed on the release timestamp, never on the value
@@ -335,8 +346,8 @@ Current runtime deps: `numpy`, `h5py`
 - **Accumulation window**: each grid is a **60-minute** sum, *not* an instantaneous
   rate — `_000`'s `what/startdate..enddate` spans T−60 min to T (verified against
   `tests/fixtures/composite_rs_sample.hd5`: 06:50 → 07:50 for a 07:50 file). So
-  `_000` is "precipitation over the past hour" — exposed as `Precipitation now`,
-  which is named for its role rather than this window (see "Entity naming") —
+  `_000` is "precipitation over the past hour" — exposed as `Precipitation last
+  1h (radar)` (see "Entity naming") —
   `_060` covers T→T+60, and `_120` covers T+60→T+120.
 - **Grid**: `xsize=1100`, `ysize=1200`, `xscale=yscale=1000.0 m`
 - **Projection**: `+proj=stere +lat_ts=60 +lat_0=90 +lon_0=10 +x_0=543196.835... +y_0=3622588.861...` (WGS84)

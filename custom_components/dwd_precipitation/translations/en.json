@@ -41,7 +41,7 @@
           "start_end_mode": "Whether those two sensors show a clock time (“14:25”) or the minutes until the event (“20”). Whichever you do not pick stays available as an attribute on the same sensor.",
           "precipitation_end_algorithm": "“First dry gap” reports the end of the current burst, so it moves around during showers. “Precipitation clears within 2 h” waits until no further rain is forecast, which is steadier but stays unknown longer. DWD forecasts only two hours ahead, so beyond that the sensor is “unknown” either way.",
           "precipitation_reset_threshold": "How much rain resets “Timespan without precipitation” to zero. It is compared against the past-hour total of the selected product, in millimetres accumulated over that hour — so 1 mm means 1 mm fell within the hour, not a rate.",
-          "dry_streak_source": "Which past-hour total “Timespan without precipitation” compares against the reset threshold. “Precipitation last 1h” (RW) is gauge-adjusted and more accurate, but covers fixed hours and arrives about 30 minutes after each hour ends, so a reset can show up to about 1.5 hours after the rain. “Precipitation now” (RS) is radar only and updated every 5 minutes: faster, but noisier, and its rolling hour keeps resetting the counter for up to an hour after the rain stops.",
+          "dry_streak_source": "Which past-hour total “Timespan without precipitation” compares against the reset threshold. “Precipitation last 1h (gauge-adjusted)” (RW) is corrected with rain-gauge data and more accurate, but covers fixed hours and arrives about 30 minutes after each hour ends, so a reset can show up to about 1.5 hours after the rain. “Precipitation last 1h (radar)” (RS) is radar only and updated every 5 minutes: faster, but noisier, and its rolling hour keeps resetting the counter for up to an hour after the rain stops.",
           "full_rolling_series": "Makes the “forecast_rolling_1h” attribute of “Peak hourly precipitation next 2h” start one hour earlier. Each entry is the rain in the hour starting at that time, so the first entries also include rain that has already fallen, and a chart shows the past hour and the forecast as one curve. The sensor's value is the same either way, as it only looks at the hours ahead. Turning this on roughly doubles the processing time per update, which can matter on small devices."
         }
       }
@@ -62,24 +62,24 @@
     },
     "dry_streak_source": {
       "options": {
-        "rw": "Precipitation last 1h (RW, gauge-adjusted)",
-        "rs": "Precipitation now (RS, radar)"
+        "rw": "Precipitation last 1h (gauge-adjusted, RW)",
+        "rs": "Precipitation last 1h (radar, RS)"
       }
     }
   },
   "entity": {
     "sensor": {
-      "precipitation_now": {
-        "name": "Precipitation now"
+      "precipitation_last_1h_radar": {
+        "name": "Precipitation last 1h (radar)"
       },
-      "precipitation_last_1h": {
-        "name": "Precipitation last 1h"
+      "precipitation_last_1h_gauge_adjusted": {
+        "name": "Precipitation last 1h (gauge-adjusted)"
       },
-      "precipitation_last_24h": {
-        "name": "Precipitation last 24h"
+      "precipitation_last_24h_gauge_adjusted": {
+        "name": "Precipitation last 24h (gauge-adjusted)"
       },
-      "precipitation_yesterday": {
-        "name": "Precipitation yesterday"
+      "precipitation_yesterday_gauge_adjusted": {
+        "name": "Precipitation yesterday (gauge-adjusted)"
       },
       "precipitation_total_hourly": {
         "name": "Precipitation total (hourly)"
@@ -95,6 +95,9 @@
       },
       "peak_hourly_precipitation_next_2h": {
         "name": "Peak hourly precipitation next 2h"
+      },
+      "precipitation_intensity_now": {
+        "name": "Precipitation intensity now"
       },
       "peak_intensity_next_1h": {
         "name": "Peak intensity next 1h"

@@ -275,6 +275,8 @@ class RadvorRV(BaseProductUpdateCoordinator):
 
     From the per-cell 5-minute series this coordinator derives:
 
+    * ``intensity_000`` / ``amount_000`` — the analysis (lead 0, the 5 minutes
+      ending at T) as an hourly rate (mm/h) and as the raw amount (mm).
     * ``max_060`` / ``max_120`` — peak intensity (mm/h) over [T, T+60] /
       [T+60, T+120].
     * ``start_in`` / ``start_at`` / ``end_in`` / ``end_at`` — when precipitation
@@ -417,7 +419,25 @@ class RadvorRV(BaseProductUpdateCoordinator):
             rolling_hour_sums(values), windows, FUTURE_HOUR_LEADS, "RV", base_ts
         )
 
+        # The analysis (lead 0) is the 5 minutes ending at T: the only measured
+        # step in the release, reported as an hourly rate like the peaks. Both
+        # are rounded to the ODIM resolution; x12 keeps it exact.
+        now_mm = round(values[0], MM_DECIMALS) if values[0] is not None else None
+        now_meta = ProductMetadata(
+            source_product="RV",
+            source_timestamp=base_ts,
+            lead_time_minutes=0,
+            data_start=starts[0],
+            data_end=ends[0],
+        )
+
         data = {
+            "intensity_000": (
+                round(now_mm * STEPS_PER_HOUR, MM_DECIMALS)
+                if now_mm is not None
+                else None
+            ),
+            "amount_000": now_mm,
             "max_060": bucket_max_intensity(values, HOUR1_LEADS),
             "max_120": bucket_max_intensity(values, HOUR2_LEADS),
             "start_in": start_in,
@@ -428,6 +448,8 @@ class RadvorRV(BaseProductUpdateCoordinator):
             "peak_1h": peak_1h,
         }
         metadata = {
+            "intensity_000": now_meta,
+            "amount_000": now_meta,
             "max_060": hour1_meta,
             "max_120": hour2_meta,
             "start_in": timing_meta,

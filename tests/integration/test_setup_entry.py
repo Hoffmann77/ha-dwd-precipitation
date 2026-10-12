@@ -64,6 +64,8 @@ async def test_entry_setup_creates_sensors_with_correct_values(
     rw_meta = {"producttype": "RW", "datetime": datetime(2025, 6, 1, 12, 50)}
     rv_timing = ProductMetadata(source_product="RV", source_timestamp=ts)
     rv_data = {
+        "intensity_000": 2.4,
+        "amount_000": 0.2,
         "max_060": 48.0,
         "max_120": 12.0,
         "start_in": 0,
@@ -74,6 +76,13 @@ async def test_entry_setup_creates_sensors_with_correct_values(
         "peak_1h": 4.0,
     }
     rv_meta = {key: rv_timing for key in rv_data}
+    rv_meta["intensity_000"] = rv_meta["amount_000"] = ProductMetadata(
+        source_product="RV",
+        source_timestamp=ts,
+        lead_time_minutes=0,
+        data_start=ts - timedelta(minutes=5),
+        data_end=ts,
+    )
     rv_meta["peak_1h"] = ProductMetadata(
         source_product="RV",
         source_timestamp=ts,
@@ -170,6 +179,43 @@ async def test_entry_setup_creates_sensors_with_correct_values(
     assert state.attributes["window_end"] == f"2025-06-01T{end}:00+00:00"
     assert state.attributes["forecast_rolling_1h"][0]["value"] == approx(peak)
 
+    # The current intensity is the analysis step as mm/h, with that 5-minute
+    # window and its raw amount alongside.
+    now_entry = next(
+        e
+        for e in ent_reg.entities.values()
+        if e.domain == "sensor" and e.unique_id.endswith("radvor_rv_intensity_000")
+    )
+    state = hass.states.get(now_entry.entity_id)
+    assert state is not None
+    assert float(state.state) == approx(2.4)
+    assert state.attributes["unit_of_measurement"] == "mm/h"
+    assert state.attributes["amount_5min"] == approx(0.2)
+    assert state.attributes["window_start"] == "2025-06-01T11:55:00+00:00"
+    assert state.attributes["window_end"] == "2025-06-01T12:00:00+00:00"
+
+    # Entity ids follow the English names. Keys are unchanged, so existing
+    # installs keep the ids they already have; these are what new ones get.
+    assert {
+        e.unique_id.removeprefix(f"{entry.entry_id}_"): e.entity_id
+        for e in ent_reg.entities.values()
+        if e.domain == "sensor"
+        and e.unique_id.removeprefix(f"{entry.entry_id}_")
+        in {
+            "radvor_rs_000",
+            "radolan_rw",
+            "radolan_sf",
+            "radolan_sf_yesterday",
+            "radvor_rv_intensity_000",
+        }
+    } == {
+        "radvor_rs_000": "sensor.mock_title_precipitation_last_1h_radar",
+        "radolan_rw": "sensor.mock_title_precipitation_last_1h_gauge_adjusted",
+        "radolan_sf": "sensor.mock_title_precipitation_last_24h_gauge_adjusted",
+        "radolan_sf_yesterday": "sensor.mock_title_precipitation_yesterday_gauge_adjusted",
+        "radvor_rv_intensity_000": "sensor.mock_title_precipitation_intensity_now",
+    }
+
     # The peak-intensity sensor reports the extrapolated mm/h rate.
     max_060_entry = next(
         e
@@ -205,9 +251,11 @@ async def test_entry_setup_creates_sensors_with_correct_values(
 RV_TS = datetime(2025, 6, 1, 12, 0, tzinfo=timezone.utc)
 
 # The RV coordinator's payload is a dict keyed by entity sub-key, so a test that
-# only wants "RV worked" still has to produce all seven keys. Built here once
+# only wants "RV worked" still has to produce every key. Built here once
 # rather than restated per test.
 RV_DATA = {
+    "intensity_000": 0.0,
+    "amount_000": 0.0,
     "max_060": 48.0,
     "max_120": 12.0,
     "start_in": 0,
@@ -425,3 +473,24 @@ async def test_entry_from_a_newer_major_version_is_not_migrated(
     assert not await hass.config_entries.async_setup(entry.entry_id)
     assert entry.state is ConfigEntryState.MIGRATION_ERROR
     assert entry.options == {}
+
+
+@pytest.mark.asyncio
+async def test_renamed_sensor_keeps_an_existing_entity_id(hass: HomeAssistant) -> None:
+    """The renames change names, never the entity ids users already have."""
+    entry = _entry(hass)
+    er.async_get(hass).async_get_or_create(
+        "sensor",
+        DOMAIN,
+        f"{entry.entry_id}_radvor_rs_000",
+        config_entry=entry,
+        suggested_object_id="home_precipitation_now",
+    )
+
+    with _patched_products():
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    state = hass.states.get("sensor.home_precipitation_now")
+    assert state is not None
+    assert state.attributes["friendly_name"].endswith("Precipitation last 1h (radar)")

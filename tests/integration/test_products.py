@@ -570,6 +570,35 @@ async def test_rv_peak_hour_matches_rs_for_the_same_rain() -> None:
 
 
 @pytest.mark.asyncio
+async def test_rv_intensity_now_is_the_analysis_step_as_a_rate() -> None:
+    """RV: lead 0 (the 5 minutes ending at T) becomes mm/h, with its window."""
+    ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
+    rv: dict[int, float | None] = {lead: 0.0 for lead in range(0, 121, 5)}
+    # The float32 reading carries noise below the ODIM 0.001 mm resolution.
+    rv.update({0: 0.123, 5: 2.0})
+    data, meta = await _rv_fetch(ts, rv)
+
+    assert data["amount_000"] == 0.123
+    assert data["intensity_000"] == 1.476  # exact at 0.001 mm resolution, not 1.47600001
+    assert meta["intensity_000"].lead_time_minutes == 0
+    assert meta["intensity_000"].source_timestamp == ts
+    assert meta["intensity_000"].data_start == datetime(2026, 5, 18, 15, 55, tzinfo=timezone.utc)
+    assert meta["intensity_000"].data_end == ts
+
+
+@pytest.mark.asyncio
+async def test_rv_intensity_now_is_unknown_without_the_analysis() -> None:
+    """RV: a missing lead-0 member leaves both values None rather than 0."""
+    ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
+    rv: dict[int, float | None] = {lead: 0.0 for lead in range(0, 121, 5)}
+    rv[0] = None
+    data, _ = await _rv_fetch(ts, rv)
+
+    assert data["intensity_000"] is None
+    assert data["amount_000"] is None
+
+
+@pytest.mark.asyncio
 async def test_rv_peak_hour_treats_missing_step_as_dry() -> None:
     """RV: a missing 5-minute member counts as 0, as RS does at the coverage edge."""
     ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)

@@ -41,7 +41,7 @@
           "start_end_mode": "Ob diese beiden Sensoren eine Uhrzeit („14:25“) oder die Minuten bis zum Ereignis („20“) anzeigen. Die nicht gewählte Variante bleibt als Attribut am selben Sensor verfügbar.",
           "precipitation_end_algorithm": "„Erste trockene Lücke“ meldet das Ende des aktuellen Schauers und springt daher bei Schauerwetter hin und her. „Niederschlag endet innerhalb von 2 h“ wartet, bis kein weiterer Regen vorhergesagt ist – das ist stabiler, bleibt aber länger unbekannt. Der DWD sagt nur zwei Stunden voraus, darüber hinaus ist der Sensor in beiden Fällen „unbekannt“.",
           "precipitation_reset_threshold": "Wie viel Regen „Zeitraum ohne Niederschlag“ auf null zurücksetzt. Verglichen wird mit der Stundensumme des gewählten Produkts, also den innerhalb einer Stunde gefallenen Millimetern – 1 mm bedeutet, dass innerhalb der Stunde 1 mm gefallen ist, keine Rate.",
-          "dry_streak_source": "Mit welcher Stundensumme „Zeitraum ohne Niederschlag“ den Schwellwert vergleicht. „Niederschlag letzte 1h“ (RW) ist mit Bodenmessungen angeeicht und genauer, deckt aber feste Stunden ab und erscheint etwa 30 Minuten nach Stundenende – ein Zurücksetzen kann so bis zu etwa 1,5 Stunden nach dem Regen erscheinen. „Niederschlag aktuell“ (RS) beruht nur auf Radar und wird alle 5 Minuten aktualisiert: schneller, aber unruhiger, und seine gleitende Stunde setzt den Zähler noch bis zu eine Stunde nach Regenende zurück.",
+          "dry_streak_source": "Mit welcher Stundensumme „Zeitraum ohne Niederschlag“ den Schwellwert vergleicht. „Niederschlag letzte 1h (angeeicht)“ (RW) ist mit Bodenmessungen angeeicht und genauer, deckt aber feste Stunden ab und erscheint etwa 30 Minuten nach Stundenende – ein Zurücksetzen kann so bis zu etwa 1,5 Stunden nach dem Regen erscheinen. „Niederschlag letzte 1h (Radar)“ (RS) beruht nur auf Radar und wird alle 5 Minuten aktualisiert: schneller, aber unruhiger, und seine gleitende Stunde setzt den Zähler noch bis zu eine Stunde nach Regenende zurück.",
           "full_rolling_series": "Lässt das Attribut „forecast_rolling_1h“ von „Maximaler Stundenniederschlag nächste 2h“ eine Stunde früher beginnen. Jeder Eintrag ist der Niederschlag in der Stunde, die zu diesem Zeitpunkt beginnt. Die ersten Einträge enthalten damit auch Regen, der bereits gefallen ist, und ein Diagramm zeigt die vergangene Stunde und die Vorhersage als eine durchgehende Kurve. Der Wert des Sensors ist in beiden Fällen gleich, da er nur die kommenden Stunden betrachtet. Eingeschaltet verdoppelt sich etwa die Rechenzeit pro Aktualisierung, was auf kleinen Geräten spürbar sein kann."
         }
       }
@@ -62,24 +62,24 @@
     },
     "dry_streak_source": {
       "options": {
-        "rw": "Niederschlag letzte 1h (RW, angeeicht)",
-        "rs": "Niederschlag aktuell (RS, Radar)"
+        "rw": "Niederschlag letzte 1h (angeeicht, RW)",
+        "rs": "Niederschlag letzte 1h (Radar, RS)"
       }
     }
   },
   "entity": {
     "sensor": {
-      "precipitation_now": {
-        "name": "Niederschlag aktuell"
+      "precipitation_last_1h_radar": {
+        "name": "Niederschlag letzte 1h (Radar)"
       },
-      "precipitation_last_1h": {
-        "name": "Niederschlag letzte 1h"
+      "precipitation_last_1h_gauge_adjusted": {
+        "name": "Niederschlag letzte 1h (angeeicht)"
       },
-      "precipitation_last_24h": {
-        "name": "Niederschlag letzte 24h"
+      "precipitation_last_24h_gauge_adjusted": {
+        "name": "Niederschlag letzte 24h (angeeicht)"
       },
-      "precipitation_yesterday": {
-        "name": "Niederschlag gestern"
+      "precipitation_yesterday_gauge_adjusted": {
+        "name": "Niederschlag gestern (angeeicht)"
       },
       "precipitation_total_hourly": {
         "name": "Niederschlag gesamt (stündlich)"
@@ -95,6 +95,9 @@
       },
       "peak_hourly_precipitation_next_2h": {
         "name": "Maximaler Stundenniederschlag nächste 2h"
+      },
+      "precipitation_intensity_now": {
+        "name": "Niederschlagsintensität aktuell"
       },
       "peak_intensity_next_1h": {
         "name": "Spitzenintensität nächste 1h"
