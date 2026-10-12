@@ -233,7 +233,7 @@ async def test_options_flow_saves_the_dry_streak_source(hass: HomeAssistant) -> 
     result = await hass.config_entries.options.async_init(entry.entry_id)
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
-        user_input={CONF_DRY_STREAK_SOURCE: DRY_STREAK_SOURCE_RS},
+        user_input={CONF_DRY_STREAK_SOURCE: DRY_STREAK_SOURCE_RS, "advanced_options": {}},
     )
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
@@ -255,5 +255,69 @@ async def test_options_flow_rejects_an_unknown_dry_streak_source(
     result = await hass.config_entries.options.async_init(entry.entry_id)
     with pytest.raises(InvalidData):
         await hass.config_entries.options.async_configure(
-            result["flow_id"], user_input={CONF_DRY_STREAK_SOURCE: "sf"}
+            result["flow_id"],
+            user_input={CONF_DRY_STREAK_SOURCE: "sf", "advanced_options": {}},
         )
+
+
+ADVANCED = (
+    "rain_event_threshold",
+    "precipitation_end_algorithm",
+    "full_rolling_series",
+    "unavailable_when_stale",
+)
+
+
+def _section(result):
+    marker = next(m for m in result["data_schema"].schema if m == "advanced_options")
+    return result["data_schema"].schema[marker]
+
+
+async def test_advanced_options_are_a_collapsed_section(hass: HomeAssistant) -> None:
+    """The rarely needed options sit in a collapsed section with flat defaults."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"name": "Home", "latitude": 51.05, "longitude": 13.73},
+        options={"full_rolling_series": True, "rain_event_threshold": 0.4},
+        minor_version=2,
+    )
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    advanced = _section(result)
+
+    assert advanced.options["collapsed"] is True
+    inner = {str(m): m.default() for m in advanced.schema.schema}
+    assert tuple(inner) == ADVANCED
+    assert inner["full_rolling_series"] is True
+    assert inner["rain_event_threshold"] == 0.4
+    assert inner["unavailable_when_stale"] is True
+    main = {str(m) for m in result["data_schema"].schema}
+    assert main.isdisjoint(ADVANCED)
+
+
+async def test_advanced_options_are_stored_flat(hass: HomeAssistant) -> None:
+    """Saving flattens the section, so every option keeps its key."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"name": "Home", "latitude": 51.05, "longitude": 13.73},
+        options={CONF_DRY_STREAK_SOURCE: DRY_STREAK_SOURCE_RS},
+        minor_version=2,
+    )
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={
+            CONF_DRY_STREAK_SOURCE: DRY_STREAK_SOURCE_RS,
+            "advanced_options": {"rain_event_threshold": 0.6, "full_rolling_series": True},
+        },
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert "advanced_options" not in entry.options
+    assert entry.options["rain_event_threshold"] == 0.6
+    assert entry.options["full_rolling_series"] is True
+    assert entry.options["unavailable_when_stale"] is True  # its default
+    assert entry.options[CONF_DRY_STREAK_SOURCE] == DRY_STREAK_SOURCE_RS
