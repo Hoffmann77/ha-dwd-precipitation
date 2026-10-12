@@ -25,14 +25,21 @@ precipitation_total.py
                       Pure running-total logic: the persisted total payload,
                       the reading filter, and the missed-release walk used by
                       the PrecipitationTotalSensor in sensor.py.
-config_flow.py        UI config flow: collects name + lat/lon.
+rain_events.py        Pure rain-event tracker behind the rain_events attribute
+                      of Precipitation expected (see "Rain events"). HA-free,
+                      no relative imports: the parser tier tests it.
+config_flow.py        UI config flow: collects name + lat/lon; options form
+                      with a collapsed Advanced section, stored flat.
 const.py              DWD OpenData base URLs and HA constants.
-utils.py              async_get() HTTP helper; get_previous_multiple() for
-                      computing the most recent release timestamp.
+utils.py              async_get() HTTP helper (headers, status, separate 206
+                      cap); get_previous_multiple() for computing the most
+                      recent release timestamp.
 radar/                Embedded parsers (no heavy external deps).
   radolan.py          Extracted wradlib binary parser for RADOLAN/RADVOR formats.
   georef.py           Extracted wradlib polar-stereographic grid transform.
   odim.py             ODIM_H5 (HDF5) reader for RS Cartesian composites.
+  tar_range.py        Reads selected members of a remote tar by HTTP range
+                      requests (see "Range reads"). HA-free.
 ```
 
 ## Data flow
@@ -355,10 +362,12 @@ Current runtime deps: `numpy`, `h5py`
   in 5-minute steps — lead L covers T+L−60 → T+L, so neighbours overlap by 55 min.
   RS is radar-only, like RV: `_060` equals the sum of RV leads 5–60 cell for cell
   (checked against live data). Only RADOLAN RW/SF are gauge-adjusted.
-- **Fetching**: `RadvorRS._fetch_and_parse()` downloads one tar; `_parse()`
-  reads members with stdlib `tarfile` — only `_000`/`_060`/`_120` by default,
-  all 25 with the `full_rolling_series` option. The payload list is
-  `[_000, _060, _120, peak]`, where `peak` is `None` unless the option is on.
+- **Fetching**: by default `RadvorRS._fetch_and_parse()` reads only
+  `_000`/`_060`/`_120`, by range (see "Range reads"); with the
+  `full_rolling_series` option it downloads the whole tar for all 25. Either
+  way `_parse()` gets the members' bytes and decodes them off the loop. The
+  payload list is `[_000, _060, _120, peak]`, where `peak` is `None` unless
+  the option is on.
 
 ## Peak hourly precipitation
 
@@ -405,6 +414,86 @@ version 1.2: `async_migrate_entry` writes `dry_streak_source: "rs"` into every
 1.1 entry that lacks it, and the config flow writes the default into every new
 entry. So every entry stores its source, and changing
 `DEFAULT_DRY_STREAK_SOURCE` later never moves an existing install.
+
+## Range reads
+
+RS/RV tars are plain ustar archives, 25 members in lead order, served as static
+files with range support. `radar/tar_range.py` (`fetch_tar_members`) reads the
+members a caller needs; `products.async_read_tar_members` wraps it with
+`async_get`. Used by RS in its default mode (3 members) and the RV backfill (the
+analysis only). Measured on 12 live archives: RS takes 4 requests and 19-20 %
+of the bytes (archives are 3.5-17.5 MB), an RV analysis 1-2 requests and 4-7 %.
+
+- A 128 KiB head gives member 0 and the file size. The last wanted member is
+  found from the end of the file first, then the rest by *interpolating*
+  between known headers: member sizes shrink with lead, so extrapolating from
+  the head alone misses the middle member by up to a whole member.
+- Windows are scanned at 512-byte alignment for blocks that start with the
+  member-name prefix and pass `tarfile`'s checksum, so HDF5 data cannot pass
+  for a header.
+- DWD promises neither the layout nor range support. Anything unexpected — a
+  200, an unexpected first member, a header not found within `MAX_REQUESTS`,
+  a 206 that does not match the request, a file replaced between requests
+  (`If-Range` turns that into a 200) — falls back to the whole archive. A
+  failed fetch (404, network) is not a fallback case and raises as usual.
+- Not worth it elsewhere: RV needs all 25 members every release, HymecNG is one
+  gzip chunk, RADOLAN files are bz2 (and RW is only ~8 KB).
+
+## Rain events
+
+`rain_events` on `binary_sensor.<device>_precipitation_expected` (schema 1) is a
+contract with blueprints: field names and semantics in the README section "Rain
+events". `rain_events.py` holds the logic; `RadvorRV` the glue.
+
+- **Steps.** The measured step ending at T is the RV analysis (lead 0) of
+  release T, and no other release has it, so the integration keeps measured
+  steps itself. The published series is 12 measured + 24 forecast steps. A step
+  is wet strictly above `wet_step_milli(rain_event_threshold)` thousandths
+  (integer arithmetic; selects exactly the steps above option/12).
+- **Recomputed, not accumulated.** The state keeps every measured step from
+  the start of the oldest ongoing event (two steps earlier, which decide
+  `start_clipped`) and from its onset snapshot. Each release rebuilds the
+  timeline and recomputes every event's amounts and peaks from its own steps.
+  This is a deliberate deviation from the spec's incremental accumulators: same
+  values, but a late fill can never be counted twice and `observed` can never
+  go down. A multi-day event is a few KB of store.
+- **Unknown steps bridge, bounded.** An unknown step never splits a run;
+  for *ending* an event it counts as dry only once it has left the window (it
+  can no longer be filled), which then ends the event as `end_clipped`. More
+  than `MAX_UNKNOWN_BRIDGE` (36 steps, 3 h) unknown in a row count as dry, so
+  a restart mid-storm keeps the event and a multi-day outage does not glue new
+  rain onto an old event.
+- **Ended events** move to `last_ended` and are final; their span is kept in
+  `ended_spans` while it is in view, so their rain is not picked up again.
+- **Fill before matching.** `RadvorRV._async_fill_missed` fetches each unknown
+  measured step in the window (analysis only, by range), newest first,
+  sequentially, within `RAIN_FILL_BUDGET`; the first failure ends the round,
+  with one warning per run of failures. A release without data for the cell
+  is recorded as such and not refetched.
+- **Persistence.** One `Store` per entry (`rain_events_store_key`). Written
+  `RAIN_SAVE_DELAY` after a release while something is at stake (an event, a
+  wet or unknown step, a new `last_ended`); otherwise the delayed save is
+  pushed back by every release and happens at shutdown, so a dry day costs no
+  writes. Unload writes it at once (an options reload must read it back),
+  `async_remove_entry` deletes it, an unreadable store is discarded.
+- **Isolation.** A tracker failure is logged once and leaves the attribute
+  out; it never fails the RV update the other sensors depend on.
+- **Threshold.** `rain_event_threshold` is independent of
+  `precipitation_threshold` (no `max()`); changing it drops the events (new
+  ids) but keeps the measured steps and `last_ended`.
+
+## Options form
+
+The options form nests rarely needed options in a collapsed `advanced_options`
+section (`data_entry_flow.section`): `rain_event_threshold`,
+`precipitation_end_algorithm`, `full_rolling_series`, `unavailable_when_stale`.
+Only the *form* is nested: `async_step_init` flattens the section before
+saving, so every key stays where `entry.options.get(...)` looks for it and no
+migration is needed. Translations live under
+`options.step.init.sections.advanced_options`. HA 2026.10 installs `probatio`
+as `voluptuous` at import time, which is why `vol.Schema` inside `section`
+serializes; a script importing `voluptuous` before `homeassistant` sees the
+real one and cannot serialize the form.
 
 ## HymecNG product specifics
 

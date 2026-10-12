@@ -521,7 +521,7 @@ class RadvorRV(BaseProductUpdateCoordinator):
                         "serve it; nothing is wrong with your setup. The step "
                         "stays unknown and is retried with the next releases",
                         step_end.strftime("%Y-%m-%d %H:%M UTC"),
-                        err,
+                        err or type(err).__name__,
                     )
                 return
             _LOGGER.debug("Filled the RV analysis of %s: %s", step_end, value)
