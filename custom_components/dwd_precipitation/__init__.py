@@ -10,10 +10,13 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.storage import Store
 
 from .coordinator import BaseProductUpdateCoordinator
 from .const import CONF_DRY_STREAK_SOURCE, LEGACY_DRY_STREAK_SOURCE, PLATFORMS
 from .products import (
+    RAIN_EVENTS_STORE_VERSION,
+    rain_events_store_key,
     RadvorRS,
     RadvorRV,
     HymecNG,
@@ -121,4 +124,18 @@ async def update_listener(hass: HomeAssistant, entry: MyConfigEntry) -> None:
 
 async def async_unload_entry(hass: HomeAssistant, entry: MyConfigEntry) -> bool:
     """Unload a config entry."""
-    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    # Write rain_events now: an options change reloads the entry, and the new
+    # coordinator must read the current state, not one a pending save still
+    # holds.
+    rv = entry.runtime_data.coordinators.get(RadvorRV.PRODUCT_KEY)
+    if isinstance(rv, RadvorRV):
+        await rv.async_save_rain_events()
+    return unloaded
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Delete what the entry stored when it is removed."""
+    await Store(
+        hass, RAIN_EVENTS_STORE_VERSION, rain_events_store_key(entry.entry_id)
+    ).async_remove()

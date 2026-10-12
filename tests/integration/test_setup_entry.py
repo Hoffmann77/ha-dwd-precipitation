@@ -494,3 +494,21 @@ async def test_renamed_sensor_keeps_an_existing_entity_id(hass: HomeAssistant) -
     state = hass.states.get("sensor.home_precipitation_now")
     assert state is not None
     assert state.attributes["friendly_name"].endswith("Precipitation last 1h (radar)")
+
+
+@pytest.mark.asyncio
+async def test_removing_the_entry_deletes_its_rain_events_store(
+    hass: HomeAssistant, hass_storage
+) -> None:
+    """Nothing the entry stored outlives it."""
+    entry = _entry(hass)
+    key = f"dwd_precipitation.{entry.entry_id}.rain_events"
+    hass_storage[key] = {"version": 1, "minor_version": 1, "key": key, "data": {}}
+    with _patched_products():
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    await hass.config_entries.async_remove(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert key not in hass_storage

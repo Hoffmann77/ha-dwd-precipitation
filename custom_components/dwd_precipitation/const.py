@@ -58,6 +58,14 @@ CONF_FULL_ROLLING_SERIES = "full_rolling_series"
 # 12 windows that straddle now. The peak itself is identical either way.
 DEFAULT_FULL_ROLLING_SERIES = False
 
+CONF_RAIN_EVENT_THRESHOLD = "rain_event_threshold"
+
+# mm/h; a 5-minute step above a twelfth of this is wet for rain_events. Not a
+# clutter filter (the composite is clean): it stops trace rain forming events
+# and drizzle bridging two cells, while light rain still counts. Deliberately
+# independent of CONF_PRECIPITATION_THRESHOLD.
+DEFAULT_RAIN_EVENT_THRESHOLD = 0.1
+
 CONF_PRECIPITATION_RESET_THRESHOLD = "precipitation_reset_threshold"
 
 # mm; a past-hour total from the dry-streak source at/above this value resets
