@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from urllib.parse import urlsplit
 
@@ -29,6 +30,8 @@ class AsyncResponse:
     """Minimal HTTP response wrapper returned by async_get."""
 
     content: bytes
+    status: int = 200
+    headers: Mapping[str, str] = field(default_factory=dict)
 
 
 def _validate_url(url: str) -> None:
@@ -133,6 +136,8 @@ async def async_get(
     session: aiohttp.ClientSession,
     attempts: int = 2,
     max_bytes: int = DEFAULT_MAX_BYTES,
+    headers: Mapping[str, str] | None = None,
+    partial_max_bytes: int | None = None,
 ) -> AsyncResponse:
     """Send a HTTP GET request using an aiohttp session.
 
@@ -140,18 +145,33 @@ async def async_get(
     no cross-host redirects (so provenance can't be redirected away), and a hard
     cap on the buffered body size. Retries on connection errors up to `attempts`
     times. Raises immediately on 4xx/5xx responses without retrying.
+
+    ``headers`` are sent as given (a Range request, say). A 206 answer is held
+    to ``partial_max_bytes`` when set, so a range read stays small, while a 200
+    -- a server ignoring the range -- may still be a whole file.
     """
     _validate_url(url)
     for attempt in range(attempts):
         try:
-            async with session.get(url, allow_redirects=False) as response:
+            async with session.get(
+                url, allow_redirects=False, headers=headers
+            ) as response:
                 response.raise_for_status()
                 if 300 <= response.status < 400:
                     raise ValueError(
                         f"DWD returned an unexpected redirect "
                         f"(HTTP {response.status}) for {url!r}"
                     )
-                return AsyncResponse(content=await _read_capped(response, max_bytes))
+                cap = (
+                    partial_max_bytes
+                    if response.status == 206 and partial_max_bytes is not None
+                    else max_bytes
+                )
+                return AsyncResponse(
+                    content=await _read_capped(response, cap),
+                    status=response.status,
+                    headers=response.headers,
+                )
         except aiohttp.ClientResponseError:
             raise
         except aiohttp.ClientConnectionError as err:

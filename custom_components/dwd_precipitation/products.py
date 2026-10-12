@@ -19,6 +19,7 @@ from .coordinator import (
     ProductMetadata,
 )
 from .utils import async_get
+from .radar.tar_range import fetch_tar_members, member_names
 from .radar import (
     read_radolan_composite,
     get_radolan_grid_index,
@@ -79,34 +80,84 @@ def _parse_odim_ts(date: str | None, time: str | None) -> datetime | None:
 RS_HOURLY_LEADS = (0, 60, 120)
 
 
-def _read_tar_cells(
-    content: bytes, prefix: str, leads, cell: tuple[int, int], label: str
+# A 206 answer is one window of a RADVOR tar, at most a few members of under
+# 1 MB each; anything near this cap is not what was asked for.
+RANGE_MAX_BYTES = 8 * 1024 * 1024
+
+
+def _tar_members(content: bytes, prefix: str, leads) -> dict[str, bytes]:
+    """Return the requested members of a whole RADVOR tar, by name."""
+    out: dict[str, bytes] = {}
+    with tarfile.open(fileobj=BytesIO(content), mode="r") as tf:
+        for name in member_names(prefix, leads):
+            try:
+                f = tf.extractfile(name)
+            except KeyError:
+                continue
+            if f is not None:
+                out[name] = f.read()
+    return out
+
+
+def _decode_cells(
+    members: dict[str, bytes], prefix: str, leads, cell: tuple[int, int], label: str
 ) -> dict[int, tuple[float | None, dict] | None]:
-    """Decode one grid cell from each requested member of a RADVOR tar.
+    """Decode one grid cell from each requested RADVOR member.
 
     Returns ``{lead: (value, dataset_what)}``; ``value`` is ``None`` for nodata,
-    and a member missing from the archive maps to ``None`` (logged).
+    and a member missing from ``members`` maps to ``None`` (logged).
     """
     row, col = cell
     out: dict[int, tuple[float | None, dict] | None] = {}
-    with tarfile.open(fileobj=BytesIO(content), mode="r") as tf:
-        for lead in leads:
-            member_name = f"{prefix}_{lead:03d}-hd5"
-            try:
-                f = tf.extractfile(member_name)
-            except KeyError:
-                f = None
-            if f is None:
-                _LOGGER.warning("%s tar member not found: %s", label, member_name)
-                out[lead] = None
-                continue
+    for lead, name in zip(leads, member_names(prefix, leads)):
+        if (member := members.get(name)) is None:
+            _LOGGER.warning("%s tar member not found: %s", label, name)
+            out[lead] = None
+            continue
 
-            val, what = read_odim_composite_cell(
-                BytesIO(f.read()), row, col, expected_shape=RS_GRID_SHAPE
-            )
-            val = float(val)
-            out[lead] = (None if np.isnan(val) else val, what)
+        val, what = read_odim_composite_cell(
+            BytesIO(member), row, col, expected_shape=RS_GRID_SHAPE
+        )
+        val = float(val)
+        out[lead] = (None if np.isnan(val) else val, what)
     return out
+
+
+def _read_tar_cells(
+    content: bytes, prefix: str, leads, cell: tuple[int, int], label: str
+) -> dict[int, tuple[float | None, dict] | None]:
+    """Decode one grid cell from each requested member of a whole RADVOR tar."""
+    return _decode_cells(_tar_members(content, prefix, leads), prefix, leads, cell, label)
+
+
+async def async_read_tar_members(
+    client, url: str, prefix: str, leads
+) -> dict[str, bytes]:
+    """Fetch only the requested members of a RADVOR tar, by range reads.
+
+    Falls back to the whole archive on anything unexpected (see
+    radar.tar_range); a missing release still raises, like any fetch.
+    """
+    async def fetch(target: str, headers):
+        return await async_get(
+            target, client, headers=headers, partial_max_bytes=RANGE_MAX_BYTES
+        )
+
+    async def whole() -> bytes:
+        return (await async_get(url, client)).content
+
+    result = await fetch_tar_members(
+        fetch, url, member_names(prefix, LEADS), member_names(prefix, leads), whole
+    )
+    _LOGGER.debug(
+        "Read %s member(s) of %s in %s request(s), %s bytes%s",
+        len(result.members),
+        url,
+        result.requests,
+        result.bytes_read,
+        " (whole archive)" if result.whole else "",
+    )
+    return result.members
 
 
 def _odim_window(what: dict) -> tuple[datetime | None, datetime | None]:
@@ -208,15 +259,32 @@ class RadvorRS(BaseProductUpdateCoordinator):
         )
 
     async def _fetch_and_parse(self, ts: datetime) -> tuple[list, list]:
-        """Fetch one tar archive and decode it off the event loop."""
-        response = await async_get(self._get_url(ts), self.async_client)
-        return await self.hass.async_add_executor_job(self._parse, response.content, ts)
+        """Fetch the members this entry decodes, then decode them off the loop.
 
-    def _parse(self, content: bytes, ts: datetime) -> tuple[list, list]:
-        """Derive the RS entity payloads from the tar bytes (blocking)."""
+        All 25 for the full rolling series, so the whole archive; otherwise
+        only the three fixed hours, read by range (~20 % of the bytes).
+        """
+        prefix = f"composite_rs_{ts.strftime('%Y%m%d_%H%M')}"
+        if self.full_rolling_series:
+            response = await async_get(self._get_url(ts), self.async_client)
+            return await self.hass.async_add_executor_job(
+                self._parse_archive, response.content, ts
+            )
+        members = await async_read_tar_members(
+            self.async_client, self._get_url(ts), prefix, RS_HOURLY_LEADS
+        )
+        return await self.hass.async_add_executor_job(self._parse, members, ts)
+
+    def _parse_archive(self, content: bytes, ts: datetime) -> tuple[list, list]:
+        """Derive the RS entity payloads from a whole tar (blocking)."""
+        prefix = f"composite_rs_{ts.strftime('%Y%m%d_%H%M')}"
+        return self._parse(_tar_members(content, prefix, LEADS), ts)
+
+    def _parse(self, members: dict[str, bytes], ts: datetime) -> tuple[list, list]:
+        """Derive the RS entity payloads from its members' bytes (blocking)."""
         full = self.full_rolling_series
-        cells = _read_tar_cells(
-            content,
+        cells = _decode_cells(
+            members,
             f"composite_rs_{ts.strftime('%Y%m%d_%H%M')}",
             LEADS if full else RS_HOURLY_LEADS,
             self.index,

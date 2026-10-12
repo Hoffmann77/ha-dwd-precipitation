@@ -165,6 +165,41 @@ async def test_rs_without_option_decodes_only_the_three_hours() -> None:
     assert [m.lead_time_minutes for m in meta[:3]] == [0, 60, 120]
 
 
+
+@pytest.mark.asyncio
+async def test_rs_without_option_reads_the_hours_by_range() -> None:
+    """RS: the default mode asks for byte ranges instead of the whole archive."""
+    ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
+    archive = make_rs_tar(ts)
+    calls: list[dict | None] = []
+
+    async def fake_get(url, _client, headers=None, **_kw):
+        calls.append(headers)
+        start, end = (int(x) for x in headers["Range"][6:].split("-"))
+        end = min(end, len(archive) - 1)
+        return AsyncResponse(
+            content=archive[start:end + 1],
+            status=206,
+            headers={"Content-Range": f"bytes {start}-{end}/{len(archive)}"},
+        )
+
+    def _read(fileobj, _row, _col, **_kw):
+        lead = int(fileobj.getvalue())
+        return np.float32(lead), _rs_what(ts, lead)
+
+    coord = _coord(RadvorRS, {"full_rolling_series": False})
+    with (
+        patch.object(products, "async_get", side_effect=fake_get),
+        patch.object(products, "read_odim_composite_cell", side_effect=_read),
+    ):
+        data, _ = await coord._fetch_and_parse(ts)
+
+    assert data[:3] == [0.0, 60.0, 120.0]
+    # The test archive is tiny, so the first window already holds all three.
+    assert len(calls) == 1
+    assert calls[0]["Range"].startswith("bytes=0-")
+    assert coord.hass.executor_jobs == 1
+
 def _rv_what(base: datetime, lead: int) -> dict:
     """ODIM /dataset/what for an RV member: 5-min window [T+lead-5, T+lead]."""
     end = base + timedelta(minutes=lead)
