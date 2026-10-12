@@ -60,7 +60,7 @@ Names ending in **`next <N>`** are forecasts.
 
 **RADOLAN RW / SF: radar + rain-gauge analysis · updated hourly / daily**
 
-- **Precipitation last 1h (gauge-adjusted)** (mm): past 60 min. Arrives once an hour but is more accurate than `Precipitation last 1h (radar)`.
+- **Precipitation last 1h (gauge-adjusted)** (mm): past 60 min. Arrives once an hour (or every 10 minutes, see *Advanced options*) but is more accurate than `Precipitation last 1h (radar)`.
 - **Precipitation last 24h (gauge-adjusted)** (mm): rolling past 24 hours
 - **Precipitation yesterday (gauge-adjusted)** (mm): the previous calendar day's total, available around 00:20 local time
 - **Precipitation total (hourly)** (mm): running total of all rain since setup, grows once an hour. For "rain this week" and same-day automations
@@ -130,7 +130,7 @@ Open **Settings > Devices & Services > DWD Precipitation > Configure**. None of 
 - **How "Precipitation start" and "Precipitation end" report** (default: clock time): show a clock time or the minutes until the event. The other form is always available as an attribute.
 - **Rain needed to reset the dry-streak counter (mm)** (default: 1.0): the selected product's past-hour total at or above this value resets `Timespan without precipitation`.
 - **Product that resets the dry-streak counter**: which past-hour total `Timespan without precipitation` compares against the threshold.
-  - `Precipitation last 1h (gauge-adjusted)` (RW, default for new installs): more accurate. It covers fixed hours and arrives about 30 minutes after each hour ends, so a reset can show up to about 1.5 h after the rain.
+  - `Precipitation last 1h (gauge-adjusted)` (RW, default for new installs): more accurate. The counter follows DWD's 10-minute runs of it (gauge-adjusted just like the hourly one), so a reset shows about 30 to 40 minutes after the rain.
   - `Precipitation last 1h (radar)` (RS): updated every 5 minutes. Faster, but noisier, and its rolling hour keeps resetting the counter for up to an hour after the rain stops.
 
   Installs set up before this option existed keep `Precipitation last 1h (radar)`, so upgrading changes nothing; switch here if you prefer RW. The counter keeps its value when you switch, and is unavailable while the selected product is.
@@ -139,6 +139,7 @@ Open **Settings > Devices & Services > DWD Precipitation > Configure**. None of 
 
 Collapsed at the bottom of the form; most installations never need them.
 
+- **How "Precipitation last 1h (gauge-adjusted)" updates** (default: fixed hour): *Fixed hour* shows one clock hour per value (the hour ending at :50), about 30 minutes after it ends. *Sliding hour* follows DWD's 10-minute runs: the 60 minutes ending at the latest 10-minute mark, equally gauge-adjusted and about 30 minutes behind, so a downpour shows up to an hour sooner; consecutive values overlap by 50 minutes. `Precipitation total (hourly)` always adds the fixed hours, since adding overlapping hours would count rain several times. The sliding hour costs about five extra small downloads (~8 kB each) an hour.
 - **Rain event threshold (mm per hour)** (default: 0.1): how much rain a 5-minute step needs to count towards an event in the [`rain_events`](#rain-events) attribute. 0 means any trace forms an event. It is independent of the rain detection threshold above, so the events and `Precipitation start` can disagree when the two differ.
 - **When "Precipitation end" counts rain as over** (default: first dry gap): see `Precipitation end` below.
 - **Include the past hour in the hourly forecast series** (default: off): makes the `forecast_rolling_1h` attribute of `Peak hourly precipitation next 2h` start one hour earlier, so the first entries also include rain that has already fallen and a chart shows the past hour and the forecast as one curve. The sensor's value does not change. Roughly doubles the processing time per update, which can matter on small devices such as a Raspberry Pi.
@@ -173,7 +174,7 @@ For the full two-hour forecast total, add `Precipitation next 1h` and `Precipita
 
 ### RADOLAN RW / SF: radar + rain-gauge analysis · hourly / daily
 
-- **Precipitation last 1h (gauge-adjusted)** (mm): rain that fell in the past 60 minutes. Arrives once an hour, but is more accurate than `Precipitation last 1h (radar)`.
+- **Precipitation last 1h (gauge-adjusted)** (mm): rain that fell in the past 60 minutes, corrected with rain-gauge data. By default one fixed clock hour per value, updated hourly; with *Sliding hour* (see *Advanced options*) the latest 60 minutes, updated every 10 minutes. Either way about 30 minutes behind, but more accurate than `Precipitation last 1h (radar)`.
 - **Precipitation last 24h (gauge-adjusted)** (mm): rain that fell in the rolling past 24 hours. Updated hourly.
 - **Precipitation yesterday (gauge-adjusted)** (mm): total for the previous calendar day. Updated once a day, around 00:20 German local time.
 

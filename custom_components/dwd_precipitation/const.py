@@ -66,6 +66,21 @@ CONF_RAIN_EVENT_THRESHOLD = "rain_event_threshold"
 # independent of CONF_PRECIPITATION_THRESHOLD.
 DEFAULT_RAIN_EVENT_THRESHOLD = 0.1
 
+CONF_RW_LAST_HOUR_MODE = "rw_last_hour_mode"
+
+# What "Precipitation last 1h (gauge-adjusted)" shows. DWD runs RW every 10
+# minutes, each run a sliding hour ending at that mark, gauge-adjusted as
+# strongly as the HH:50 run (scripts/compare_rw_runs.py). "fixed" keeps the
+# one clock hour per value the sensor always showed; "sliding" follows the
+# 10-minute runs. The hourly total always adds the fixed hours: summing
+# sliding ones would count every hour six times.
+RW_LAST_HOUR_FIXED = "fixed"
+RW_LAST_HOUR_SLIDING = "sliding"
+DEFAULT_RW_LAST_HOUR_MODE = RW_LAST_HOUR_FIXED
+
+# The coordinator for RW's 10-minute runs, created only when something uses it.
+RW_SLIDING_KEY = "rw_10min"
+
 CONF_PRECIPITATION_RESET_THRESHOLD = "precipitation_reset_threshold"
 
 # mm; a past-hour total from the dry-streak source at/above this value resets
@@ -74,10 +89,9 @@ DEFAULT_PRECIPITATION_RESET_THRESHOLD = 1.0
 
 CONF_DRY_STREAK_SOURCE = "dry_streak_source"
 
-# Which product's past-hour total resets the dry streak. The values are product
-# keys, so they index the coordinators directly. Both are 60-minute totals in
-# mm, so the reset threshold means the same thing either way.
-# "rw" = RW, gauge-adjusted, one fixed hour per file (HH:50), ~28 min late.
+# Which product's past-hour total resets the dry streak. Both are 60-minute
+# totals in mm, so the reset threshold means the same thing either way.
+# "rw" = RW, gauge-adjusted: its 10-minute runs (RW_SLIDING_KEY), ~28 min late.
 # "rs" = RS _000, radar only, a rolling hour refreshed every 5 minutes.
 DRY_STREAK_SOURCE_RW = "rw"
 DRY_STREAK_SOURCE_RS = "rs"

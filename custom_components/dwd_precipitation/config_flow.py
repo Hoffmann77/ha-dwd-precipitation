@@ -37,6 +37,10 @@ from .const import (
     DEFAULT_FULL_ROLLING_SERIES,
     CONF_RAIN_EVENT_THRESHOLD,
     DEFAULT_RAIN_EVENT_THRESHOLD,
+    CONF_RW_LAST_HOUR_MODE,
+    DEFAULT_RW_LAST_HOUR_MODE,
+    RW_LAST_HOUR_FIXED,
+    RW_LAST_HOUR_SLIDING,
 )
 from .radar import rs_grid_contains
 
@@ -78,6 +82,18 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                         step=0.1,
                         unit_of_measurement="mm/h",
                         mode=selector.NumberSelectorMode.BOX,
+                    )
+                ),
+                vol.Optional(
+                    CONF_RW_LAST_HOUR_MODE,
+                    default=options.get(
+                        CONF_RW_LAST_HOUR_MODE, DEFAULT_RW_LAST_HOUR_MODE
+                    ),
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=[RW_LAST_HOUR_FIXED, RW_LAST_HOUR_SLIDING],
+                        translation_key=CONF_RW_LAST_HOUR_MODE,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),
                 vol.Optional(

@@ -174,6 +174,7 @@ viewers and Windows consoles mangle typographic punctuation.
 | `RadvorRV` | `rv` | ODIM_H5 (tar) | 5 min | RV nowcast, 25×5-min grids; derives the current intensity (lead 0 × 12, mm/h, with the raw 5-min amount), +1h/+2h peak intensity (mm/h), precip start/end timing (episode/clearing end algorithm, user-selectable), a rain-within-2h flag (whose metadata carries the raw 25-point forecast series, exposed by default), and by default the wettest future hour (see "Peak hourly precipitation") |
 | `HymecNG` | `hymecng` | ODIM_H5 (single .hd5) | 5 min | Precipitation-*type* composite (rain/snow/freezing rain/hail/…); one enum "Precipitation type" sensor |
 | `RadolanRW` | `rw` | RADOLAN binary (.bz2) | 1 h | 1-hour precipitation analysis (gauge-adjusted; same window as RS `_000`) |
+| `RadolanRW10` | `rw_10min` | same as RW | 10 min | RW's 10-minute runs: the sliding hour ending at each :x0. Built only when used (see "RW 10-minute runs") |
 | `RadolanSF` | `sf` | RADOLAN binary (.bz2) | 1 h | 24-hour precipitation analysis |
 | `RadolanSFLastYesterday` | `sf_2350` | same as SF | daily | Yesterday's 24 h total |
 
@@ -399,8 +400,11 @@ product, and its values are product keys, so `async_setup_entry` binds the
 entity to `coordinators[source]` directly (options reload the entry, as for
 `_peak_hour_sensor()`):
 
-- `rw` — RW, gauge-adjusted, one fixed hour per file, ~28 min late. Scalar
-  payload; the reset time is `metadata.source_timestamp`, the end of that hour.
+- `rw` — RW, gauge-adjusted, ~28 min late, counted from its **10-minute
+  runs** (`rw_10min`, see "RW 10-minute runs"): the reset shows up to an hour
+  sooner than with the HH:50 run alone, at the same adjustment. Scalar
+  payload; the reset time is `metadata.source_timestamp`, the end of that
+  sliding hour.
 - `rs` — RS `_000`, radar only, a rolling hour every 5 min. List payload; the
   reading is `data[0]` / `metadata[0]`.
 
@@ -414,6 +418,32 @@ version 1.2: `async_migrate_entry` writes `dry_streak_source: "rs"` into every
 1.1 entry that lacks it, and the config flow writes the default into every new
 entry. So every entry stores its source, and changing
 `DEFAULT_DRY_STREAK_SOURCE` later never moves an existing install.
+
+## RW 10-minute runs
+
+DWD runs RW every 10 minutes, each run the hour ending at that :x0; the HH:50
+file the integration always used is just one of them. `RadolanRW10`
+(`rw_10min`) is the same file family on a 10-minute grid (same URL pattern,
+same parsing, `RELEASE_DELAY` 28 min, observed ~26 min).
+
+- **Quality.** `scripts/compare_rw_runs.py` compares every RW run on OpenData
+  (48 h) with radar-only RS `_000` for the same hour, cell for cell (RW's HDF5
+  edition is on the DE1200 grid). If the sub-hourly runs used fewer gauges
+  they would sit closer to RS. They do not: over 285 wet runs (2026-10-10..12)
+  every run minute departs from RS alike (mean |RW-RS| 0.53-0.58 mm, 58-62 %
+  relative, 76-78 % of wet cells adjusted). Rerun it before relying on this
+  for anything new.
+- **Built only when used** (`is_needed(options)`, checked in
+  `async_setup_entry`): when `rw_last_hour_mode` is `sliding`, or the dry
+  streak counts RW. Otherwise the entry makes no extra requests.
+- **Never for the totals.** Consecutive runs overlap by 50 minutes, so summing
+  them counts each hour six times; `Precipitation total (hourly)` and its
+  missed-release walk stay on the HH:50 grid of `rw`. The startup downtime
+  correction of the dry streak also keeps using `rw`.
+- `rw_last_hour_mode` (Advanced, default `fixed`) rebinds the
+  `radolan_rw` sensor (`_radolan_sensors()`); the key is unchanged, so the
+  entity and its history survive the switch. The dry streak does not follow
+  this option: it always takes the sliding runs when counting RW.
 
 ## Range reads
 
