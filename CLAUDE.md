@@ -35,11 +35,9 @@ utils.py              async_get() HTTP helper (headers, status, separate 206
                       cap); get_previous_multiple() for computing the most
                       recent release timestamp.
 radar/                Embedded parsers (no heavy external deps).
-  radolan.py          Extracted wradlib binary parser for RADOLAN/RADVOR formats.
-                      Unused at runtime since RW/SF are read as HDF5.
-  georef.py           Extracted wradlib polar-stereographic grid transform.
-                      Unused at runtime, like radolan.py.
-  odim.py             ODIM_H5 (HDF5) reader for RS Cartesian composites.
+  odim.py             ODIM_H5 (HDF5) reader for every product (RS, RV,
+                      HymecNG, RW/SF in their HDF5 edition) and the DE1200
+                      grid lookup.
   tar_range.py        Reads selected members of a remote tar by HTTP range
                       requests (see "Range reads"). HA-free.
 ```
@@ -287,14 +285,15 @@ run comes back clean.
 
 ## Grid lookup
 
-Both lookups return the cell that *contains* the location: project it, then
+The lookup returns the cell that *contains* the location: project it, then
 **floor** its offset from the grid's outer lower-left corner. Never round, and
 never take the nearest grid coordinate unless those coordinates are pixel
 centres — the corner references below are pixel *edges*, and treating them as
 centres shifts the lookup by half a cell, which picks a neighbouring cell for
-~3 locations in 4. Both were wrong that way until 2026.10.
+~3 locations in 4. Both lookups the integration had then were wrong that way
+until 2026.10; since RW/SF moved to HDF5 there is only the DE1200 one.
 
-The reference tier checks both against wradlib's own grids (`mode="edge"`),
+The reference tier checks it against wradlib's own grid (`mode="edge"`),
 not against a reimplementation of our arithmetic, and pins wradlib's DE1200
 grid to the fixture file's corner attributes. Fixture coordinates are cell
 *centres*; a corner would sit on the boundary of four cells. The same wradlib
@@ -308,9 +307,11 @@ Read in their **HDF5 edition** (`raa01-<p>_10000-<yymmddHHMM>-dwd---bin.hdf5`),
 which is ODIM_H5 on the same DE1200 grid as RS below, so `RadolanProduct.index`
 is `get_rs_grid_index` and `_parse` is `read_odim_composite_cell` (ACRR,
 gain 0.1, nodata 65535 -> NaN -> `None`). DWD announced that the legacy binary
-edition (.bz2, national 900x900 spherical grid, `radar/radolan.py` +
-`radar/georef.py`) would be switched off; it is still published, but nothing
-reads it any more.
+edition (.bz2, national 900x900 spherical grid) would be switched off; it is
+still published, but nothing reads it any more, and its reader
+(`radar/radolan.py`, `radar/georef.py`, extracted from wradlib) was removed
+with its tests and fixtures. Git history has them if the binary edition is ever
+needed again.
 
 The two editions are the same analysis on different grids, not a cell-for-
 cell copy: checked on live files (2026-10-12), area means over ~1100 locations
@@ -335,10 +336,10 @@ wradlib's `dwd-radolan-wgs84-de1200` grid.
 
 ## The radar/ directory
 
-`radar/radolan.py` and `radar/georef.py` are extracted from
-[wradlib](https://github.com/wradlib/wradlib) (MIT licence) to avoid requiring
-wradlib as a runtime dependency (wradlib pulls in many heavy packages that cannot
-be installed in standard HA environments).
+wradlib is not a runtime dependency (it pulls in many heavy packages that
+cannot be installed in standard HA environments); it is used only by the
+reference tiers. The RADOLAN binary reader once extracted from it is gone (see
+"RADOLAN (RW, SF)").
 
 `radar/odim.py` is original code that uses `h5py` directly. It exposes
 `read_odim_composite` (physical quantities like RS/RV's `ACRR`, scaled by

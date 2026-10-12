@@ -19,15 +19,16 @@ tracking issue on failure instead of blocking merges.**
 ## What each tier covers
 
 - **`parser/`** — the vendored radar parsers and pure helpers, no HA/network:
-  `test_odim.py` (ODIM_H5 read + RS grid), `test_radolan.py` (RADOLAN binary, against a
-  committed fixture), `test_georef.py` (RADOLAN grid transform), `test_utils.py`
-  (release-timing math).
+  `test_odim.py` (ODIM_H5 read + DE1200 grid), `test_tar_range.py` (range reads
+  of tar members), `test_rain_events.py` (the rain-event tracker),
+  `test_translations.py` (en/de key parity), `test_utils.py` (release-timing math
+  and the HTTP helper).
 - **`integration/`** — the HA-facing layer (imports `homeassistant`):
   `test_config_flow.py`, `test_setup_entry.py` (entry → coordinators → sensor states),
   `test_products.py` (fetch/parse metadata derivation), `test_coordinator_timing.py`,
   `test_sensor.py`.
 - **`reference/`** — golden comparison of our extracted parsers and grid lookups
-  against pure `wradlib` (RS and RADOLAN), on the committed fixtures. Skips if
+  against pure `wradlib` (RS on the DE1200 grid), on the committed fixtures. Skips if
   `wradlib` or the fixture is missing. The wradlib side lives in
   `tests/wradlib_ref.py` and never imports our `radar/` code.
 - **`live/`** — downloads and parses the **real** DWD files for every product, walking
@@ -37,8 +38,8 @@ tracking issue on failure instead of blocking merges.**
 - **`live_wradlib/`** — the reference comparison on **today's** DWD files for every
   product (RS, RV, HymecNG, RW, SF). For a fixed set of German locations it checks
   that our lookup lands on the same cell as wradlib and that the production read
-  path (`read_odim_composite_cell` / `read_odim_classification` /
-  `read_radolan_composite`) returns the same value, and that every member's full
+  path (`read_odim_composite_cell` / `read_odim_classification`, RW/SF read in
+  their HDF5 edition) returns the same value, and that every member's full
   grid decodes identically. The full-grid check is what catches a decode error on
   a dry day, when every fixed location reads 0.
 
@@ -76,8 +77,9 @@ uv run --group unit-test pytest tests -m "not live"
 
 - `fixtures/` holds committed real DWD samples + expected-value JSON:
   `composite_rs_sample.hd5` / `fixture_metadata.json` (RS) and
-  `radolan_{rw,sf}_sample.bin.bz2` / `radolan_metadata.json` (RADOLAN).
-- Regenerate them (downloads fresh DWD data; **overwrites the RS fixture too**):
+  `radolan_rw_sample.hdf5` (one real RW file in its HDF5 edition, a plain
+  download from OpenData).
+- Regenerate the RS fixture (downloads fresh DWD data):
   ```sh
   uv run --group wradlib-comparison python scripts/create_fixture.py
   ```
