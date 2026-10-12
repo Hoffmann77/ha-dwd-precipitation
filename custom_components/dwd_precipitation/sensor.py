@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any
 
@@ -33,6 +33,14 @@ from .const import (
     DEFAULT_FULL_ROLLING_SERIES,
     CONF_PRECIPITATION_RESET_THRESHOLD,
     DEFAULT_PRECIPITATION_RESET_THRESHOLD,
+    CONF_DRY_STREAK_SOURCE,
+    DEFAULT_DRY_STREAK_SOURCE,
+    DRY_STREAK_SOURCE_RS,
+    DRY_STREAK_SOURCE_RW,
+    CONF_RW_LAST_HOUR_MODE,
+    DEFAULT_RW_LAST_HOUR_MODE,
+    RW_LAST_HOUR_SLIDING,
+    RW_SLIDING_KEY,
     CONF_START_END_MODE,
     DEFAULT_START_END_MODE,
     START_END_MODE_DURATION,
@@ -73,7 +81,7 @@ class PrecipitationSensorEntityDescription(SensorEntityDescription):
 RADOLAN_SENSORS = (
     PrecipitationSensorEntityDescription(
         key="radolan_rw",
-        translation_key="precipitation_last_1h",
+        translation_key="precipitation_last_1h_gauge_adjusted",
         native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
@@ -83,7 +91,7 @@ RADOLAN_SENSORS = (
     ),
     PrecipitationSensorEntityDescription(
         key="radolan_sf",
-        translation_key="precipitation_last_24h",
+        translation_key="precipitation_last_24h_gauge_adjusted",
         native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
@@ -93,7 +101,7 @@ RADOLAN_SENSORS = (
     ),
     PrecipitationSensorEntityDescription(
         key="radolan_sf_yesterday",
-        translation_key="precipitation_yesterday",
+        translation_key="precipitation_yesterday_gauge_adjusted",
         native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
@@ -102,6 +110,21 @@ RADOLAN_SENSORS = (
         access_fn=lambda d: d,
     ),
 )
+
+
+def _radolan_sensors(rw_mode: str) -> tuple[PrecipitationSensorEntityDescription, ...]:
+    """Return the RADOLAN sensors, the last-1h one bound to the chosen RW runs.
+
+    The key stays radolan_rw either way, so switching keeps the entity, its id
+    and its history; only the hour it shows changes from a fixed one to the
+    latest sliding one.
+    """
+    if rw_mode != RW_LAST_HOUR_SLIDING:
+        return RADOLAN_SENSORS
+    return tuple(
+        replace(d, product_key=RW_SLIDING_KEY) if d.key == "radolan_rw" else d
+        for d in RADOLAN_SENSORS
+    )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -144,7 +167,7 @@ TOTAL_SENSORS = (
 RADVOR_SENSORS = (
     PrecipitationSensorEntityDescription(
         key="radvor_rs_000",
-        translation_key="precipitation_now",
+        translation_key="precipitation_last_1h_radar",
         native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
@@ -211,9 +234,26 @@ def _peak_hour_sensor(full_rolling_series: bool) -> PrecipitationSensorEntityDes
     )
 
 
-# RV sensors whose shape does not depend on the start/end display mode: the two
-# peak-intensity sensors.
+# RV sensors whose shape does not depend on the start/end display mode: the
+# current intensity and the two peak-intensity sensors.
 RADVOR_RV_SENSORS = (
+    PrecipitationSensorEntityDescription(
+        key="radvor_rv_intensity_000",
+        translation_key="precipitation_intensity_now",
+        native_unit_of_measurement=UnitOfVolumetricFlux.MILLIMETERS_PER_HOUR,
+        device_class=SensorDeviceClass.PRECIPITATION_INTENSITY,
+        suggested_display_precision=1,
+        state_class=SensorStateClass.MEASUREMENT,
+        product_key="rv",
+        access_fn=lambda d: d["intensity_000"],
+        # "Now" is the latest analysis, the 5 minutes ending at the release
+        # time; the window and the unscaled amount say so.
+        attrs_fn=lambda d: {"amount_5min": d["amount_000"]},
+        metadata_attrs_fn=lambda meta: {
+            "window_start": meta.data_start,
+            "window_end": meta.data_end,
+        },
+    ),
     PrecipitationSensorEntityDescription(
         key="radvor_rv_max_intensity_060",
         translation_key="peak_intensity_next_1h",
@@ -334,7 +374,9 @@ async def async_setup_entry(
         + RADVOR_RV_SENSORS
         + _rv_timing_sensors(mode)
         + HYMECNG_SENSORS
-        + RADOLAN_SENSORS
+        + _radolan_sensors(
+            entry.options.get(CONF_RW_LAST_HOUR_MODE, DEFAULT_RW_LAST_HOUR_MODE)
+        )
     )
 
     entities: list[SensorEntity] = [
@@ -348,7 +390,22 @@ async def async_setup_entry(
         PrecipitationTotalSensor(coordinators[description.product_key], description)
         for description in TOTAL_SENSORS
     )
-    entities.append(TimespanWithoutPrecipitationSensor(coordinators["rs"]))
+    # Changing the source reloads the entry, so binding once at setup is enough.
+    # The unique id does not depend on it, so the entity and its persisted
+    # dry_since survive a switch. RW counts its 10-minute runs: as strongly
+    # gauge-adjusted as HH:50, and a reset shows up to an hour sooner.
+    dry_streak_source = entry.options.get(
+        CONF_DRY_STREAK_SOURCE, DEFAULT_DRY_STREAK_SOURCE
+    )
+    entities.append(
+        TimespanWithoutPrecipitationSensor(
+            coordinators[
+                RW_SLIDING_KEY
+                if dry_streak_source == DRY_STREAK_SOURCE_RW
+                else dry_streak_source
+            ]
+        )
+    )
 
     async_add_entities(entities)
 
@@ -574,10 +631,12 @@ class TimespanWithoutPrecipitationSensor(
     """Number of days since precipitation last reached the reset threshold.
 
     Counts elapsed time since an anchor (``dry_since``). The anchor is re-set
-    whenever "Precipitation now" reaches the configurable threshold, and stands
-    otherwise, so the value grows continuously while it stays dry and drops back
-    to ~0 when it rains. The anchor is persisted across restarts and corrected on
-    startup against the RW/SF accumulation products to catch rain during downtime.
+    whenever the past-hour total of the dry-streak source (RW or RS ``_000``,
+    see ``CONF_DRY_STREAK_SOURCE``) reaches the configurable threshold, and
+    stands otherwise, so the value grows continuously while it stays dry and
+    drops back to ~0 when it rains. The anchor is persisted across restarts and
+    corrected on startup against the RW/SF accumulation products to catch rain
+    during downtime.
     """
 
     _attr_has_entity_name = True
@@ -589,7 +648,7 @@ class TimespanWithoutPrecipitationSensor(
     _attr_suggested_display_precision = 2
 
     def __init__(self, coordinator: BaseProductUpdateCoordinator) -> None:
-        """Initialize the sensor, bound to the RS ("Precipitation now") coordinator."""
+        """Initialize the sensor, bound to the dry-streak source's coordinator."""
         super().__init__(coordinator)
         entry = coordinator.config_entry
         self._attr_unique_id = f"{entry.entry_id}_timespan_without_precipitation"
@@ -607,13 +666,24 @@ class TimespanWithoutPrecipitationSensor(
             CONF_PRECIPITATION_RESET_THRESHOLD, DEFAULT_PRECIPITATION_RESET_THRESHOLD
         )
 
-    def _precip_now(self) -> float | None:
-        """Return the latest RS hourly total (mm), or None if unavailable."""
+    def _reading(self) -> tuple[Any, ProductMetadata | None]:
+        """Return the source's past-hour total and its metadata, unconverted.
+
+        RS carries parallel lists whose [0] is the past hour (``_000``); RW is a
+        scalar payload. Either part is None when the coordinator has nothing.
+        """
         cdata = self.coordinator.data
         if cdata is None or cdata.data is None:
-            return None
+            return None, None
 
-        value = cdata.data[0]  # rs lead time [0] == the past hour's total
+        if self.coordinator.PRODUCT_KEY == DRY_STREAK_SOURCE_RS:
+            return cdata.data[0], cdata.metadata[0] if cdata.metadata else None
+
+        return cdata.data, cdata.metadata or None
+
+    def _precip_now(self) -> float | None:
+        """Return the source's latest past-hour total (mm), or None if unavailable."""
+        value, _ = self._reading()
         if value is None:
             return None
 
@@ -622,12 +692,10 @@ class TimespanWithoutPrecipitationSensor(
         return None if value != value else value  # drop NaN
 
     def _measurement_time(self) -> datetime:
-        """Return the rs_000 measurement timestamp, falling back to utcnow()."""
-        cdata = self.coordinator.data
-        if cdata is not None and cdata.metadata:
-            meta = cdata.metadata[0]
-            if meta is not None and meta.source_timestamp is not None:
-                return meta.source_timestamp  # UTC-aware
+        """Return the end of the source's hour, falling back to utcnow()."""
+        _, meta = self._reading()
+        if (ts := getattr(meta, "source_timestamp", None)) is not None:
+            return ts  # UTC-aware
 
         return dt_util.utcnow()
 

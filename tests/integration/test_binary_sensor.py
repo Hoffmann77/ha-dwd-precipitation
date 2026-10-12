@@ -79,3 +79,15 @@ def test_raw_forecast_exposed_by_default():
 
     # forecast_5min is excluded from the recorder history.
     assert "forecast_5min" in DwdBinarySensorEntity._unrecorded_attributes
+
+
+def test_rain_events_exposed_and_unrecorded():
+    events = {"schema": 1, "events": [], "last_ended": None}
+    data = {"rain_within_2h": False, "start_in": None, "start_at": None, "rain_events": events}
+    assert _make_binary(data).extra_state_attributes["rain_events"] == events
+    assert "rain_events" in DwdBinarySensorEntity._unrecorded_attributes
+
+
+def test_rain_events_absent_when_the_tracker_had_nothing():
+    data = {"rain_within_2h": False, "start_in": None, "start_at": None, "rain_events": None}
+    assert "rain_events" not in _make_binary(data).extra_state_attributes

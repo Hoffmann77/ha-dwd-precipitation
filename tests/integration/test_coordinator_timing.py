@@ -450,7 +450,8 @@ def test_daily_deadline_follows_the_local_release_grid():
         deadline = coord._stale_deadline()
 
     next_release = datetime(2025, 10, 26, 23, 50, tzinfo=berlin).astimezone(UTC)
-    assert deadline == next_release + timedelta(minutes=28) + timedelta(minutes=30)
+    # RELEASE_DELAY (31 min, the HDF5 edition) + OVERDUE_GRACE (30 min).
+    assert deadline == next_release + timedelta(minutes=31) + timedelta(minutes=30)
     # 25 h later in absolute terms, not 24.
     assert next_release - coord.curr_release == timedelta(hours=25)
 

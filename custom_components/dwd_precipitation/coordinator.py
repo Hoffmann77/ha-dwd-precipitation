@@ -7,6 +7,7 @@ import logging
 import random
 from abc import ABC, abstractmethod
 from collections import defaultdict
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from functools import cached_property
@@ -209,6 +210,15 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
     _fetch_jitter: timedelta = timedelta()
 
     USE_LOCAL_TIME: ClassVar[bool] = False
+
+    @classmethod
+    def is_needed(cls, options: Mapping[str, Any]) -> bool:
+        """Whether an entry with these options uses this product at all.
+
+        Every product is, except those that exist for one option; skipping
+        them saves the requests (see async_setup_entry).
+        """
+        return True
 
     # Upper bound for the fast-poll retry interval (see _fast_poll_delay).
     MAX_FAST_POLL_INTERVAL: ClassVar[timedelta] = timedelta(minutes=5)

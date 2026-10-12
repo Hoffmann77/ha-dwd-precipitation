@@ -10,14 +10,18 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.storage import Store
 
 from .coordinator import BaseProductUpdateCoordinator
-from .const import PLATFORMS
+from .const import CONF_DRY_STREAK_SOURCE, LEGACY_DRY_STREAK_SOURCE, PLATFORMS
 from .products import (
+    RAIN_EVENTS_STORE_VERSION,
+    rain_events_store_key,
     RadvorRS,
     RadvorRV,
     HymecNG,
     RadolanRW,
+    RadolanRW10,
     RadolanSF,
     RadolanSFLastYesterday,
 )
@@ -27,6 +31,7 @@ PRODUCT_CLASSES: tuple[type[BaseProductUpdateCoordinator], ...] = (
     RadvorRV,
     HymecNG,
     RadolanRW,
+    RadolanRW10,
     RadolanSF,
     RadolanSFLastYesterday,
 )
@@ -50,8 +55,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: MyConfigEntry) -> bool:
     lat = entry.data["latitude"]
     lon = entry.data["longitude"]
 
+    # Products that exist for one option are only built when it is in use, so
+    # an entry never fetches what none of its entities show.
     product_coordinators: list[BaseProductUpdateCoordinator] = [
-        cls(hass, entry, client, lat, lon) for cls in PRODUCT_CLASSES
+        cls(hass, entry, client, lat, lon)
+        for cls in PRODUCT_CLASSES
+        if cls.is_needed(entry.options)
     ]
 
     # Refresh every product concurrently. async_refresh() records a failure on
@@ -96,6 +105,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: MyConfigEntry) -> bool:
     return True
 
 
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Migrate an older config entry to the current version."""
+    if entry.version > 1:
+        # Written by a newer major version; HA refuses to load it either way.
+        return False
+
+    if entry.minor_version < 2:
+        # 1.2 added the dry-streak source. Pin entries that predate it to the
+        # product they have always counted, so an upgrade changes nothing.
+        options = {**entry.options}
+        options.setdefault(CONF_DRY_STREAK_SOURCE, LEGACY_DRY_STREAK_SOURCE)
+        hass.config_entries.async_update_entry(
+            entry, options=options, minor_version=2
+        )
+
+    return True
+
+
 async def update_listener(hass: HomeAssistant, entry: MyConfigEntry) -> None:
     """Handle config entry updates."""
     await hass.config_entries.async_reload(entry.entry_id)
@@ -103,4 +130,18 @@ async def update_listener(hass: HomeAssistant, entry: MyConfigEntry) -> None:
 
 async def async_unload_entry(hass: HomeAssistant, entry: MyConfigEntry) -> bool:
     """Unload a config entry."""
-    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    # Write rain_events now: an options change reloads the entry, and the new
+    # coordinator must read the current state, not one a pending save still
+    # holds.
+    rv = entry.runtime_data.coordinators.get(RadvorRV.PRODUCT_KEY)
+    if isinstance(rv, RadvorRV):
+        await rv.async_save_rain_events()
+    return unloaded
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Delete what the entry stored when it is removed."""
+    await Store(
+        hass, RAIN_EVENTS_STORE_VERSION, rain_events_store_key(entry.entry_id)
+    ).async_remove()

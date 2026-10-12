@@ -5,9 +5,16 @@ from unittest.mock import patch
 import pytest
 from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
-from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.data_entry_flow import FlowResultType, InvalidData
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.dwd_precipitation.const import CONF_COORDS, DOMAIN
+from custom_components.dwd_precipitation.const import (
+    CONF_COORDS,
+    CONF_DRY_STREAK_SOURCE,
+    DOMAIN,
+    DRY_STREAK_SOURCE_RS,
+    DRY_STREAK_SOURCE_RW,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -155,3 +162,169 @@ async def test_flow_zero_coordinates_shows_error(hass: HomeAssistant) -> None:
 
     assert result["type"] is FlowResultType.FORM
     assert result["errors"] == {"base": "coordinates_out_of_range"}
+
+
+async def test_new_entry_stores_the_default_dry_streak_source(
+    hass: HomeAssistant,
+) -> None:
+    """A new install writes its source down instead of relying on the default."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": config_entries.SOURCE_USER},
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={
+            "name": "My DWD Station",
+            CONF_COORDS: {"latitude": 51.5, "longitude": 9.9},
+        },
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["result"].options == {CONF_DRY_STREAK_SOURCE: DRY_STREAK_SOURCE_RW}
+    assert result["result"].minor_version == 2
+
+
+# ===========================================================================
+# Options flow
+# ===========================================================================
+
+def _schema_default(result, key: str):
+    """Return the form default the options schema offers for key."""
+    marker = next(m for m in result["data_schema"].schema if m == key)
+    return marker.default()
+
+
+@pytest.mark.parametrize(
+    ("options", "expected"),
+    [
+        ({}, DRY_STREAK_SOURCE_RW),
+        ({CONF_DRY_STREAK_SOURCE: DRY_STREAK_SOURCE_RS}, DRY_STREAK_SOURCE_RS),
+    ],
+)
+async def test_options_form_offers_the_dry_streak_source(
+    hass: HomeAssistant, options: dict, expected: str
+) -> None:
+    """The form shows the entry's own source, defaulting to RW."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"name": "Home", "latitude": 51.05, "longitude": 13.73},
+        options=options,
+        minor_version=2,
+    )
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+
+    assert result["type"] is FlowResultType.FORM
+    assert _schema_default(result, CONF_DRY_STREAK_SOURCE) == expected
+
+
+async def test_options_flow_saves_the_dry_streak_source(hass: HomeAssistant) -> None:
+    """Saving rs round-trips into the entry options."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"name": "Home", "latitude": 51.05, "longitude": 13.73},
+        options={CONF_DRY_STREAK_SOURCE: DRY_STREAK_SOURCE_RW},
+        minor_version=2,
+    )
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={CONF_DRY_STREAK_SOURCE: DRY_STREAK_SOURCE_RS, "advanced_options": {}},
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options[CONF_DRY_STREAK_SOURCE] == DRY_STREAK_SOURCE_RS
+
+
+async def test_options_flow_rejects_an_unknown_dry_streak_source(
+    hass: HomeAssistant,
+) -> None:
+    """Only the two product keys are accepted."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"name": "Home", "latitude": 51.05, "longitude": 13.73},
+        options={},
+        minor_version=2,
+    )
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    with pytest.raises(InvalidData):
+        await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            user_input={CONF_DRY_STREAK_SOURCE: "sf", "advanced_options": {}},
+        )
+
+
+ADVANCED = (
+    "rain_event_threshold",
+    "rw_last_hour_mode",
+    "precipitation_end_algorithm",
+    "full_rolling_series",
+    "unavailable_when_stale",
+)
+
+
+def _section(result):
+    marker = next(m for m in result["data_schema"].schema if m == "advanced_options")
+    return result["data_schema"].schema[marker]
+
+
+async def test_advanced_options_are_a_collapsed_section(hass: HomeAssistant) -> None:
+    """The rarely needed options sit in a collapsed section with flat defaults."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"name": "Home", "latitude": 51.05, "longitude": 13.73},
+        options={"full_rolling_series": True, "rain_event_threshold": 0.4},
+        minor_version=2,
+    )
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    advanced = _section(result)
+
+    assert advanced.options["collapsed"] is True
+    inner = {str(m): m.default() for m in advanced.schema.schema}
+    assert tuple(inner) == ADVANCED
+    assert inner["full_rolling_series"] is True
+    assert inner["rain_event_threshold"] == 0.4
+    assert inner["unavailable_when_stale"] is True
+    assert inner["rw_last_hour_mode"] == "fixed"
+    main = {str(m) for m in result["data_schema"].schema}
+    assert main.isdisjoint(ADVANCED)
+
+
+async def test_advanced_options_are_stored_flat(hass: HomeAssistant) -> None:
+    """Saving flattens the section, so every option keeps its key."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"name": "Home", "latitude": 51.05, "longitude": 13.73},
+        options={CONF_DRY_STREAK_SOURCE: DRY_STREAK_SOURCE_RS},
+        minor_version=2,
+    )
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={
+            CONF_DRY_STREAK_SOURCE: DRY_STREAK_SOURCE_RS,
+            "advanced_options": {
+                "rain_event_threshold": 0.6,
+                "full_rolling_series": True,
+                "rw_last_hour_mode": "sliding",
+            },
+        },
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert "advanced_options" not in entry.options
+    assert entry.options["rain_event_threshold"] == 0.6
+    assert entry.options["full_rolling_series"] is True
+    assert entry.options["rw_last_hour_mode"] == "sliding"
+    assert entry.options["unavailable_when_stale"] is True  # its default
+    assert entry.options[CONF_DRY_STREAK_SOURCE] == DRY_STREAK_SOURCE_RS

@@ -87,10 +87,13 @@ class _FakeContent:
 
 
 class _FakeResponse:
-    def __init__(self, *, status=200, content_length=None, chunks=(b"payload",)):
+    def __init__(
+        self, *, status=200, content_length=None, chunks=(b"payload",), headers=None
+    ):
         self.status = status
         self.content_length = content_length
         self.content = _FakeContent(chunks)
+        self.headers = headers or {}
 
     def raise_for_status(self):
         # aiohttp only raises for >= 400; our tests exercise the < 400 paths.
@@ -162,3 +165,39 @@ def test_returns_joined_body_within_cap():
     session = _FakeSession(_FakeResponse(chunks=(b"ab", b"cd", b"ef")))
     result = asyncio.run(async_get(_VALID_URL, session, max_bytes=1000))
     assert result.content == b"abcdef"
+
+
+def test_sends_headers_and_returns_status_and_headers():
+    """A range request passes its headers through and sees the 206 answer."""
+    response = _FakeResponse(
+        status=206, chunks=(b"abc",), headers={"Content-Range": "bytes 0-2/10"}
+    )
+    session = _FakeSession(response)
+    result = asyncio.run(
+        async_get(_VALID_URL, session, headers={"Range": "bytes=0-2"})
+    )
+    assert session.calls[0][1]["headers"] == {"Range": "bytes=0-2"}
+    assert result.status == 206
+    assert result.headers["Content-Range"] == "bytes 0-2/10"
+    assert result.content == b"abc"
+
+
+def test_partial_cap_applies_to_206_only():
+    """partial_max_bytes bounds a range answer, not a whole-file 200."""
+    big = (b"x" * 100,)
+    with pytest.raises(ValueError, match="cap"):
+        asyncio.run(
+            async_get(
+                _VALID_URL,
+                _FakeSession(_FakeResponse(status=206, chunks=big)),
+                partial_max_bytes=50,
+            )
+        )
+    result = asyncio.run(
+        async_get(
+            _VALID_URL,
+            _FakeSession(_FakeResponse(status=200, chunks=big)),
+            partial_max_bytes=50,
+        )
+    )
+    assert len(result.content) == 100
