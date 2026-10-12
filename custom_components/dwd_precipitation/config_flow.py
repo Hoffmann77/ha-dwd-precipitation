@@ -29,6 +29,10 @@ from .const import (
     RAIN_END_ALGO_CLEARING,
     CONF_PRECIPITATION_RESET_THRESHOLD,
     DEFAULT_PRECIPITATION_RESET_THRESHOLD,
+    CONF_DRY_STREAK_SOURCE,
+    DEFAULT_DRY_STREAK_SOURCE,
+    DRY_STREAK_SOURCE_RW,
+    DRY_STREAK_SOURCE_RS,
     CONF_FULL_ROLLING_SERIES,
     DEFAULT_FULL_ROLLING_SERIES,
 )
@@ -116,6 +120,21 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     )
                 ),
                 vol.Optional(
+                    CONF_DRY_STREAK_SOURCE,
+                    default=self.config_entry.options.get(
+                        CONF_DRY_STREAK_SOURCE, DEFAULT_DRY_STREAK_SOURCE
+                    ),
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=[
+                            DRY_STREAK_SOURCE_RW,
+                            DRY_STREAK_SOURCE_RS,
+                        ],
+                        translation_key=CONF_DRY_STREAK_SOURCE,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+                vol.Optional(
                     CONF_FULL_ROLLING_SERIES,
                     default=self.config_entry.options.get(
                         CONF_FULL_ROLLING_SERIES, DEFAULT_FULL_ROLLING_SERIES
@@ -131,7 +150,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
-    MINOR_VERSION = 1
+    # 1.2: options carry CONF_DRY_STREAK_SOURCE (see async_migrate_entry).
+    MINOR_VERSION = 2
 
     @staticmethod
     @callback
@@ -164,9 +184,13 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "coordinates_out_of_range"
 
             if not errors:
+                # Store the source explicitly rather than leaving it to the
+                # read-time default, so a later change of the default never
+                # moves an existing install.
                 return self.async_create_entry(
                     title=data[CONF_NAME],
                     data=data,
+                    options={CONF_DRY_STREAK_SOURCE: DEFAULT_DRY_STREAK_SOURCE},
                 )
 
         return self.async_show_form(

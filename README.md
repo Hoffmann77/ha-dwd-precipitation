@@ -40,7 +40,7 @@ Names ending in **`next <N>`** are forecasts.
 - **Precipitation next 1h** (mm): forecast total for the next 0–60 min
 - **Precipitation next 1–2h** (mm): forecast total for 60–120 min from now
 - **Peak hourly precipitation next 2h** (mm): the wettest 60-minute window forecast within the next 2 h
-- **Timespan without precipitation** (days): time since `Precipitation now` last reached the reset threshold.
+- **Timespan without precipitation** (days): time since the selected source (`Precipitation last 1h` on new installs) last reached the reset threshold.
 
 **RADVOR RV: nowcast in 5-min steps · updated every 5 min**
 
@@ -126,7 +126,12 @@ Open **Settings > Devices & Services > DWD Precipitation > Configure**. None of 
 - **Rain detection threshold (mm per hour)** (default: 0): how much forecast rain counts as rain for `Precipitation start`, `Precipitation end` and `Precipitation expected`. 0 means any amount DWD detects; around 0.5 ignores drizzle.
 - **How "Precipitation start" and "Precipitation end" report** (default: clock time): show a clock time or the minutes until the event. The other form is always available as an attribute.
 - **When "Precipitation end" counts rain as over** (default: first dry gap): see `Precipitation end` below.
-- **Rain needed to reset the dry-streak counter (mm)** (default: 1.0): `Precipitation now` at or above this value resets `Timespan without precipitation`.
+- **Rain needed to reset the dry-streak counter (mm)** (default: 1.0): the selected product's past-hour total at or above this value resets `Timespan without precipitation`.
+- **Product that resets the dry-streak counter**: which past-hour total `Timespan without precipitation` compares against the threshold.
+  - `Precipitation last 1h` (RW, default for new installs): gauge-adjusted and more accurate. It covers fixed hours and arrives about 30 minutes after each hour ends, so a reset can show up to about 1.5 h after the rain.
+  - `Precipitation now` (RS): radar only and updated every 5 minutes. Faster, but noisier, and its rolling hour keeps resetting the counter for up to an hour after the rain stops.
+
+  Installs set up before this option existed keep `Precipitation now`, so upgrading changes nothing; switch here if you prefer RW. The counter keeps its value when you switch, and is unavailable while the selected product is.
 - **Include the past hour in the hourly forecast series** (default: off): makes the `forecast_rolling_1h` attribute of `Peak hourly precipitation next 2h` start one hour earlier, so the first entries also include rain that has already fallen and a chart shows the past hour and the forecast as one curve. The sensor's value does not change. Roughly doubles the processing time per update, which can matter on small devices such as a Raspberry Pi.
 
 ## Entity details
@@ -139,7 +144,7 @@ For the full two-hour forecast total, add `Precipitation next 1h` and `Precipita
 - **Precipitation next 1h** (mm): forecast total for the next 0–60 min.
 - **Precipitation next 1–2h** (mm): forecast total for 60–120 min from now.
 - **Peak hourly precipitation next 2h** (mm): the most rain forecast to fall in any 60-minute window within the next 2 h, checked in 5-minute steps. Calculated from the RV 5-minute forecast by default, and from RS when *Include the past hour in the hourly forecast series* is on; the value is identical either way, so switching the option keeps the entity and its history. A downpour that straddles the one-hour mark shows here in full, where `Precipitation next 1h` and `next 1–2h` each only see part of it. This matches how DWD's heavy-rain warnings are defined (amount per hour), so it suits alert automations. `0` when no rain is forecast. The hours it compares are listed in the `forecast_rolling_1h` attribute.
-- **Timespan without precipitation** (days): time since `Precipitation now` last reached the reset threshold. Survives restarts; rain during downtime is caught up from the RADOLAN totals on startup. A reading without data (`unknown`) does not reset it.
+- **Timespan without precipitation** (days): time since the selected source (`Precipitation last 1h` on new installs; see *Product that resets the dry-streak counter*) last reached the reset threshold. Survives restarts; rain during downtime is caught up from the RADOLAN totals on startup. A reading without data (`unknown`) does not reset it.
 
 ### RADVOR RV: nowcast in 5-min steps · every 5 min · 2 h horizon
 

@@ -371,6 +371,30 @@ move the state, and a test asserts both paths give the same peak, window and
 series. The entity key `radvor_peak_1h_120` is deliberately product-neutral so
 the entity survives the switch.
 
+## Dry streak source
+
+`Timespan without precipitation` resets when a past-hour total reaches
+`precipitation_reset_threshold`. The `dry_streak_source` option picks the
+product, and its values are product keys, so `async_setup_entry` binds the
+entity to `coordinators[source]` directly (options reload the entry, as for
+`_peak_hour_sensor()`):
+
+- `rw` — RW, gauge-adjusted, one fixed hour per file, ~28 min late. Scalar
+  payload; the reset time is `metadata.source_timestamp`, the end of that hour.
+- `rs` — RS `_000`, radar only, a rolling hour every 5 min. List payload; the
+  reading is `data[0]` / `metadata[0]`.
+
+Both are 60-minute totals in mm, so the threshold means the same either way.
+The unique id does not depend on the source, so the entity and its `dry_since`
+survive a switch. There is deliberately no fallback to the other product when
+the selected one fails: the entity follows its coordinator's availability.
+
+The default is `rw`, but **existing installs keep `rs`**. The config entry is at
+version 1.2: `async_migrate_entry` writes `dry_streak_source: "rs"` into every
+1.1 entry that lacks it, and the config flow writes the default into every new
+entry. So every entry stores its source, and changing
+`DEFAULT_DRY_STREAK_SOURCE` later never moves an existing install.
+
 ## HymecNG product specifics
 
 - **URL**: `https://opendata.dwd.de/weather/radar/composite/hymecng/composite_HymecNG_YYYYMMDD_HHMM_000-hd5`

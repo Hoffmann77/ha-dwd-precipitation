@@ -12,7 +12,7 @@ from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .coordinator import BaseProductUpdateCoordinator
-from .const import PLATFORMS
+from .const import CONF_DRY_STREAK_SOURCE, LEGACY_DRY_STREAK_SOURCE, PLATFORMS
 from .products import (
     RadvorRS,
     RadvorRV,
@@ -92,6 +92,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: MyConfigEntry) -> bool:
     entry.async_on_unload(entry.add_update_listener(update_listener))
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    return True
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Migrate an older config entry to the current version."""
+    if entry.version > 1:
+        # Written by a newer major version; HA refuses to load it either way.
+        return False
+
+    if entry.minor_version < 2:
+        # 1.2 added the dry-streak source. Pin entries that predate it to the
+        # product they have always counted, so an upgrade changes nothing.
+        options = {**entry.options}
+        options.setdefault(CONF_DRY_STREAK_SOURCE, LEGACY_DRY_STREAK_SOURCE)
+        hass.config_entries.async_update_entry(
+            entry, options=options, minor_version=2
+        )
 
     return True
 

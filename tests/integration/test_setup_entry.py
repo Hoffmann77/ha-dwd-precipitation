@@ -18,11 +18,12 @@ import pytest
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.entity_platform import async_get_platforms
 from pytest import approx
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.dwd_precipitation import PRODUCT_CLASSES
-from custom_components.dwd_precipitation.const import DOMAIN
+from custom_components.dwd_precipitation.const import CONF_DRY_STREAK_SOURCE, DOMAIN
 from custom_components.dwd_precipitation.coordinator import ProductMetadata
 from custom_components.dwd_precipitation.products import (
     HymecNG,
@@ -358,3 +359,69 @@ async def test_local_time_product_is_scheduled_in_local_time(
         for c in coordinators.values()
         if not c.USE_LOCAL_TIME
     )
+
+
+def _dry_streak_sensor(hass: HomeAssistant):
+    """Return the live Timespan without precipitation entity object."""
+    return next(
+        entity
+        for platform in async_get_platforms(hass, DOMAIN)
+        for entity in platform.entities.values()
+        if entity.unique_id.endswith("_timespan_without_precipitation")
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("minor_version", "options", "bound_to"),
+    [
+        # A current entry without the key falls back to the default (RW).
+        (2, {}, "rw"),
+        (2, {CONF_DRY_STREAK_SOURCE: "rw"}, "rw"),
+        (2, {CONF_DRY_STREAK_SOURCE: "rs"}, "rs"),
+        # An entry from before the option keeps counting RS after the upgrade...
+        (1, {}, "rs"),
+        # ...unless it already carries a source, which the migration leaves alone.
+        (1, {CONF_DRY_STREAK_SOURCE: "rw"}, "rw"),
+    ],
+)
+async def test_dry_streak_sensor_binds_to_the_configured_source(
+    hass: HomeAssistant, minor_version: int, options: dict, bound_to: str
+) -> None:
+    """The dry streak follows dry_streak_source; old entries are pinned to RS."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"name": "Home", "latitude": 51.05, "longitude": 13.73},
+        options=options,
+        version=1,
+        minor_version=minor_version,
+    )
+    entry.add_to_hass(hass)
+
+    with _patched_products():
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    assert entry.minor_version == 2
+    if minor_version == 1:
+        assert entry.options[CONF_DRY_STREAK_SOURCE] == bound_to
+    assert _dry_streak_sensor(hass).coordinator is entry.runtime_data.coordinators[bound_to]
+
+
+@pytest.mark.asyncio
+async def test_entry_from_a_newer_major_version_is_not_migrated(
+    hass: HomeAssistant,
+) -> None:
+    """A downgrade must not touch an entry it does not understand."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"name": "Home", "latitude": 51.05, "longitude": 13.73},
+        options={},
+        version=2,
+        minor_version=1,
+    )
+    entry.add_to_hass(hass)
+
+    assert not await hass.config_entries.async_setup(entry.entry_id)
+    assert entry.state is ConfigEntryState.MIGRATION_ERROR
+    assert entry.options == {}

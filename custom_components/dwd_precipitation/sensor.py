@@ -33,6 +33,9 @@ from .const import (
     DEFAULT_FULL_ROLLING_SERIES,
     CONF_PRECIPITATION_RESET_THRESHOLD,
     DEFAULT_PRECIPITATION_RESET_THRESHOLD,
+    CONF_DRY_STREAK_SOURCE,
+    DEFAULT_DRY_STREAK_SOURCE,
+    DRY_STREAK_SOURCE_RS,
     CONF_START_END_MODE,
     DEFAULT_START_END_MODE,
     START_END_MODE_DURATION,
@@ -348,7 +351,15 @@ async def async_setup_entry(
         PrecipitationTotalSensor(coordinators[description.product_key], description)
         for description in TOTAL_SENSORS
     )
-    entities.append(TimespanWithoutPrecipitationSensor(coordinators["rs"]))
+    # Changing the source reloads the entry, so binding once at setup is enough.
+    # The unique id does not depend on it, so the entity and its persisted
+    # dry_since survive a switch.
+    dry_streak_source = entry.options.get(
+        CONF_DRY_STREAK_SOURCE, DEFAULT_DRY_STREAK_SOURCE
+    )
+    entities.append(
+        TimespanWithoutPrecipitationSensor(coordinators[dry_streak_source])
+    )
 
     async_add_entities(entities)
 
@@ -574,10 +585,12 @@ class TimespanWithoutPrecipitationSensor(
     """Number of days since precipitation last reached the reset threshold.
 
     Counts elapsed time since an anchor (``dry_since``). The anchor is re-set
-    whenever "Precipitation now" reaches the configurable threshold, and stands
-    otherwise, so the value grows continuously while it stays dry and drops back
-    to ~0 when it rains. The anchor is persisted across restarts and corrected on
-    startup against the RW/SF accumulation products to catch rain during downtime.
+    whenever the past-hour total of the dry-streak source (RW or RS ``_000``,
+    see ``CONF_DRY_STREAK_SOURCE``) reaches the configurable threshold, and
+    stands otherwise, so the value grows continuously while it stays dry and
+    drops back to ~0 when it rains. The anchor is persisted across restarts and
+    corrected on startup against the RW/SF accumulation products to catch rain
+    during downtime.
     """
 
     _attr_has_entity_name = True
@@ -589,7 +602,7 @@ class TimespanWithoutPrecipitationSensor(
     _attr_suggested_display_precision = 2
 
     def __init__(self, coordinator: BaseProductUpdateCoordinator) -> None:
-        """Initialize the sensor, bound to the RS ("Precipitation now") coordinator."""
+        """Initialize the sensor, bound to the dry-streak source's coordinator."""
         super().__init__(coordinator)
         entry = coordinator.config_entry
         self._attr_unique_id = f"{entry.entry_id}_timespan_without_precipitation"
@@ -607,13 +620,24 @@ class TimespanWithoutPrecipitationSensor(
             CONF_PRECIPITATION_RESET_THRESHOLD, DEFAULT_PRECIPITATION_RESET_THRESHOLD
         )
 
-    def _precip_now(self) -> float | None:
-        """Return the latest RS hourly total (mm), or None if unavailable."""
+    def _reading(self) -> tuple[Any, ProductMetadata | None]:
+        """Return the source's past-hour total and its metadata, unconverted.
+
+        RS carries parallel lists whose [0] is the past hour (``_000``); RW is a
+        scalar payload. Either part is None when the coordinator has nothing.
+        """
         cdata = self.coordinator.data
         if cdata is None or cdata.data is None:
-            return None
+            return None, None
 
-        value = cdata.data[0]  # rs lead time [0] == the past hour's total
+        if self.coordinator.PRODUCT_KEY == DRY_STREAK_SOURCE_RS:
+            return cdata.data[0], cdata.metadata[0] if cdata.metadata else None
+
+        return cdata.data, cdata.metadata or None
+
+    def _precip_now(self) -> float | None:
+        """Return the source's latest past-hour total (mm), or None if unavailable."""
+        value, _ = self._reading()
         if value is None:
             return None
 
@@ -622,12 +646,10 @@ class TimespanWithoutPrecipitationSensor(
         return None if value != value else value  # drop NaN
 
     def _measurement_time(self) -> datetime:
-        """Return the rs_000 measurement timestamp, falling back to utcnow()."""
-        cdata = self.coordinator.data
-        if cdata is not None and cdata.metadata:
-            meta = cdata.metadata[0]
-            if meta is not None and meta.source_timestamp is not None:
-                return meta.source_timestamp  # UTC-aware
+        """Return the end of the source's hour, falling back to utcnow()."""
+        _, meta = self._reading()
+        if (ts := getattr(meta, "source_timestamp", None)) is not None:
+            return ts  # UTC-aware
 
         return dt_util.utcnow()
 

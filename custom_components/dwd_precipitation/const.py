@@ -60,8 +60,24 @@ DEFAULT_FULL_ROLLING_SERIES = False
 
 CONF_PRECIPITATION_RESET_THRESHOLD = "precipitation_reset_threshold"
 
-# mm; "Precipitation now" at/above this value resets the dry streak counter.
+# mm; a past-hour total from the dry-streak source at/above this value resets
+# the dry streak counter.
 DEFAULT_PRECIPITATION_RESET_THRESHOLD = 1.0
+
+CONF_DRY_STREAK_SOURCE = "dry_streak_source"
+
+# Which product's past-hour total resets the dry streak. The values are product
+# keys, so they index the coordinators directly. Both are 60-minute totals in
+# mm, so the reset threshold means the same thing either way.
+# "rw" = RW, gauge-adjusted, one fixed hour per file (HH:50), ~28 min late.
+# "rs" = RS _000, radar only, a rolling hour refreshed every 5 minutes.
+DRY_STREAK_SOURCE_RW = "rw"
+DRY_STREAK_SOURCE_RS = "rs"
+DEFAULT_DRY_STREAK_SOURCE = DRY_STREAK_SOURCE_RW
+
+# Entries created before the option existed counted RS; the 1.2 migration pins
+# them to it, so only new installs pick up the default.
+LEGACY_DRY_STREAK_SOURCE = DRY_STREAK_SOURCE_RS
 
 # HymecNG precipitation-type classes, indexed by the DWD class value (0..10) as
 # defined by the ODIM legend embedded in the composite. These are the possible
