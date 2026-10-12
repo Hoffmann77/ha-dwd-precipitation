@@ -5,7 +5,6 @@ Needs the ha-test dependency group installed (products.py imports HA transitivel
 
 from __future__ import annotations
 
-import bz2
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -415,64 +414,55 @@ async def test_hymecng_class_and_sentinel_mapping(class_value, expected) -> None
     assert data == expected
 
 
-@pytest.mark.asyncio
-async def test_radolan_fetch_derives_window_from_interval() -> None:
-    """RADOLAN: data_end == nominal datetime, data_start == datetime - intervalseconds."""
-    ts = datetime(2025, 6, 1, 12, 50, tzinfo=timezone.utc)
-    raw = {
-        "producttype": "RW",
-        "datetime": datetime(2025, 6, 1, 12, 50, tzinfo=timezone.utc),
-        "intervalseconds": 3600,
+def _radolan_what(product: str, end: datetime, hours: int) -> dict:
+    """ODIM /dataset1/what of a RADOLAN analysis covering ``hours`` up to ``end``."""
+    start = end - timedelta(hours=hours)
+    return {
+        "prodname": product,
+        "startdate": start.strftime("%Y%m%d"), "starttime": start.strftime("%H%M%S"),
+        "enddate": end.strftime("%Y%m%d"), "endtime": end.strftime("%H%M%S"),
     }
-    grid = np.zeros((900, 900), dtype=np.float32)
-
-    coord = _coord(RadolanRW)
-
-    with (
-        patch.object(
-            products,
-            "async_get",
-            new=AsyncMock(return_value=AsyncResponse(content=bz2.compress(b"x"))),
-        ),
-        patch.object(products, "read_radolan_composite", return_value=(grid, raw)),
-    ):
-        _value, meta = await coord._fetch_and_parse(ts)
-
-    assert meta.source_timestamp == datetime(2025, 6, 1, 12, 50, tzinfo=timezone.utc)
-    assert meta.data_end == datetime(2025, 6, 1, 12, 50, tzinfo=timezone.utc)
-    assert meta.data_start == datetime(2025, 6, 1, 11, 50, tzinfo=timezone.utc)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("cell_value", "expected"),
-    [
-        (-9999.0, None),   # the reader's nodataflag: radar outage / masked cell
-        (np.nan, None),
-        (0.0, 0.0),        # dry is a real reading, not missing
-        (1.7, 1.7),
-    ],
-)
+@pytest.mark.parametrize(("cls", "product", "hours"), [(RadolanRW, "RW", 1), (RadolanSF, "SF", 24)])
+async def test_radolan_reads_the_hdf5_edition_and_its_window(cls, product, hours) -> None:
+    """RADOLAN: the HDF5 URL, one DE1200 cell, and the window from ODIM what."""
+    ts = datetime(2025, 6, 1, 12, 50, tzinfo=timezone.utc)
+    coord = _coord(cls)
+    get = AsyncMock(return_value=AsyncResponse(content=b"hdf5"))
+    read = patch.object(
+        products,
+        "read_odim_composite_cell",
+        return_value=(np.float32(1.7), _radolan_what(product, ts, hours)),
+    )
+    with patch.object(products, "async_get", new=get), read as reader:
+        value, meta = await coord._fetch_and_parse(ts)
+
+    url = get.call_args.args[0]
+    assert url.endswith(f"/{product.lower()}/raa01-{product.lower()}_10000-2506011250-dwd---bin.hdf5")
+    assert reader.call_args.args[1:] == coord.index
+    assert reader.call_args.kwargs["expected_shape"] == RS_GRID_SHAPE
+    assert coord.index == products.get_rs_grid_index(*coord.coords)
+    assert value == pytest.approx(1.7)
+    assert meta.source_product == product
+    assert meta.source_timestamp == meta.data_end == ts
+    assert meta.data_start == ts - timedelta(hours=hours)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("cell_value", "expected"), [(np.nan, None), (0.0, 0.0), (1.7, 1.7)])
 async def test_radolan_nodata_cell_reads_as_none(cell_value, expected) -> None:
-    """RADOLAN nodata becomes None (sensor unknown), never -9999 mm."""
+    """RADOLAN nodata (NaN from the ODIM reader) becomes None; dry stays 0."""
     ts = datetime(2025, 6, 1, 12, 50, tzinfo=timezone.utc)
-    raw = {
-        "producttype": "RW",
-        "datetime": ts,
-        "intervalseconds": 3600,
-        "nodataflag": -9999,
-    }
     coord = _coord(RadolanRW)
-    grid = np.zeros((900, 900), dtype=np.float64)
-    grid[coord.index] = cell_value
-
     with (
+        patch.object(products, "async_get", new=AsyncMock(return_value=AsyncResponse(content=b"x"))),
         patch.object(
             products,
-            "async_get",
-            new=AsyncMock(return_value=AsyncResponse(content=bz2.compress(b"x"))),
+            "read_odim_composite_cell",
+            return_value=(np.float32(cell_value), _radolan_what("RW", ts, 1)),
         ),
-        patch.object(products, "read_radolan_composite", return_value=(grid, raw)),
     ):
         value, _meta = await coord._fetch_and_parse(ts)
 
@@ -484,26 +474,27 @@ _FIXTURES = Path(__file__).parent.parent / "fixtures"
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("cls", "fixture"),
-    [(RadolanRW, "radolan_rw_sample.bin.bz2"), (RadolanSF, "radolan_sf_sample.bin.bz2")],
+    ("coords", "expected"),
+    [
+        ((46.2, 3.9), None),        # France, beyond the radars: nodata
+        ((51.05, 13.73), 0.0),      # Dresden, dry that hour
+    ],
 )
-async def test_radolan_real_file_nodata_reads_as_none(cls, fixture) -> None:
-    """On a real DWD file, a cell outside radar coverage reads as None.
-
-    The south-west corner of the 900 km grid lies in France, beyond the radars'
-    range, so DWD flags it nodata; the real reader must not leak -9999.
-    """
-    content = (_FIXTURES / fixture).read_bytes()
-    coord = _coord(cls)
-    coord.coords = (46.9572, 3.5943)  # centre of cell (0, 0)
-    assert coord.index == (0, 0)
+async def test_radolan_real_hdf5_file(coords, expected) -> None:
+    """A real RW HDF5 file (2026-10-12 12:50) decodes through the production path."""
+    content = (_FIXTURES / "radolan_rw_sample.hdf5").read_bytes()
+    coord = _coord(RadolanRW)
+    coord.coords = coords
 
     with patch.object(
         products, "async_get", new=AsyncMock(return_value=AsyncResponse(content=content))
     ):
-        value, _meta = await coord._fetch_and_parse(datetime(2026, 7, 3, 6, 50, tzinfo=timezone.utc))
+        value, meta = await coord._fetch_and_parse(datetime(2026, 10, 12, 12, 50, tzinfo=timezone.utc))
 
-    assert value is None
+    assert value == expected
+    assert meta.source_product == "RW"
+    assert meta.data_end == datetime(2026, 10, 12, 12, 50, tzinfo=timezone.utc)
+    assert meta.data_start == datetime(2026, 10, 12, 11, 50, tzinfo=timezone.utc)
 
 
 async def _rv_fetch(ts: datetime, values: dict[int, float | None]):

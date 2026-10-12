@@ -4,9 +4,8 @@ For every product the integration reads, download the newest available file and
 decode it twice:
 
 * **ours** — the exact ``radar/`` calls production makes: ``get_rs_grid_index``
-  / ``get_radolan_grid_index`` to find the cell, then
-  ``read_odim_composite_cell`` (RS, RV), ``read_odim_classification``
-  (HymecNG) or ``read_radolan_composite`` (RW, SF) to read it;
+  to find the cell, then ``read_odim_composite_cell`` (RS, RV, and RW/SF in
+  their HDF5 edition) or ``read_odim_classification`` (HymecNG) to read it;
 * **reference** — wradlib alone (``tests/wradlib_ref.py``): its own readers
   and its own DWD grids, none of our code.
 
@@ -22,7 +21,6 @@ and opens a tracking issue on failure. Run locally with:
 
 from __future__ import annotations
 
-import bz2
 import io
 import tarfile
 from datetime import datetime, timedelta, timezone
@@ -36,21 +34,16 @@ pytest.importorskip("wradlib")
 
 from radar import (  # noqa: E402
     RS_GRID_SHAPE,
-    get_radolan_grid_index,
     get_rs_grid_index,
     read_odim_classification,
     read_odim_composite,
     read_odim_composite_cell,
-    read_radolan_composite,
     rs_grid_contains,
 )
 from tests.live_wradlib import report  # noqa: E402
 from tests.wradlib_ref import (  # noqa: E402
-    RADOLAN_SHAPE,
     de1200_cell,
-    radolan_cell,
     read_odim,
-    read_radolan,
     scale_odim,
 )
 
@@ -110,9 +103,9 @@ _URLS = {
     "hymecng": (_five_minute_candidates,
                 lambda ts: f"{_COMPOSITE}/hymecng/composite_HymecNG_{ts:%Y%m%d_%H%M}_000-hd5"),
     "rw": (_hourly_candidates,
-           lambda ts: f"{_RADOLAN}/rw/raa01-rw_10000-{ts:%y%m%d%H%M}-dwd---bin.bz2"),
+           lambda ts: f"{_RADOLAN}/rw/raa01-rw_10000-{ts:%y%m%d%H%M}-dwd---bin.hdf5"),
     "sf": (_hourly_candidates,
-           lambda ts: f"{_RADOLAN}/sf/raa01-sf_10000-{ts:%y%m%d%H%M}-dwd---bin.bz2"),
+           lambda ts: f"{_RADOLAN}/sf/raa01-sf_10000-{ts:%y%m%d%H%M}-dwd---bin.hdf5"),
 }
 
 
@@ -230,21 +223,14 @@ def test_hymecng_location_matches_wradlib(place):
 @pytest.mark.parametrize("product", ["rw", "sf"])
 @pytest.mark.parametrize("place", LOCATIONS)
 def test_radolan_location_matches_wradlib(product, place):
-    lat, lon = LOCATIONS[place]
-    ref_cell = radolan_cell(lat, lon)
-    if not all(0 <= i < n for i, n in zip(ref_cell, RADOLAN_SHAPE)):
-        # Ours clamps to the edge cell here by design, wradlib does not.
-        report.record(place, **{product: "outside grid"})
-        pytest.skip(f"{place} ({lat}, {lon}) is outside the RADOLAN grid")
-    cell = get_radolan_grid_index(lat, lon)
-    assert cell == ref_cell, f"{place}: cell differs from wradlib"
+    """RW/SF in their HDF5 edition: the DE1200 cell, as production reads it."""
+    cell = _de1200_cell_or_skip(place)
 
     content, _, url = _download(product)
-    data_ours, attrs = read_radolan_composite(bz2.open(io.BytesIO(content)))
-    data_ref, _ = read_radolan(content)
-    ours, ref = float(data_ours[cell]), float(data_ref[cell])
-    nodata = float(attrs.get("nodataflag", -9999))
-    report.record(place, **{product: report.fmt(None if ours == nodata else ours, 1)})
+    ours, _ = read_odim_composite_cell(io.BytesIO(content), *cell, expected_shape=RS_GRID_SHAPE)
+    ref = scale_odim(*read_odim(content))[cell]
+    ours, ref = float(ours), float(ref)
+    report.record(place, **{product: report.fmt(None if np.isnan(ours) else ours, 1)})
     report.mark(place, product.upper(), _same(ours, ref))
     assert _same(ours, ref), f"{product} {place} {cell}: ours={ours}, wradlib={ref} ({url})"
 
@@ -296,16 +282,10 @@ def test_hymecng_full_grid_matches_wradlib():
 @pytest.mark.parametrize("product", ["rw", "sf"])
 def test_radolan_full_grid_matches_wradlib(product):
     content, _, _ = _download(product)
-    ours, attrs_ours = read_radolan_composite(bz2.open(io.BytesIO(content)))
-    ref, attrs_ref = read_radolan(content)
-    assert attrs_ours["producttype"] == attrs_ref["producttype"]
-    assert attrs_ours["datetime"] == attrs_ref["datetime"]
-    ours, ref = np.asarray(ours, dtype=float), np.asarray(ref, dtype=float)
+    ours, what_ours = read_odim_composite(io.BytesIO(content), expected_shape=RS_GRID_SHAPE)
+    ref = scale_odim(*read_odim(content))
+    assert what_ours.get("prodname") == product.upper()
     _assert_grids_equal(ours, ref, product)
-    # RADOLAN marks nodata with a sentinel rather than NaN.
-    nodata = float(attrs_ours.get("nodataflag", -9999))
     _assert_locations_covered(
-        np.where(ours == nodata, np.nan, ours),
-        [get_radolan_grid_index(*loc) for loc in FIXED_LOCATIONS.values()],
-        product,
+        ours, [get_rs_grid_index(*loc) for loc in FIXED_LOCATIONS.values()], product
     )
