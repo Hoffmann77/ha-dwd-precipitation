@@ -229,18 +229,18 @@ PRODUCTS: dict[str, ProductSpec] = {
     "rw": ProductSpec(
         "rw",
         "RadolanRW",
-        lambda ts: f"{_OPENDATA}/radolan/rw/raa01-rw_10000-{ts.strftime('%y%m%d%H%M')}-dwd---bin.bz2",
+        lambda ts: f"{_OPENDATA}/radolan/rw/raa01-rw_10000-{ts.strftime('%y%m%d%H%M')}-dwd---bin.hdf5",
     ),
     # RW's 10-minute runs: the same file family as "rw", on a 10-minute grid.
     "rw_10min": ProductSpec(
         "rw_10min",
         "RadolanRW10",
-        lambda ts: f"{_OPENDATA}/radolan/rw/raa01-rw_10000-{ts.strftime('%y%m%d%H%M')}-dwd---bin.bz2",
+        lambda ts: f"{_OPENDATA}/radolan/rw/raa01-rw_10000-{ts.strftime('%y%m%d%H%M')}-dwd---bin.hdf5",
     ),
     "sf": ProductSpec(
         "sf",
         "RadolanSF",
-        lambda ts: f"{_OPENDATA}/radolan/sf/raa01-sf_10000-{ts.strftime('%y%m%d%H%M')}-dwd---bin.bz2",
+        lambda ts: f"{_OPENDATA}/radolan/sf/raa01-sf_10000-{ts.strftime('%y%m%d%H%M')}-dwd---bin.hdf5",
     ),
 }
 

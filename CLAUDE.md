@@ -36,7 +36,9 @@ utils.py              async_get() HTTP helper (headers, status, separate 206
                       recent release timestamp.
 radar/                Embedded parsers (no heavy external deps).
   radolan.py          Extracted wradlib binary parser for RADOLAN/RADVOR formats.
+                      Unused at runtime since RW/SF are read as HDF5.
   georef.py           Extracted wradlib polar-stereographic grid transform.
+                      Unused at runtime, like radolan.py.
   odim.py             ODIM_H5 (HDF5) reader for RS Cartesian composites.
   tar_range.py        Reads selected members of a remote tar by HTTP range
                       requests (see "Range reads"). HA-free.
@@ -58,9 +60,8 @@ poll loop.
    radar grid is one gzip chunk of 1.3 M cells, ~6 ms to inflate even on a fast
    machine, times 25 members for RS/RV — many users run HA on a Raspberry Pi
 4. The coordinator wraps those in a `CoordinatorData` — its `data`/`metadata`
-   are a scalar for RADOLAN products (`None` for a nodata cell: the RADOLAN
-   reader marks those with the -9999 `nodataflag`, not NaN, so `_parse` maps it
-   explicitly), parallel lists for RS (`[_000, _060,
+   are a scalar for RADOLAN products (`None` for a nodata cell, which the ODIM
+   reader returns as NaN), parallel lists for RS (`[_000, _060,
    _120, peak]`, `peak` being `None` unless `full_rolling_series` is on),
    parallel dicts for RV
 5. `PrecipitationSensorEntity.native_value` calls
@@ -173,9 +174,9 @@ viewers and Windows consoles mangle typographic punctuation.
 | `RadvorRS` | `rs` | ODIM_H5 (tar) | 5 min | RADVOR nowcast, 25 rolling 60-min accumulations; exposes the 0/60/120 min leads, plus — only with the `full_rolling_series` option — the wettest future hour with the 25-point rolling-hour series (see "RS product specifics") |
 | `RadvorRV` | `rv` | ODIM_H5 (tar) | 5 min | RV nowcast, 25×5-min grids; derives the current intensity (lead 0 × 12, mm/h, with the raw 5-min amount), +1h/+2h peak intensity (mm/h), precip start/end timing (episode/clearing end algorithm, user-selectable), a rain-within-2h flag (whose metadata carries the raw 25-point forecast series, exposed by default), and by default the wettest future hour (see "Peak hourly precipitation") |
 | `HymecNG` | `hymecng` | ODIM_H5 (single .hd5) | 5 min | Precipitation-*type* composite (rain/snow/freezing rain/hail/…); one enum "Precipitation type" sensor |
-| `RadolanRW` | `rw` | RADOLAN binary (.bz2) | 1 h | 1-hour precipitation analysis (gauge-adjusted; same window as RS `_000`) |
+| `RadolanRW` | `rw` | ODIM_H5 (RADOLAN HDF5 edition) | 1 h | 1-hour precipitation analysis (gauge-adjusted; same window as RS `_000`) |
 | `RadolanRW10` | `rw_10min` | same as RW | 10 min | RW's 10-minute runs: the sliding hour ending at each :x0. Built only when used (see "RW 10-minute runs") |
-| `RadolanSF` | `sf` | RADOLAN binary (.bz2) | 1 h | 24-hour precipitation analysis |
+| `RadolanSF` | `sf` | ODIM_H5 (RADOLAN HDF5 edition) | 1 h | 24-hour precipitation analysis |
 | `RadolanSFLastYesterday` | `sf_2350` | same as SF | daily | Yesterday's 24 h total |
 
 ## Entity naming
@@ -252,7 +253,7 @@ once released, since renaming one orphans the user's entity.
    `DEFAULT_OVERDUE_GRACE` — a test enforces this), plus
    `MAX_FAST_POLL_INTERVAL` if the default does not fit
 3. Implement `_get_url(ts)` and `async _fetch_and_parse(ts)`
-4. Override `index` (cached_property) if the grid differs from RADOLAN 900×900
+4. Override `index` (cached_property) if the grid differs from DE1200
 5. Add sensor descriptors in `sensor.py` (new `*_SENSORS` tuple)
 6. Register the class in `__init__.py` `PRODUCT_CLASSES` tuple
 7. Register sensors in `sensor.py` `async_setup_entry`, and add each
@@ -303,11 +304,22 @@ fixed locations must land on the same cell with the same value, and every
 member's full grid must decode identically.
 
 ### RADOLAN (RW, SF)
-`RadolanProduct.index` calls `get_radolan_grid_index(lat, lon)` from
-`radar/georef.py`. `get_radolan_coordinates()` (mode `radolan`) gives each
-pixel's *lower-left corner*; row 0 is the south edge. Spherical
-polar-stereographic (`trig`, Earth radius 6370.040 km, format version <= 4). A
-location off the 900×900 grid is clamped to the nearest edge cell.
+Read in their **HDF5 edition** (`raa01-<p>_10000-<yymmddHHMM>-dwd---bin.hdf5`),
+which is ODIM_H5 on the same DE1200 grid as RS below, so `RadolanProduct.index`
+is `get_rs_grid_index` and `_parse` is `read_odim_composite_cell` (ACRR,
+gain 0.1, nodata 65535 -> NaN -> `None`). DWD announced that the legacy binary
+edition (.bz2, national 900x900 spherical grid, `radar/radolan.py` +
+`radar/georef.py`) would be switched off; it is still published, but nothing
+reads it any more.
+
+The two editions are the same analysis on different grids, not a cell-for-
+cell copy: checked on live files (2026-10-12), area means over ~1100 locations
+agree to 1 % (SF 0.717 vs 0.725 mm), while a location's own value differs in
+~65-80 % of wet cases (median 0.1 mm, up to a few mm in sharp gradients) and
+is found in the old cell's 3x3 neighbourhood only ~60 % of the time. So users
+see small value changes at the switch; nothing else changes. Timing: RW's HDF5
+file appears ~25.7 min after its window ends, like the binary one; SF's ~29.3
+min, ~2.5 min *later* than its binary one, hence SF's `RELEASE_DELAY` of 31 min.
 
 ### RS (ODIM_H5)
 `RadvorRS.index` calls `get_rs_grid_index(lat, lon)` from `radar/odim.py`.
@@ -424,7 +436,7 @@ entry. So every entry stores its source, and changing
 DWD runs RW every 10 minutes, each run the hour ending at that :x0; the HH:50
 file the integration always used is just one of them. `RadolanRW10`
 (`rw_10min`) is the same file family on a 10-minute grid (same URL pattern,
-same parsing, `RELEASE_DELAY` 28 min, observed ~26 min).
+same parsing, HDF5 edition, `RELEASE_DELAY` 28 min, observed ~26 min).
 
 - **Quality.** `scripts/compare_rw_runs.py` compares every RW run on OpenData
   (48 h) with radar-only RS `_000` for the same hour, cell for cell (RW's HDF5
@@ -467,7 +479,7 @@ of the bytes (archives are 3.5-17.5 MB), an RV analysis 1-2 requests and 4-7 %.
   (`If-Range` turns that into a 200) — falls back to the whole archive. A
   failed fetch (404, network) is not a fallback case and raises as usual.
 - Not worth it elsewhere: RV needs all 25 members every release, HymecNG is one
-  gzip chunk, RADOLAN files are bz2 (and RW is only ~8 KB).
+  gzip chunk, RADOLAN files are a single small HDF5 (RW ~30 KB).
 
 ## Rain events
 
