@@ -5,6 +5,11 @@
     {
       "matchManagers": ["pep621"],
       "extends": ["schedule:daily"]
+    },
+    {
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "enabled": false
     }
   ],
   "lockFileMaintenance": {
