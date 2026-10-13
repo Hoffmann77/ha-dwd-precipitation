@@ -5,6 +5,8 @@ Needs the ha-test dependency group installed (products.py imports HA transitivel
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -694,15 +696,19 @@ def _rv_release_tar(ts: datetime) -> bytes:
 class _RVWorld:
     """Serves RV releases (whole or by range) for a rain function."""
 
-    def __init__(self, rain, missing=()) -> None:
+    def __init__(self, rain, missing=(), garbled=(), delay=0.0) -> None:
         self.rain = rain  # step end -> mm
         self.missing = set(missing)  # releases DWD does not serve
+        self.garbled = set(garbled)  # releases served with the wrong window
+        self.delay = delay  # seconds each range read takes
         self.requests: list[tuple[datetime, dict | None]] = []
 
     async def get(self, url, _client, headers=None, **_kw):
         stamp = url.rsplit("_", 2)[-2] + url.rsplit("_", 1)[-1][:4]
         ts = datetime.strptime(stamp, "%Y%m%d%H%M").replace(tzinfo=timezone.utc)
         self.requests.append((ts, headers))
+        if headers and self.delay:
+            await asyncio.sleep(self.delay)
         if ts in self.missing:
             import aiohttp
             from yarl import URL
@@ -724,6 +730,8 @@ class _RVWorld:
         stamp, lead = fileobj.getvalue().decode().split(":")
         base = DAY_RV.replace(hour=int(stamp[:2]), minute=int(stamp[2:]))
         step_end = base + timedelta(minutes=int(lead))
+        if base in self.garbled:
+            base -= timedelta(minutes=5)
         return np.float32(self.rain(step_end)), _rv_what(base, int(lead))
 
 
@@ -799,6 +807,35 @@ async def test_rv_failed_fill_stops_the_round_and_warns_once(caplog) -> None:
     assert "nothing is wrong with your setup" in warnings[0].message
     # The RV sensors themselves are unaffected.
     assert data["max_060"] == pytest.approx(12.0)
+
+
+@pytest.mark.asyncio
+async def test_rv_unreadable_fill_asks_for_a_report(caplog) -> None:
+    """A file that arrived but does not hold the expected window is not DWD
+    being late, so the warning must not say so."""
+    world = _RVWorld(
+        _rain_between("13:30", "15:00"), garbled={DAY_RV.replace(hour=13, minute=55)}
+    )
+    await _rv_release(_rv_tracked(), world, "14:00")
+
+    warnings = [r for r in caplog.records if "to fill the rain_events history" in r.message]
+    assert len(warnings) == 1
+    assert "Could not read" in warnings[0].message
+    assert "please report it" in warnings[0].message
+    assert "nothing is wrong with your setup" not in warnings[0].message
+
+
+@pytest.mark.asyncio
+async def test_rv_fill_budget_running_out_is_not_a_failure(caplog) -> None:
+    world = _RVWorld(_rain_between("13:30", "15:00"), delay=0.05)
+    coord = _rv_tracked()
+    with patch.object(products, "RAIN_FILL_BUDGET", timedelta(seconds=0.12)):
+        data, _ = await _rv_release(coord, world, "14:00")
+
+    steps = data["rain_events"]["steps"][:11]
+    assert 0 < steps.count(None) < 11  # filled some, newest first, then stopped
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert coord._rain_fill_failing is False
 
 
 @pytest.mark.asyncio

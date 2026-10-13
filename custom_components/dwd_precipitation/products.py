@@ -11,6 +11,7 @@ from functools import cached_property
 from io import BytesIO
 from typing import ClassVar
 
+import aiohttp
 import numpy as np
 from homeassistant.helpers.storage import Store
 
@@ -110,6 +111,29 @@ RAIN_FILL_BUDGET = timedelta(seconds=30)
 # RadvorRV._schedule_rain_save).
 RAIN_SAVE_DELAY = timedelta(seconds=10)
 RAIN_IDLE_SAVE_DELAY = timedelta(hours=12)
+
+
+def _describe_fill_failure(err: Exception, step_end: datetime) -> str:
+    """Return the warning for a missed RV analysis that could not be filled.
+
+    Only a failed download is DWD's doing; a file that arrived but could not
+    be read is worth a report. Plain ASCII, like _describe_fetch_error.
+    """
+    what = (
+        f"the missed DWD RV release {step_end.strftime('%Y-%m-%d %H:%M UTC')} "
+        f"to fill the rain_events history ({err or type(err).__name__})"
+    )
+    if isinstance(err, (aiohttp.ClientError, TimeoutError)):
+        cause = (
+            f"Could not fetch {what}. DWD OpenData did not serve it; nothing "
+            "is wrong with your setup."
+        )
+    else:
+        cause = (
+            f"Could not read {what}. This is likely a change on DWD's side or "
+            "a bug in the integration; please report it if it keeps happening."
+        )
+    return f"{cause} The step stays unknown and is retried with the next releases"
 
 
 def rain_events_enabled(options) -> bool:
@@ -543,21 +567,22 @@ class RadvorRV(BaseProductUpdateCoordinator):
             remaining = deadline - loop.time()
             if remaining <= 0:
                 return
+            budget = asyncio.timeout(remaining)
             try:
-                async with asyncio.timeout(remaining):
+                async with budget:
                     value = await self._async_fetch_analysis(step_end)
             except Exception as err:  # noqa: BLE001 - every failure is retried later
+                if budget.expired():
+                    # Our own limit, not a failure: the rest waits for the
+                    # next release.
+                    _LOGGER.debug(
+                        "Fill budget used up at the RV analysis of %s", step_end
+                    )
+                    return
                 _LOGGER.debug("Could not fill the RV analysis of %s: %s", step_end, err)
                 if not self._rain_fill_failing:
                     self._rain_fill_failing = True
-                    _LOGGER.warning(
-                        "Could not fetch the missed DWD RV release %s to fill "
-                        "the rain_events history (%s). DWD OpenData did not "
-                        "serve it; nothing is wrong with your setup. The step "
-                        "stays unknown and is retried with the next releases",
-                        step_end.strftime("%Y-%m-%d %H:%M UTC"),
-                        err or type(err).__name__,
-                    )
+                    _LOGGER.warning(_describe_fill_failure(err, step_end))
                 return
             _LOGGER.debug("Filled the RV analysis of %s: %s", step_end, value)
             record_measured(state, step_end, value)
