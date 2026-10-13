@@ -6,6 +6,7 @@ standing up a full HomeAssistant / DataUpdateCoordinator.
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -28,6 +29,52 @@ from custom_components.dwd_precipitation.products import (
 )
 
 UTC = timezone.utc
+
+
+async def test_overlapping_refreshes_fetch_once(hass) -> None:
+    """The release timer and a fast-poll retry can both start a refresh.
+
+    Both go through async_refresh, whose lock makes the second wait and then
+    find the release already fetched. Calling the unlocked _async_refresh
+    instead would fetch twice.
+    """
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    entry = MockConfigEntry(
+        domain="dwd_precipitation",
+        data={"name": "Home", "latitude": 51.05, "longitude": 13.73},
+    )
+    entry.add_to_hass(hass)
+    coordinator = RadolanRW(hass, entry, object(), 51.05, 13.73)
+    gate = asyncio.Event()
+    fetches = 0
+
+    async def fetch(ts):
+        nonlocal fetches
+        fetches += 1
+        await gate.wait()
+        return 1.0, coordinator_mod.ProductMetadata(
+            source_product="RW", source_timestamp=ts
+        )
+
+    with patch.object(coordinator, "_fetch_and_parse", side_effect=fetch):
+        first = hass.async_create_task(coordinator.async_refresh())
+        second = hass.async_create_task(coordinator.async_refresh())
+        await asyncio.sleep(0)
+        gate.set()
+        await asyncio.gather(first, second)
+
+    assert fetches == 1
+    assert coordinator.data.data == 1.0
+    coordinator._cancel_stale_check()
+
+    # Every trigger of ours must take that lock.
+    import inspect
+
+    import custom_components.dwd_precipitation as integration
+
+    for module in (coordinator_mod, integration):
+        assert "._async_refresh(" not in inspect.getsource(module)
 
 
 def test_rs_track_time_change_args():

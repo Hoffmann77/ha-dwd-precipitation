@@ -32,8 +32,10 @@ from. Baseline today: parser 129 / integration 193 / reference 10 tests pass,
   previous view** meanwhile (unknown right after a restart).
 - Rain-events Store validation/migration stays in **step 6** (not pulled forward).
 - HTTP timeout is **stall-based**: `sock_connect=15 s`, `sock_read=30 s`, no total cap.
-- Overlapping refreshes **wait on an `asyncio.Lock`**; the second sees the
-  release already fetched and returns the cache.
+- Overlapping refreshes **wait on a lock**; the second sees the release
+  already fetched and returns the cache. *Found during step 1:* HA's
+  `async_refresh` already holds such a lock and every trigger uses it, so
+  no lock of our own; a test pins the behaviour and the call sites.
 - Decode failures: distinct message ("could not be decoded; likely a change
   on DWD's side or a bug in the integration - please report it"), same
   once-per-run flow, traceback once at DEBUG.
@@ -78,7 +80,7 @@ from. Baseline today: parser 129 / integration 193 / reference 10 tests pass,
 | `at_stake` must ignore known-nodata steps — today a coverage-edge location writes the Store every 5 min forever | `rain_events.py:745-749` | S-efficiency 2 |
 | Fill warning: catch `TimeoutError` (own budget → debug) and validation errors separately; only real fetch errors say "DWD did not serve it" | `products.py:546-561` | TD bug 3 |
 | Run the rain-events fill + tracker update as an entry-scoped background task that publishes the view when done (previous view held meanwhile), so setup never waits up to 30 s | `products.py:473-500`, `__init__.py:72` | S-efficiency 3 |
-| Stall-based `ClientTimeout(sock_connect=15, sock_read=30)` in `async_get`; `asyncio.Lock` around `_async_update_data` (second caller waits, then hits the cache) | `utils.py:156`, `coordinator.py` | TD bug 5 |
+| Stall-based `ClientTimeout(sock_connect=15, sock_read=30)` in `async_get`; test that overlapping refreshes fetch once (HA's refresh lock already serializes them) | `utils.py:156`, `coordinator.py` | TD bug 5 |
 | Dry streak: availability from `data_is_reportable` (derive from `DwdCoordinatorEntity`, keep unique id) | `sensor.py:749-781` | TD 4, S-altitude |
 | Invalid stored `dry_streak_source` → fall back to default with a warning instead of `KeyError` killing the platform | `sensor.py:433` | TD (sensors) 11 |
 | `create_fixture.py`: restore `MIN_MM` | `scripts/create_fixture.py:128,212` | TD bug 2 |
