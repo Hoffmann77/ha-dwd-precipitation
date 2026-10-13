@@ -27,6 +27,7 @@ from custom_components.dwd_precipitation.precipitation_total import (
     countable,
     first_uncounted_release,
     missed_releases,
+    split_fetchable,
 )
 from custom_components.dwd_precipitation.products import (
     RadolanRW,
@@ -78,10 +79,12 @@ def _make_total_sensor(
 
     sensor = PrecipitationTotalSensor.__new__(PrecipitationTotalSensor)
     sensor.entity_description = desc
-    sensor.entity_id = "sensor.home_precipitation_total_hourly"
+    sensor.entity_id = "sensor.home_precipitation_total"
     sensor.hass = None
     sensor._total = total
     sensor._last_release = last_release
+    sensor._pending = []
+    sensor._backfilling = False
     sensor.async_write_ha_state = lambda: None
     sensor.coordinator = SimpleNamespace(
         curr_release=release,
@@ -121,6 +124,41 @@ def test_extra_data_roundtrip():
     empty = PrecipitationTotalExtraData.from_dict({})
     assert empty.total is None
     assert empty.last_release is None
+    assert empty.pending == []
+
+    pending = PrecipitationTotalExtraData(
+        total=1.0,
+        last_release=datetime(2026, 7, 3, 11, 0, tzinfo=UTC),
+        pending=[datetime(2026, 7, 3, h, 0, tzinfo=UTC) for h in (8, 9)],
+    )
+    assert PrecipitationTotalExtraData.from_dict(pending.as_dict()) == pending
+
+
+def test_split_fetchable_gives_up_beyond_the_backfill_window():
+    """The 48 releases before the current one are kept, anything older dropped."""
+    current = datetime(2026, 7, 3, 12, 0, tzinfo=UTC)
+    oldest_kept = current - timedelta(hours=48)
+    too_old = current - timedelta(hours=49)
+    recent = current - timedelta(hours=1)
+
+    keep, drop = split_fetchable(
+        _Grid(RadolanRW), [recent, too_old, oldest_kept, recent], current, 48
+    )
+    assert keep == [oldest_kept, recent]
+    assert drop == [too_old]
+
+
+def test_split_fetchable_counts_local_days_across_dst(berlin_time_zone):
+    """sf_2350's window is 7 releases even when one of the days has 25 hours."""
+    current = dt_util.as_utc(datetime(2026, 10, 27, 23, 50, tzinfo=BERLIN))
+    week = dt_util.as_utc(datetime(2026, 10, 20, 23, 50, tzinfo=BERLIN))
+    eight_days = dt_util.as_utc(datetime(2026, 10, 19, 23, 50, tzinfo=BERLIN))
+
+    keep, drop = split_fetchable(
+        _Grid(RadolanSFLastYesterday), [week, eight_days], current, 7
+    )
+    assert keep == [week]
+    assert drop == [eight_days]
 
 
 def test_missed_releases_hourly():
@@ -273,6 +311,7 @@ def test_gap_starts_a_backfill_of_the_missed_releases():
 
     # The current release is counted at once; the two missed ones go to the task.
     assert sensor.native_value == approx(12.5)
+    assert sensor._pending == [RELEASE - timedelta(hours=h) for h in (2, 1)]
     assert len(tasks) == 1
     _close(tasks)
 
@@ -298,20 +337,129 @@ def test_release_overlapping_an_old_grid_total_is_not_counted():
 
 
 @pytest.mark.asyncio
-async def test_backfill_adds_fetched_releases_and_skips_failures():
-    sensor, _ = _make_total_sensor(total=10.0)
+async def test_backfill_keeps_a_failed_release_pending():
+    """A failed fetch is not lost: it stays on the list for the next round."""
+    sensor, _ = _make_total_sensor(total=10.0, last_release=RELEASE)
     missed = [RELEASE - timedelta(hours=2), RELEASE - timedelta(hours=1)]
+    sensor._pending = list(missed)
+    sensor._backfilling = True
     sensor.coordinator._fetch_and_parse = AsyncMock(
-        side_effect=[OSError("gone from OpenData"), (1.5, {})]
+        side_effect=[OSError("not there yet"), (1.5, {})]
     )
 
-    await sensor._async_backfill(missed)
+    await sensor._async_backfill()
 
     assert sensor.native_value == approx(11.5)
     assert [c.args[0] for c in sensor.coordinator._fetch_and_parse.call_args_list] == missed
+    assert sensor._pending == [missed[0]]
+    assert sensor._backfilling is False
+    # Stored with the total, so a restart keeps it too.
+    assert sensor.extra_restore_state_data.pending == [missed[0]]
+
+
+@pytest.mark.asyncio
+async def test_failed_release_is_retried_with_the_next_release():
+    sensor, tasks = _make_total_sensor(
+        release=RELEASE, value=2.5, total=10.0, last_release=RELEASE - timedelta(hours=1)
+    )
+    sensor._pending = [RELEASE - timedelta(hours=3)]
+
+    sensor._count_new_release()
+
+    assert sensor._pending == [RELEASE - timedelta(hours=3)]
+    assert len(tasks) == 1
+    await tasks[0]
+    assert sensor.native_value == approx(12.5 + 1.0)
+    assert sensor._pending == []
+
+
+@pytest.mark.asyncio
+async def test_release_without_data_leaves_the_list_and_adds_nothing():
+    """A file DWD serves without data for the cell is done, not retried."""
+    sensor, _ = _make_total_sensor(total=10.0, last_release=RELEASE)
+    sensor._pending = [RELEASE - timedelta(hours=1)]
+    sensor.coordinator._fetch_and_parse = AsyncMock(return_value=(None, {}))
+
+    await sensor._async_backfill()
+
+    assert sensor.native_value == approx(10.0)
+    assert sensor._pending == []
+
+
+def test_only_one_backfill_runs_at_a_time():
+    sensor, tasks = _make_total_sensor(
+        release=RELEASE, value=0.0, total=0.0, last_release=RELEASE - timedelta(hours=3)
+    )
+    sensor._count_new_release()
+    sensor.coordinator.curr_release = RELEASE + timedelta(hours=2)
+    sensor._count_new_release()
+
+    # The second gap joins the list the running round works through.
+    assert len(tasks) == 1
+    assert sensor._pending == [
+        RELEASE - timedelta(hours=2),
+        RELEASE - timedelta(hours=1),
+        RELEASE + timedelta(hours=1),
+    ]
+    _close(tasks)
+
+
+def test_pending_too_old_to_fetch_is_given_up(caplog):
+    sensor, tasks = _make_total_sensor(
+        release=RELEASE, value=0.0, total=0.0, last_release=RELEASE - timedelta(hours=1)
+    )
+    sensor._pending = [RELEASE - timedelta(hours=49), RELEASE - timedelta(hours=2)]
+
+    sensor._count_new_release()
+
+    assert sensor._pending == [RELEASE - timedelta(hours=2)]
+    assert "1 missed DWD release(s)" in caplog.text
+    _close(tasks)
 
 
 # --- end to end ---------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_restart_resumes_a_pending_backfill(hass: HomeAssistant, freezer) -> None:
+    """A backfill a restart interrupted resumes at startup, with no new release."""
+    freezer.move_to("2026-07-03 11:30:00+00:00")
+    entity_id = "sensor.home_precipitation_total"
+    mock_restore_cache_with_extra_data(
+        hass,
+        [
+            (
+                State(entity_id, "10.0"),
+                PrecipitationTotalExtraData(
+                    total=10.0,
+                    last_release=datetime(2026, 7, 3, 11, 0, tzinfo=UTC),
+                    pending=[datetime(2026, 7, 3, 9, 0, tzinfo=UTC)],
+                ).as_dict(),
+            )
+        ],
+    )
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Home",
+        data={"name": "Home", "latitude": 51.05, "longitude": 13.73},
+        options={},
+    )
+    entry.add_to_hass(hass)
+
+    rw_value, _ = WORKING_PRODUCTS[RadolanRW]
+    with _patched_products():
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        fetched = RadolanRW._fetch_and_parse.call_args_list
+
+    assert [c.args[0] for c in fetched] == [
+        datetime(2026, 7, 3, h, 0, tzinfo=UTC) for h in (11, 9)
+    ]
+    assert float(hass.states.get(entity_id).state) == approx(10.0 + rw_value)
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
 
 
 @pytest.mark.asyncio
@@ -330,7 +478,7 @@ async def test_restart_restores_total_and_backfills_the_gap(
 ) -> None:
     """The missed releases between the restored one and 11:00 are fetched."""
     freezer.move_to("2026-07-03 11:30:00+00:00")
-    entity_id = "sensor.home_precipitation_total_hourly"
+    entity_id = "sensor.home_precipitation_total"
     mock_restore_cache_with_extra_data(
         hass,
         [

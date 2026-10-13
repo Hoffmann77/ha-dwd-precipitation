@@ -66,13 +66,14 @@ RENAMED_SINCE_2026_10_0 = {
     "radvor_rv_max_intensity_120": "peak_intensity_next_60_120_min",
     "radolan_rw": "precipitation_previous_hour",
     "hymecng_precipitation_type": "precipitation_type_now",
+    "radolan_rw_total": "precipitation_total",
 }
 
 # Added since 2026.10.0.
 NEW_SINCE_2026_10_0 = {
     "radvor_rv_intensity_000": "precipitation_intensity_now",
-    "radvor_rs_0_120": "precipitation_next_120_min",
-    "radvor_rv_max_intensity_0_120": "peak_intensity_next_120_min",
+    "radvor_rs_000_120": "precipitation_next_120_min",
+    "radvor_rv_max_intensity_000_120": "peak_intensity_next_120_min",
 }
 
 
@@ -110,7 +111,7 @@ async def test_entry_setup_creates_sensors_with_correct_values(
         "amount_000": 0.2,
         "max_060": 48.0,
         "max_120": 12.0,
-        "max_0_120": 48.0,
+        "max_000_120": 48.0,
         "start_in": 0,
         "start_at": ts,
         "end_in": 30,
@@ -259,8 +260,8 @@ async def test_entry_setup_creates_sensors_with_correct_values(
     }
 
     # The two 120-minute sensors: RS's two forecast hours added, RV's peak.
-    assert float(_state_for(hass, "radvor_rs_0_120").state) == approx(2.5)
-    assert float(_state_for(hass, "radvor_rv_max_intensity_0_120").state) == approx(48.0)
+    assert float(_state_for(hass, "radvor_rs_000_120").state) == approx(2.5)
+    assert float(_state_for(hass, "radvor_rv_max_intensity_000_120").state) == approx(48.0)
 
     # The peak-intensity sensor reports the extrapolated mm/h rate.
     max_060_entry = next(
@@ -304,7 +305,7 @@ RV_DATA = {
     "amount_000": 0.0,
     "max_060": 48.0,
     "max_120": 12.0,
-    "max_0_120": 48.0,
+    "max_000_120": 48.0,
     "start_in": 0,
     "start_at": RV_TS,
     "end_in": 30,

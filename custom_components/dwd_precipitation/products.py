@@ -401,7 +401,7 @@ class RadvorRV(BaseProductUpdateCoordinator):
 
     * ``intensity_000`` / ``amount_000`` — the analysis (lead 0, the 5 minutes
       ending at T) as an hourly rate (mm/h) and as the raw amount (mm).
-    * ``max_060`` / ``max_120`` / ``max_0_120`` — peak intensity (mm/h) over
+    * ``max_060`` / ``max_120`` / ``max_000_120`` — peak intensity (mm/h) over
       [T, T+60] / [T+60, T+120] / [T, T+120].
     * ``start_in`` / ``start_at`` / ``end_in`` / ``end_at`` — when precipitation
       begins / ends at the location (see radar.nowcast.detect_start_end).
@@ -719,7 +719,7 @@ class RadvorRV(BaseProductUpdateCoordinator):
             "amount_000": now_mm,
             "max_060": bucket_max_intensity(values, HOUR1_LEADS),
             "max_120": bucket_max_intensity(values, HOUR2_LEADS),
-            "max_0_120": bucket_max_intensity(values, HOUR1_LEADS + HOUR2_LEADS),
+            "max_000_120": bucket_max_intensity(values, HOUR1_LEADS + HOUR2_LEADS),
             "start_in": start_in,
             "start_at": _at(start_in),
             "end_in": end_in,
@@ -732,7 +732,7 @@ class RadvorRV(BaseProductUpdateCoordinator):
             "amount_000": now_meta,
             "max_060": hour1_meta,
             "max_120": hour2_meta,
-            "max_0_120": both_meta,
+            "max_000_120": both_meta,
             "start_in": timing_meta,
             "start_at": timing_meta,
             "end_in": timing_meta,

@@ -243,7 +243,7 @@ async def test_rv_fetch_derives_buckets_and_timing() -> None:
     # Peak intensity: 1.0 mm/5min → 12 mm/h in hour 1; hour 2 is dry.
     assert data["max_060"] == pytest.approx(12.0)
     assert data["max_120"] == pytest.approx(0.0)
-    assert data["max_0_120"] == pytest.approx(12.0)
+    assert data["max_000_120"] == pytest.approx(12.0)
     # The two-hour sum sensors were removed; only max intensity remains.
     assert "rv_060" not in data
     assert "rv_120" not in data
@@ -262,9 +262,9 @@ async def test_rv_fetch_derives_buckets_and_timing() -> None:
     assert meta["max_060"].data_end == datetime(2026, 7, 16, 21, 30, tzinfo=timezone.utc)
     assert meta["max_060"].samples is None
     assert meta["max_120"].samples is None
-    assert meta["max_0_120"].lead_time_minutes == 120
-    assert meta["max_0_120"].data_start == datetime(2026, 7, 16, 20, 30, tzinfo=timezone.utc)
-    assert meta["max_0_120"].data_end == datetime(2026, 7, 16, 22, 30, tzinfo=timezone.utc)
+    assert meta["max_000_120"].lead_time_minutes == 120
+    assert meta["max_000_120"].data_start == datetime(2026, 7, 16, 20, 30, tzinfo=timezone.utc)
+    assert meta["max_000_120"].data_end == datetime(2026, 7, 16, 22, 30, tzinfo=timezone.utc)
 
     # The raw 5-min series (25 points, leads 0..120) rides on the rain flag.
     samples = meta["rain_within_2h"].samples

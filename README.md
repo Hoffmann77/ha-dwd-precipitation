@@ -37,7 +37,7 @@ Names ending in **`next <N>`** are forecasts. The radar nowcast states its windo
 The RADVOR values come from radar alone and update every 5 minutes. The RADOLAN values (`previous hour`, `last 24h`, `yesterday` and the running totals) are DWD's analysis corrected with rain-gauge measurements: they arrive about 30 minutes later, but are more accurate.
 
 > [!NOTE]
-> Installs set up before 2026.10.1 keep their entity ids; only the names changed. There, `Precipitation last 60 min` is `sensor.<name>_precipitation_now`, `Precipitation previous hour` is `sensor.<name>_precipitation_last_1h`, and the forecast sensors keep their hour-based ids (`…_precipitation_next_1h`, `…_precipitation_next_1_2h`, `…_peak_intensity_next_1h`, `…_peak_intensity_next_1_2h`, `…_peak_hourly_precipitation_next_2h`), and `Precipitation type now` is `…_precipitation_type`.
+> Installs set up before 2026.10.1 keep their entity ids; only the names changed. There, `Precipitation last 60 min` is `sensor.<name>_precipitation_now`, `Precipitation previous hour` is `sensor.<name>_precipitation_last_1h`, and the forecast sensors keep their hour-based ids (`…_precipitation_next_1h`, `…_precipitation_next_1_2h`, `…_peak_intensity_next_1h`, `…_peak_intensity_next_1_2h`, `…_peak_hourly_precipitation_next_2h`), `Precipitation type now` is `…_precipitation_type`, and `Precipitation total` is `…_precipitation_total_hourly`.
 
 **RADVOR RS: radar nowcast · updated every 5 min**
 
@@ -67,8 +67,8 @@ The RADVOR values come from radar alone and update every 5 minutes. The RADOLAN 
 - **Precipitation previous hour** (mm): the last full clock hour, e.g. 11:00–12:00, available about 30 minutes after it ends. Slower than `Precipitation last 60 min`, but more accurate
 - **Precipitation last 24h** (mm): rolling past 24 hours
 - **Precipitation yesterday** (mm): the previous calendar day's total, available around 00:20 local time
-- **Precipitation total (hourly)** (mm): running total of all rain since setup, grows once an hour. For "rain this week" and same-day automations
-- **Precipitation total (daily)** (mm): the same, built from `Precipitation yesterday`, grows once a day. For monthly and yearly statistics
+- **Precipitation total** (mm): running total of all rain since setup, grows once an hour. The one to use for statistics and "rain this week" or same-day automations
+- **Precipitation total daily** (mm): the same, built from `Precipitation yesterday`, grows once a day
 
 See [Entity details](#entity-details) for the full behaviour of each sensor and its attributes.
 
@@ -188,10 +188,10 @@ All three are `unknown` when DWD has no data for your grid cell in that file (fo
 
 Two ever-growing totals (state class `total_increasing`), for Home Assistant's long-term statistics, the statistics graph card, and the [Utility Meter](https://www.home-assistant.io/integrations/utility_meter/) helper. Use them for daily, weekly, monthly or yearly rain sums; the other sensors are snapshots and do not add up correctly over time. Both start at 0 when the integration is set up and keep their total across restarts. They stay available while DWD is not publishing, because the total counted so far is still correct; *Show sensors as unavailable when the data is out of date* does not apply to them. Files without data for your grid cell add nothing.
 
-- **Precipitation total (hourly)** (mm): adds each `Precipitation previous hour` value once. Up to date within the hour, so it suits "how much rain since this morning" automations. Up to 2026.10.0 it added hours ending at :50; a total carried over from then moves to clock hours on its first update and leaves the 10 minutes in between out once, rather than counting 50 minutes twice.
-- **Precipitation total (daily)** (mm): adds each `Precipitation yesterday` value once. Today's rain only appears the next morning, but a single file a day makes it the most robust choice for monthly and yearly figures. On the two DST changeover days the 23:50 windows are 23 or 25 hours apart while each file covers 24 hours, so one hour is counted twice in spring and missed in autumn.
+- **Precipitation total** (mm): adds each `Precipitation previous hour` value once. Up to date within the hour, so it suits "how much rain since this morning" automations. Up to 2026.10.0 it added hours ending at :50; a total carried over from then moves to clock hours on its first update and leaves the 10 minutes in between out once, rather than counting 50 minutes twice.
+- **Precipitation total daily** (mm): adds each `Precipitation yesterday` value once. Today's rain only appears the next morning, and Home Assistant's statistics count it on the day it was added, so each day's rain shows up under the following day. Prefer `Precipitation total` unless you specifically want DWD's daily analysis. On the two DST changeover days the 23:50 windows are 23 or 25 hours apart while each file covers 24 hours, so one hour is counted twice in spring and missed in autumn.
 
-If Home Assistant was offline, or DWD failed to publish for a while, the missed files are fetched in the background on the next update (up to 48 hours for the hourly total, 7 days for the daily one) and added late. Files DWD no longer serves are left out.
+If Home Assistant was offline, or DWD failed to publish for a while, the missed files are fetched in the background on the next update and added late. The list of missed files is saved with the total, so a restart in the middle resumes it, and a file that fails to download is tried again with every new one, for as long as DWD keeps it: 48 hours for `Precipitation total`, 7 days for `Precipitation total daily`. Only files DWD no longer serves are left out. Rain added late counts in Home Assistant's statistics at the time it was added, not the hour it fell.
 
 ### Attributes
 
@@ -208,7 +208,7 @@ Always present:
 | `forecast_rolling_1h` | `Peak hourly precipitation next 120 min` | The hourly forecast series the sensor picks its value from: one entry every 5 minutes, each the mm of rain in the hour from `start` to `end`. At 14:00 the entries run from 14:00–15:00 to 15:00–16:00 (13 entries); the sensor shows the largest. With *Include the past hour in the hourly forecast series* on, the series starts one hour earlier, at 13:00–14:00 (25 entries); the first entry then equals `Precipitation last 60 min`. `lead` is the minutes from now to `end`. Not recorded in history |
 | `hours_without_precipitation` | `Timespan without precipitation` | The dry streak in hours; `null` until the counter has started |
 | `dry_since` | `Timespan without precipitation` | ISO-8601 UTC time of the rain that last reset the counter |
-| `counted_until` | `Precipitation total (hourly)`, `Precipitation total (daily)` | ISO-8601 UTC end of the newest DWD window included in the total; `null` until the first file arrives. Missed files fetched later are added without moving it back |
+| `counted_until` | `Precipitation total`, `Precipitation total daily` | ISO-8601 UTC end of the newest DWD window included in the total; `null` until the first file arrives. Missed files fetched later are added without moving it back |
 
 With **Add technical details to each sensor** enabled, every DWD sensor except `Precipitation expected`, the two running totals and `Timespan without precipitation` also has:
 
@@ -260,7 +260,7 @@ last_ended: {id, first_seen, start, start_clipped, end, end_clipped, missing_ste
 
 Notes:
 
-- The amounts are radar-only, measured and forecast alike, so nothing jumps at "now". They will differ from a rain gauge and from the gauge-adjusted sensors such as `Precipitation total (hourly)`.
+- The amounts are radar-only, measured and forecast alike, so nothing jumps at "now". They will differ from a rain gauge and from the gauge-adjusted sensors such as `Precipitation total`.
 - Missed releases can be fetched up to an hour back. After a longer downtime, or while DWD keeps failing to serve a release, an event's measured values can be too low: check `observed_complete` (and `missing_steps`, `start_clipped`, `end_clipped`). In short, don't restart Home Assistant during a severe downpour.
 - Changing the *Rain event threshold* starts the events over with new ids; the measured steps and `last_ended` are kept.
 

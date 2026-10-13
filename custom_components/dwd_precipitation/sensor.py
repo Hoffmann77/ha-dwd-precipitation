@@ -57,6 +57,7 @@ from .precipitation_total import (
     countable,
     first_uncounted_release,
     missed_releases,
+    split_fetchable,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -129,7 +130,7 @@ class PrecipitationTotalEntityDescription(SensorEntityDescription):
 TOTAL_SENSORS = (
     PrecipitationTotalEntityDescription(
         key="radolan_rw_total",
-        translation_key="precipitation_total_hourly",
+        translation_key="precipitation_total",
         native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
@@ -182,7 +183,7 @@ RADVOR_SENSORS = (
         access_fn=lambda _list: _list[2],
     ),
     PrecipitationSensorEntityDescription(
-        key="radvor_rs_0_120",
+        key="radvor_rs_000_120",
         translation_key="precipitation_next_120_min",
         native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
         device_class=SensorDeviceClass.PRECIPITATION,
@@ -271,14 +272,14 @@ RADVOR_RV_SENSORS = (
         access_fn=lambda d: d["max_120"],
     ),
     PrecipitationSensorEntityDescription(
-        key="radvor_rv_max_intensity_0_120",
+        key="radvor_rv_max_intensity_000_120",
         translation_key="peak_intensity_next_120_min",
         native_unit_of_measurement=UnitOfVolumetricFlux.MILLIMETERS_PER_HOUR,
         device_class=SensorDeviceClass.PRECIPITATION_INTENSITY,
         suggested_display_precision=1,
         state_class=SensorStateClass.MEASUREMENT,
         product_key="rv",
-        access_fn=lambda d: d["max_0_120"],
+        access_fn=lambda d: d["max_000_120"],
     ),
 )
 
@@ -498,9 +499,12 @@ class PrecipitationTotalSensor(DwdCoordinatorEntity, RestoreEntity, SensorEntity
     Counts every release once, keyed on its timestamp (see precipitation_total).
     The first release seen after setup only sets the starting point: its window
     predates the sensor, so the total starts at 0. After a gap -- Home Assistant
-    was down, or DWD failed for longer than a release -- the missed releases are
-    fetched in the background and added as they arrive. A restart during that
-    backfill drops whatever it had not fetched yet.
+    was down, or DWD failed for longer than a release -- the missed releases go
+    on a pending list that is stored with the total, and are fetched in the
+    background and added as they arrive. A release leaves the list only once it
+    is added, so neither a restart nor a failed fetch loses it: what is left is
+    tried again at startup and with every new release, until it is too old for
+    OpenData to still serve.
     """
 
     entity_description: PrecipitationTotalEntityDescription
@@ -514,6 +518,8 @@ class PrecipitationTotalSensor(DwdCoordinatorEntity, RestoreEntity, SensorEntity
         super().__init__(coordinator, description)
         self._total: float | None = None
         self._last_release: datetime | None = None
+        self._pending: list[datetime] = []
+        self._backfilling = False
 
     @property
     def available(self) -> bool:
@@ -541,9 +547,11 @@ class PrecipitationTotalSensor(DwdCoordinatorEntity, RestoreEntity, SensorEntity
 
     @property
     def extra_restore_state_data(self) -> PrecipitationTotalExtraData:
-        """Return the total to persist across restarts."""
+        """Return the total, and what is still missing from it, to persist."""
         return PrecipitationTotalExtraData(
-            total=self._total, last_release=self._last_release
+            total=self._total,
+            last_release=self._last_release,
+            pending=list(self._pending),
         )
 
     async def async_added_to_hass(self) -> None:
@@ -554,9 +562,12 @@ class PrecipitationTotalSensor(DwdCoordinatorEntity, RestoreEntity, SensorEntity
             data = PrecipitationTotalExtraData.from_dict(restored.as_dict())
             self._total = data.total
             self._last_release = data.last_release
+            self._pending = data.pending
 
         # coordinator.data is already populated by the first refresh.
         self._count_new_release()
+        # Resume a backfill a restart interrupted, even with no new release.
+        self._start_backfill()
 
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -597,41 +608,86 @@ class PrecipitationTotalSensor(DwdCoordinatorEntity, RestoreEntity, SensorEntity
         if (value := countable(cdata.data)) is not None:
             self._total += value
         self._last_release = release
+        self._pending = sorted(set(self._pending) | set(missed))
 
-        if missed:
-            self.coordinator.config_entry.async_create_background_task(
-                self.hass,
-                self._async_backfill(missed),
-                f"{self.entity_id} backfill",
+        # A new release means DWD is serving again: retry what is missing.
+        self._start_backfill()
+
+    @callback
+    def _start_backfill(self) -> None:
+        """Give up on releases too old to fetch, and fetch the rest."""
+        if self._last_release is None:
+            return
+
+        self._pending, gone = split_fetchable(
+            self.coordinator,
+            self._pending,
+            self._last_release,
+            self.entity_description.max_backfill,
+        )
+        if gone:
+            _LOGGER.info(
+                "%s: %s missed DWD release(s) from %s to %s could not be "
+                "fetched while DWD still served them, so the total leaves "
+                "them out",
+                self.entity_id,
+                len(gone),
+                gone[0].isoformat(),
+                gone[-1].isoformat(),
             )
 
-    async def _async_backfill(self, releases: list[datetime]) -> None:
-        """Fetch releases that were never counted and add them to the total."""
-        failed = 0
-        for release in releases:
-            try:
-                value, _metadata = await self.coordinator._fetch_and_parse(release)
-            except Exception as err:  # noqa: BLE001 - any failure skips the file
-                _LOGGER.debug(
-                    "%s: could not backfill %s: %s",
-                    self.entity_id,
-                    release.isoformat(),
-                    err,
-                )
-                failed += 1
-                continue
+        if not self._pending or self._backfilling:
+            return
 
-            if (mm := countable(value)) is not None:
-                self._total = (self._total or 0.0) + mm
-                self.async_write_ha_state()
+        self._backfilling = True
+        self.coordinator.config_entry.async_create_background_task(
+            self.hass,
+            self._async_backfill(),
+            f"{self.entity_id} backfill",
+        )
+
+    async def _async_backfill(self) -> None:
+        """Fetch the pending releases, oldest first, and add them to the total.
+
+        Each is tried once per round, including any that join the list while
+        the round runs. A release leaves the list only once it is fetched; a
+        failure stays for the next round.
+        """
+        tried: set[datetime] = set()
+        failed = 0
+        try:
+            while todo := [r for r in self._pending if r not in tried]:
+                release = todo[0]
+                tried.add(release)
+                try:
+                    value, _metadata = await self.coordinator._fetch_and_parse(
+                        release
+                    )
+                except Exception as err:  # noqa: BLE001 - retried next round
+                    _LOGGER.debug(
+                        "%s: could not backfill %s: %s",
+                        self.entity_id,
+                        release.isoformat(),
+                        err,
+                    )
+                    failed += 1
+                    continue
+
+                if release not in self._pending:
+                    continue  # given up on while it was being fetched
+                self._pending.remove(release)
+                if (mm := countable(value)) is not None:
+                    self._total = (self._total or 0.0) + mm
+                    self.async_write_ha_state()
+        finally:
+            self._backfilling = False
 
         if failed:
-            _LOGGER.info(
-                "%s: %s of %s missed DWD releases could not be fetched, so the "
-                "total leaves them out",
+            _LOGGER.debug(
+                "%s: %s missed DWD release(s) could not be fetched yet; they "
+                "are retried with the next release",
                 self.entity_id,
                 failed,
-                len(releases),
             )
 
 

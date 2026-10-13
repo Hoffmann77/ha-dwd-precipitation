@@ -22,9 +22,10 @@ dry_streak.py         Pure "days without rain" logic: the persisted anchor
                       payload + threshold/downtime-correction helpers used by
                       the TimespanWithoutPrecipitationSensor in sensor.py.
 precipitation_total.py
-                      Pure running-total logic: the persisted total payload,
-                      the reading filter, and the missed-release walk used by
-                      the PrecipitationTotalSensor in sensor.py.
+                      Pure running-total logic: the persisted total payload
+                      (with its pending backfill), the reading filter, and the
+                      missed-release walk used by the PrecipitationTotalSensor
+                      in sensor.py.
 rain_events.py        Pure rain-event tracker behind the rain_events attribute
                       of Precipitation expected (see "Rain events"). HA-free,
                       no relative imports: the parser tier tests it.
@@ -243,14 +244,33 @@ belongs in the docs rather than in four entity names:
   the state is simply `unknown`.
 - `Precipitation expected` is a flag; `off` already covers "not in the horizon".
 
-`Precipitation total (hourly)` / `(daily)` are the exception to the window rule: they hold
-no window at all (an ever-growing sum since setup), so the parenthesis names the
-*cadence* they grow at, which is what tells the two apart. They are
-`TOTAL_INCREASING` and keyed on the release timestamp, never on the value
+`Precipitation total` / `Precipitation total daily` are the exception to the
+window rule: they hold no window at all (an ever-growing sum since setup). They
+are `TOTAL_INCREASING` and keyed on the release timestamp, never on the value
 changing: two equally wet hours are two releases, and a release seen twice is
-counted once. RW backs the hourly one, `sf_2350` the daily one; they are
-separate entities rather than one with a source option, because switching the
-source would make a `TOTAL_INCREASING` sensor jump.
+counted once. RW backs `Precipitation total`, the one to use: it is up to date
+within the hour, and HA's statistics see each hour one hour late (11:00-12:00
+is added at ~12:28), so only the last hour of a day spills into the next.
+`sf_2350` backs the daily one, whose rain every day lands in the *next* day's
+statistics; it stays because 2026.10.0 shipped it
+(removing it would orphan users' entities). They are separate entities rather
+than one with a source option, because switching the source would make a
+`TOTAL_INCREASING` sensor jump. Up to 2026.10.0 they were `(hourly)` /
+`(daily)`; the daily one keeps its slug (`precipitation_total_daily`), the
+hourly one gets the new `precipitation_total`.
+
+**Backfill.** Missed releases (`missed_releases`, at most `max_backfill`: 48
+for RW, 7 for `sf_2350`, what OpenData keeps) go on a `pending` list stored in
+the restore data with the total. `_async_backfill` fetches them oldest first
+and removes each only once it has been added (or turned out to hold no data
+for the cell), so a restart resumes the list (`_start_backfill` at startup)
+and a failed fetch is retried with the next counted release. A new release is
+the retry trigger, not every coordinator update: during a DWD outage the
+coordinator's own fast-poll retries would otherwise refetch the backlog each
+minute. `split_fetchable` gives up on entries older than `max_backfill`
+releases, walking the grid so DST days count as one release, and logs once
+per batch dropped. One round runs at a time; releases that join meanwhile are
+picked up by the running round.
 
 `Peak intensity next 60 min` / `next 60–120 min` drop the `Precipitation` head
 noun on purpose: they are mm/h rather than mm, and the shorter head stops them
@@ -479,7 +499,7 @@ hour; `RadolanRW10` (`rw_10min`) is the same file family on a 10-minute grid
   `rw_last_hour_mode` option for it; it never shipped, and a stored value is
   ignored.
 - **Never for the totals.** Consecutive runs overlap by 50 minutes, so summing
-  them counts each hour six times; `Precipitation total (hourly)` and its
+  them counts each hour six times; `Precipitation total` and its
   missed-release walk stay on the hourly grid of `rw`. The startup downtime
   correction of the dry streak also keeps using `rw`.
 - **The grid move.** A total stored by 2026.10.0 has a `last_release` at :50,
