@@ -372,6 +372,35 @@ The base the next three PRs stand on. *(TD 1, 3, 6, 10, 18; S-altitude 2, 6, 9, 
   fast-poll callback, dry-streak restore + downtime correction, migration refusal,
   RV fill glue. Split `test_products.py` per product.
 
+**Step 9 outcome (done, 8 commits `c7291c7`..`6967476`).** Tests only; no
+component code changed. Parser 166 -> 171, integration 239 -> 246,
+reference 10 -> 12; both live tiers pass (4 and 55).
+- `tests/factories/radvor.py`: `make_radvor_tar`, `radvor_archive`,
+  `RangeServer` (ranges, ETag, If-Range; as `fetch` and as `async_get`)
+  replace two tar builders, the tar_range server and three hand-rolled range
+  responders; `range(0, 121, 5)` is `nowcast.LEADS` throughout.
+- `tests/integration/conftest.py`: `make_entry` and `make_coordinator`
+  (real constructor on the real hass, fetch jitter an input) replace 18
+  hand-written entries and every coordinator `__new__`. Entries are titled
+  "Home", so entity ids read `home_*`.
+- Entities (sensors, binary sensor, total) come from their constructors.
+  State goes in the way the code takes it (`_restore`, `_start_backfill`);
+  the dry-streak anchor is the one value still set directly (restoring it
+  needs a running entry). Setup tests look entities up by unique id.
+- The rain-events glue runs on HA's real `Store` (`hass_storage`), with the
+  tracker built by RV's own constructor; `_FakeStore` is gone. On the real
+  hass the fill is an eager background task, which changed one assertion.
+- `test_products.py` split into `test_product_rs/rv/hymecng/radolan`,
+  `test_product_rv_rain_events` and a shared-concerns `test_products.py`,
+  with `product_helpers.py`.
+- Real RV analysis and HymecNG fixtures (`create_fixture.py --product`),
+  tested in the parser, reference and integration tiers.
+- New coverage: the already-fetched early return, and the fast-poll retry
+  firing end to end (checked against a mutant). The other listed gaps
+  (dry-streak restore + correction, migration refusal, RV fill glue) were
+  covered by earlier steps.
+- `tests/live_common.py`: the live tiers' release walk, on `ReleaseGrid`.
+
 ## PR 10 — Documentation
 
 *(TD 13, 16)*
