@@ -73,16 +73,6 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 
-def _utc(dt: datetime | None) -> datetime | None:
-    """Ensure a datetime is UTC-aware; returns None for None."""
-    if dt is None:
-        return None
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-
-    return dt.astimezone(timezone.utc)
-
-
 def _parse_odim_ts(date: str | None, time: str | None) -> datetime | None:
     """Parse ODIM date/time strings (YYYYMMDD / HHMMSS) into a UTC datetime."""
     if not date or not time:
@@ -196,13 +186,6 @@ def _decode_cells(
         val = float(val)
         out[lead] = (None if np.isnan(val) else val, what)
     return out
-
-
-def _read_tar_cells(
-    content: bytes, prefix: str, leads, cell: tuple[int, int], label: str
-) -> dict[int, tuple[float | None, dict] | None]:
-    """Decode one grid cell from each requested member of a whole RADVOR tar."""
-    return _decode_cells(_tar_members(content, prefix, leads), prefix, leads, cell, label)
 
 
 async def async_read_tar_members(
@@ -716,8 +699,9 @@ class RadvorRV(BaseProductUpdateCoordinator):
 
     def _parse(self, content: bytes, ts: datetime) -> tuple[dict, dict]:
         """Derive the RV entity payloads from the tar bytes (blocking)."""
-        cells = _read_tar_cells(
-            content, f"composite_rv_{ts.strftime('%Y%m%d_%H%M')}", LEADS, self.index, "RV"
+        prefix = f"composite_rv_{ts.strftime('%Y%m%d_%H%M')}"
+        cells = _decode_cells(
+            _tar_members(content, prefix, LEADS), prefix, LEADS, self.index, "RV"
         )
 
         # Per-lead 5-minute cell values (mm) and window bounds, aligned to LEADS.
@@ -816,7 +800,7 @@ class RadvorRV(BaseProductUpdateCoordinator):
         # The analysis (lead 0) is the 5 minutes ending at T: the only measured
         # step in the release, reported as an hourly rate like the peaks. Both
         # are rounded to the ODIM resolution; x12 keeps it exact.
-        now_mm = round(values[0], MM_DECIMALS) if values[0] is not None else None
+        now_mm = values[0]
         now_meta = ProductMetadata(
             source_product="RV",
             source_timestamp=base_ts,
@@ -1032,8 +1016,8 @@ class RadolanRW10(RadolanRW):
     """DWD RADOLAN RW's 10-minute runs: a sliding hour ending at each :x0.
 
     Same file family as RW (its hourly runs are among them), so it reuses RW's
-    URL and parsing; only the grid is every 10 minutes. Gauge-adjusted as
-    strongly as the HH:50 run, measured against radar-only RS over 285 runs
+    URL and parsing; only the grid is every 10 minutes. Every run minute is
+    gauge-adjusted alike, measured against radar-only RS over 285 runs
     (scripts/compare_rw_runs.py). Only built for a dry streak counting RW.
     """
 
