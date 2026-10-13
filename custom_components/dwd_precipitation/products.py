@@ -103,7 +103,7 @@ RANGE_MAX_BYTES = 8 * 1024 * 1024
 
 RAIN_EVENTS_STORE_VERSION = 1
 
-# Filling missed analyses may hold an RV update this long, at most.
+# One background round of filling missed analyses takes this long, at most.
 RAIN_FILL_BUDGET = timedelta(seconds=30)
 
 # How soon the rain_events state is written: promptly while an event or an
@@ -468,6 +468,10 @@ class RadvorRV(BaseProductUpdateCoordinator):
     _rain_saved_ended: str | None = None
     _rain_fill_failing: bool = False
     _rain_broken: bool = False
+    # The background fill-and-track round, if one was started; and the last
+    # view this run published, shown while a round is still running.
+    _rain_fill_task: asyncio.Task | None = None
+    _rain_view: dict | None = None
 
     def __init__(self, hass, entry, async_client, lat, lon) -> None:
         """Initialize the coordinator and, if tracked, its rain_events store."""
@@ -510,30 +514,93 @@ class RadvorRV(BaseProductUpdateCoordinator):
     ) -> dict | None:
         """Update the rain_events tracker with this release; None if it failed.
 
+        The missed analyses must be filled *before* the tracker sees the
+        release: updating first and recomputing after the fill can swap event
+        ids and lose ``forecast_at_onset`` when it rained during a downtime.
+        A fill takes seconds, though, and this runs inside the RV refresh
+        that setup waits for. So when there is anything to fill, the tracker
+        update moves to a background task that fills, updates and publishes
+        the view; until then the sensor keeps the view it showed before (none
+        right after a restart). Every later release queues behind a running
+        fill, so releases always reach the tracker in order.
+
         A failure here must not cost the RV sensors their update, so it is
         logged (once per run of failures) and the attribute is left out.
         """
         try:
             state = await self._async_rain_state()
-            milli = wet_step_milli(
-                self.config_entry.options.get(
-                    CONF_RAIN_EVENT_THRESHOLD, DEFAULT_RAIN_EVENT_THRESHOLD
-                )
+        except Exception:
+            self._rain_failed()
+            return None
+        milli = wet_step_milli(
+            self.config_entry.options.get(
+                CONF_RAIN_EVENT_THRESHOLD, DEFAULT_RAIN_EVENT_THRESHOLD
             )
-            # Fill first: a lost release must not look like rain that vanished.
-            await self._async_fill_missed(state, base)
+        )
+        running = self._rain_fill_task is not None and not self._rain_fill_task.done()
+        if running or steps_to_fill(state, base):
+            self._rain_fill_task = self.config_entry.async_create_background_task(
+                self.hass,
+                self._async_fill_and_track(
+                    self._rain_fill_task if running else None, state, base, values, milli
+                ),
+                "dwd_precipitation rain_events fill",
+            )
+            return self._rain_view
+        return self._track_rain(state, base, values, milli)
+
+    def _track_rain(
+        self,
+        state: RainEventsState,
+        base: datetime,
+        values: list[float | None],
+        milli: int,
+    ) -> dict | None:
+        """Feed release ``base`` to the tracker (filled already); None on failure."""
+        try:
             view = update_rain_events(state, base, values[0], values[1:], milli)
         except Exception:
-            if not self._rain_broken:
-                self._rain_broken = True
-                _LOGGER.exception(
-                    "Could not update the Rain events sensor; the other RV "
-                    "sensors are not affected"
-                )
+            self._rain_failed()
             return None
         self._rain_broken = False
         self._schedule_rain_save(state)
+        self._rain_view = view
         return view
+
+    def _rain_failed(self) -> None:
+        """Log a tracker failure once per run of failures."""
+        if not self._rain_broken:
+            self._rain_broken = True
+            _LOGGER.exception(
+                "Could not update the Rain events sensor; the other RV "
+                "sensors are not affected"
+            )
+
+    async def _async_fill_and_track(
+        self,
+        previous: asyncio.Task | None,
+        state: RainEventsState,
+        base: datetime,
+        values: list[float | None],
+        milli: int,
+    ) -> None:
+        """Fill release ``base``'s window, track it, and publish the view."""
+        if previous is not None:
+            await asyncio.wait([previous])
+        try:
+            await self._async_fill_missed(state, base)
+        except Exception:
+            self._rain_failed()
+            return
+        view = self._track_rain(state, base, values, milli)
+        # A newer release queued behind this one publishes its own view.
+        if (
+            view is not None
+            and self.data is not None
+            and self._rain_fill_task is asyncio.current_task()
+        ):
+            self.data.data["rain_events"] = view
+            self.async_update_listeners()
 
     async def _async_rain_state(self) -> RainEventsState:
         """Return the tracker state, loading it from the store on first use."""
@@ -556,7 +623,8 @@ class RadvorRV(BaseProductUpdateCoordinator):
 
         Sequential, newest first, within RAIN_FILL_BUDGET; the first failure
         ends the round and the rest wait for the next release. Each fill reads
-        only the analysis member, ~4-7 % of the archive.
+        only the analysis member, ~4-7 % of the archive. Runs in the
+        background round, never in the refresh (see _async_rain_events).
         """
         missing = steps_to_fill(state, base)
         if not missing:

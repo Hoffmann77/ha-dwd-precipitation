@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -17,6 +18,7 @@ import pytest
 from types import SimpleNamespace
 
 from custom_components.dwd_precipitation import products
+from custom_components.dwd_precipitation.coordinator import CoordinatorData
 from custom_components.dwd_precipitation.products import (
     HymecNG,
     RadolanRW,
@@ -740,18 +742,44 @@ DAY_RV = datetime(2026, 10, 12, tzinfo=timezone.utc)
 
 def _rv_tracked(store=None, options=None):
     coord = _coord(RadvorRV, options)
+    coord.config_entry.async_create_background_task = (
+        lambda _hass, target, _name: asyncio.get_running_loop().create_task(target)
+    )
     coord._rain_store = store if store is not None else _FakeStore()
     coord._rain_state = None
+    coord.data = None
+    coord.published: list[dict | None] = []
+    coord.async_update_listeners = lambda: coord.published.append(
+        coord.data.data["rain_events"]
+    )
     return coord
 
 
-async def _rv_release(coord, world, hhmm):
-    ts = DAY_RV.replace(hour=int(hhmm[:2]), minute=int(hhmm[3:]))
+@contextmanager
+def _serving(world):
     with (
         patch.object(products, "async_get", side_effect=world.get),
         patch.object(products, "read_odim_composite_cell", side_effect=world.read),
     ):
-        return await coord._fetch_and_parse(ts)
+        yield
+
+
+async def _rv_refresh(coord, world, hhmm):
+    """What the coordinator does for one release: fetch, then store the data."""
+    ts = DAY_RV.replace(hour=int(hhmm[:2]), minute=int(hhmm[3:]))
+    with _serving(world):
+        data, metadata = await coord._fetch_and_parse(ts)
+    coord.data = CoordinatorData(data, metadata)
+    return data, metadata
+
+
+async def _rv_release(coord, world, hhmm):
+    """One release, including the background fill it may start."""
+    _, metadata = await _rv_refresh(coord, world, hhmm)
+    if coord._rain_fill_task is not None:
+        with _serving(world):
+            await coord._rain_fill_task
+    return coord.data.data, metadata
 
 
 def _rain_between(lo, hi, mm=1.0):
@@ -836,6 +864,61 @@ async def test_rv_fill_budget_running_out_is_not_a_failure(caplog) -> None:
     assert 0 < steps.count(None) < 11  # filled some, newest first, then stopped
     assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
     assert coord._rain_fill_failing is False
+
+
+@pytest.mark.asyncio
+async def test_rv_fill_runs_after_the_refresh() -> None:
+    """Setup waits for the RV refresh; the fill must not hold it."""
+    world = _RVWorld(_rain_between("13:30", "14:10"))
+    coord = _rv_tracked()
+
+    data, _ = await _rv_refresh(coord, world, "14:00")
+
+    assert data["rain_events"] is None  # nothing shown yet in this run
+    assert data["max_060"] == pytest.approx(12.0)
+    assert [h for _, h in world.requests] == [None]  # only the release itself
+
+    with _serving(world):
+        await coord._rain_fill_task
+    assert coord.published == [coord.data.data["rain_events"]]
+    assert coord.published[0]["history_complete"] is True
+
+
+@pytest.mark.asyncio
+async def test_rv_missed_release_keeps_the_previous_view_until_filled() -> None:
+    world = _RVWorld(_rain_between("13:30", "15:00"))
+    coord = _rv_tracked()
+    await _rv_release(coord, world, "14:00")
+    shown, _ = await _rv_release(coord, world, "14:05")
+    assert coord._rain_fill_task.done()  # 14:05 needed no fill
+
+    # 14:10 never arrived; 14:15 has a step to fill.
+    data, _ = await _rv_refresh(coord, world, "14:15")
+    assert data["rain_events"] is shown["rain_events"]
+
+    with _serving(world):
+        await coord._rain_fill_task
+    assert coord.data.data["rain_events"]["base"] == "2026-10-12T14:15:00+00:00"
+    assert coord.data.data["rain_events"]["history_complete"] is True
+
+
+@pytest.mark.asyncio
+async def test_rv_releases_queue_behind_a_running_fill() -> None:
+    """A release must never reach the tracker before an older one."""
+    world = _RVWorld(_rain_between("13:30", "15:00"))
+    coord = _rv_tracked()
+    await _rv_refresh(coord, world, "14:00")
+    first = coord._rain_fill_task
+    await _rv_refresh(coord, world, "14:05")
+    assert coord._rain_fill_task is not first
+
+    with _serving(world):
+        await coord._rain_fill_task
+    assert first.done()
+    # Only the newest release published; the tracker saw both, in order.
+    assert [v["base"] for v in coord.published] == ["2026-10-12T14:05:00+00:00"]
+    assert coord._rain_state.base == DAY_RV.replace(hour=14, minute=5)
+    assert coord.published[0]["events"][0]["id"] == "20261012t1400-0"
 
 
 @pytest.mark.asyncio

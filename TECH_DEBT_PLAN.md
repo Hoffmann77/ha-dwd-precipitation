@@ -24,8 +24,12 @@ from. Baseline today: parser 129 / integration 193 / reference 10 tests pass,
 **Behaviour**
 - Dry streak follows `data_is_reportable` like every entity (goes
   unavailable when stale) — release-note it.
-- Rain-events fill runs as an entry-scoped **background task after the
-  first update**; setup waits for one fetch only.
+- Rain-events fill runs as an entry-scoped **background task**; setup waits
+  for one fetch only. *Revised during step 1:* the fill must stay *before*
+  the tracker update (update-then-fill swaps event ids and loses
+  `forecast_at_onset` after a downtime with rain — reproduced), so the
+  background round does fill + update + publish, and the sensor **holds its
+  previous view** meanwhile (unknown right after a restart).
 - Rain-events Store validation/migration stays in **step 6** (not pulled forward).
 - HTTP timeout is **stall-based**: `sock_connect=15 s`, `sock_read=30 s`, no total cap.
 - Overlapping refreshes **wait on an `asyncio.Lock`**; the second sees the
@@ -73,7 +77,7 @@ from. Baseline today: parser 129 / integration 193 / reference 10 tests pass,
 | Threshold change must take effect on the same release: check `state.wet_milli == milli` in the early return | `rain_events.py:525` | TD bug 1 |
 | `at_stake` must ignore known-nodata steps — today a coverage-edge location writes the Store every 5 min forever | `rain_events.py:745-749` | S-efficiency 2 |
 | Fill warning: catch `TimeoutError` (own budget → debug) and validation errors separately; only real fetch errors say "DWD did not serve it" | `products.py:546-561` | TD bug 3 |
-| Run the rain-events fill as an entry-scoped background task after the update, re-publishing the view when done, so setup never waits up to 30 s | `products.py:473-500`, `__init__.py:72` | S-efficiency 3 |
+| Run the rain-events fill + tracker update as an entry-scoped background task that publishes the view when done (previous view held meanwhile), so setup never waits up to 30 s | `products.py:473-500`, `__init__.py:72` | S-efficiency 3 |
 | Stall-based `ClientTimeout(sock_connect=15, sock_read=30)` in `async_get`; `asyncio.Lock` around `_async_update_data` (second caller waits, then hits the cache) | `utils.py:156`, `coordinator.py` | TD bug 5 |
 | Dry streak: availability from `data_is_reportable` (derive from `DwdCoordinatorEntity`, keep unique id) | `sensor.py:749-781` | TD 4, S-altitude |
 | Invalid stored `dry_streak_source` → fall back to default with a warning instead of `KeyError` killing the platform | `sensor.py:433` | TD (sensors) 11 |

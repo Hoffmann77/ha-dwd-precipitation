@@ -583,8 +583,15 @@ glue; `RainEventsSensor` in sensor.py the entity.
 - **Fill before matching.** `RadvorRV._async_fill_missed` fetches each unknown
   measured step in the window (analysis only, by range), newest first,
   sequentially, within `RAIN_FILL_BUDGET`; the first failure ends the round,
-  with one warning per run of failures. A release without data for the cell
-  is recorded as such and not refetched.
+  with one warning per run of failures (running out of budget is not one).
+  A release without data for the cell is recorded as such and not refetched.
+  The order is load-bearing: updating first and recomputing after the fill
+  can swap event ids and lose `forecast_at_onset` when it rained during a
+  downtime. Since setup waits for RV's first refresh, a release with steps
+  to fill hands fill + update + publish to an entry background task
+  (`_async_fill_and_track`), and the sensor keeps the view it showed before
+  (none right after a restart). Later releases queue behind a running round,
+  so the tracker always sees releases in order.
 - **Persistence.** One `Store` per entry (`rain_events_store_key`). Written
   `RAIN_SAVE_DELAY` after a release while something is at stake (an event, a
   wet or unknown step, a new `last_ended`); otherwise the delayed save is
