@@ -105,6 +105,9 @@
       "precipitation_next_60_120_min": {
         "name": "Precipitation next 60–120 min"
       },
+      "precipitation_next_120_min": {
+        "name": "Precipitation next 120 min"
+      },
       "peak_hourly_precipitation_next_120_min": {
         "name": "Peak hourly precipitation next 120 min"
       },
@@ -117,6 +120,9 @@
       "peak_intensity_next_60_120_min": {
         "name": "Peak intensity next 60–120 min"
       },
+      "peak_intensity_next_120_min": {
+        "name": "Peak intensity next 120 min"
+      },
       "precipitation_start": {
         "name": "Precipitation start"
       },
@@ -126,8 +132,8 @@
       "timespan_without_precipitation": {
         "name": "Timespan without precipitation"
       },
-      "precipitation_type": {
-        "name": "Precipitation type",
+      "precipitation_type_now": {
+        "name": "Precipitation type now",
         "state": {
           "no_precipitation": "No precipitation",
           "not_classified": "Not classified",

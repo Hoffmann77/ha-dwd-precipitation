@@ -93,7 +93,7 @@ LEGACY_DRY_STREAK_SOURCE = DRY_STREAK_SOURCE_RS
 
 # HymecNG precipitation-type classes, indexed by the DWD class value (0..10) as
 # defined by the ODIM legend embedded in the composite. These are the possible
-# states of the "Precipitation type" enum sensor.
+# states of the "Precipitation type now" enum sensor.
 PRECIP_TYPE_BY_INDEX = (
     "no_precipitation",   # 0  NO_PRECIPITATION
     "not_classified",     # 1  NOT_CLASSIFIED

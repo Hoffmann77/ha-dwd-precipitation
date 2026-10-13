@@ -181,6 +181,16 @@ RADVOR_SENSORS = (
         product_key="rs",
         access_fn=lambda _list: _list[2],
     ),
+    PrecipitationSensorEntityDescription(
+        key="radvor_rs_0_120",
+        translation_key="precipitation_next_120_min",
+        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
+        device_class=SensorDeviceClass.PRECIPITATION,
+        suggested_display_precision=1,
+        state_class=SensorStateClass.MEASUREMENT,
+        product_key="rs",
+        access_fn=lambda _list: _list[4],
+    ),
 )
 
 
@@ -260,13 +270,23 @@ RADVOR_RV_SENSORS = (
         product_key="rv",
         access_fn=lambda d: d["max_120"],
     ),
+    PrecipitationSensorEntityDescription(
+        key="radvor_rv_max_intensity_0_120",
+        translation_key="peak_intensity_next_120_min",
+        native_unit_of_measurement=UnitOfVolumetricFlux.MILLIMETERS_PER_HOUR,
+        device_class=SensorDeviceClass.PRECIPITATION_INTENSITY,
+        suggested_display_precision=1,
+        state_class=SensorStateClass.MEASUREMENT,
+        product_key="rv",
+        access_fn=lambda d: d["max_0_120"],
+    ),
 )
 
 
 HYMECNG_SENSORS = (
     PrecipitationSensorEntityDescription(
         key="hymecng_precipitation_type",
-        translation_key="precipitation_type",
+        translation_key="precipitation_type_now",
         icon="mdi:weather-snowy-rainy",
         device_class=SensorDeviceClass.ENUM,
         options=PRECIP_TYPE_OPTIONS,

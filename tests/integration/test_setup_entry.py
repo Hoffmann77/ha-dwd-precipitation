@@ -65,6 +65,14 @@ RENAMED_SINCE_2026_10_0 = {
     "radvor_rv_max_intensity_060": "peak_intensity_next_60_min",
     "radvor_rv_max_intensity_120": "peak_intensity_next_60_120_min",
     "radolan_rw": "precipitation_previous_hour",
+    "hymecng_precipitation_type": "precipitation_type_now",
+}
+
+# Added since 2026.10.0.
+NEW_SINCE_2026_10_0 = {
+    "radvor_rv_intensity_000": "precipitation_intensity_now",
+    "radvor_rs_0_120": "precipitation_next_120_min",
+    "radvor_rv_max_intensity_0_120": "peak_intensity_next_120_min",
 }
 
 
@@ -80,7 +88,7 @@ async def test_entry_setup_creates_sensors_with_correct_values(
     peaks (in reality they agree).
     """
     ts = datetime(2025, 6, 1, 12, 0, tzinfo=timezone.utc)
-    rs_data = [1.5, 2.0, None, 6.5]
+    rs_data = [1.5, 2.0, 0.5, 6.5, 2.5]
     rs_meta = [
         {"product": "ACRR", "datetime": ts, "lead_time_minutes": 0},
         {"product": "ACRR", "datetime": ts, "lead_time_minutes": 60},
@@ -93,6 +101,7 @@ async def test_entry_setup_creates_sensors_with_correct_values(
             data_end=ts + timedelta(minutes=75),
             rolling_1h=[{"lead": 75, "start": None, "end": None, "value": 6.5}],
         ),
+        {},
     ]
     rw_meta = {"producttype": "RW", "datetime": datetime(2025, 6, 1, 12, 0)}
     rv_timing = ProductMetadata(source_product="RV", source_timestamp=ts)
@@ -101,6 +110,7 @@ async def test_entry_setup_creates_sensors_with_correct_values(
         "amount_000": 0.2,
         "max_060": 48.0,
         "max_120": 12.0,
+        "max_0_120": 48.0,
         "start_in": 0,
         "start_at": ts,
         "end_in": 30,
@@ -171,7 +181,7 @@ async def test_entry_setup_creates_sensors_with_correct_values(
     coordinators = entry.runtime_data.coordinators
     assert set(coordinators) == {"rs", "rv", "hymecng", "rw", "sf", "sf_2350"}
     assert coordinators["rw"].data.data == approx(3.2)
-    assert coordinators["rs"].data.data == [1.5, 2.0, None, 6.5]
+    assert coordinators["rs"].data.data == [1.5, 2.0, 0.5, 6.5, 2.5]
     assert coordinators["rv"].data.data["max_060"] == approx(48.0)
     assert coordinators["hymecng"].data.data == "snow"
 
@@ -243,10 +253,14 @@ async def test_entry_setup_creates_sensors_with_correct_values(
         )
         assert owner == key, f"{key} takes {slug}, which was {owner}'s"
 
-    assert {key: new_ids[key] for key in RENAMED_SINCE_2026_10_0} == {
-        key: f"mock_title_{slug}" for key, slug in RENAMED_SINCE_2026_10_0.items()
+    expected = {**RENAMED_SINCE_2026_10_0, **NEW_SINCE_2026_10_0}
+    assert {key: new_ids[key] for key in expected} == {
+        key: f"mock_title_{slug}" for key, slug in expected.items()
     }
-    assert new_ids["radvor_rv_intensity_000"] == "mock_title_precipitation_intensity_now"
+
+    # The two 120-minute sensors: RS's two forecast hours added, RV's peak.
+    assert float(_state_for(hass, "radvor_rs_0_120").state) == approx(2.5)
+    assert float(_state_for(hass, "radvor_rv_max_intensity_0_120").state) == approx(48.0)
 
     # The peak-intensity sensor reports the extrapolated mm/h rate.
     max_060_entry = next(
@@ -290,6 +304,7 @@ RV_DATA = {
     "amount_000": 0.0,
     "max_060": 48.0,
     "max_120": 12.0,
+    "max_0_120": 48.0,
     "start_in": 0,
     "start_at": RV_TS,
     "end_in": 30,
@@ -305,8 +320,8 @@ RV_META = {
 # What each product's _fetch_and_parse returns when it is meant to succeed.
 WORKING_PRODUCTS = {
     RadvorRS: (
-        [1.5, 2.0, None, 6.5],
-        [{}, {}, {}, ProductMetadata(source_product="RS", source_timestamp=RV_TS)],
+        [1.5, 2.0, None, 6.5, None],
+        [{}, {}, {}, ProductMetadata(source_product="RS", source_timestamp=RV_TS), None],
     ),
     RadvorRV: (RV_DATA, RV_META),
     HymecNG: ("snow", {}),

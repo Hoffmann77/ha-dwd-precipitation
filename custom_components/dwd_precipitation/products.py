@@ -237,6 +237,29 @@ def _peak_hour_payload(
     )
 
 
+def _next_120(
+    hour1: float | None,
+    hour2: float | None,
+    meta1: ProductMetadata | None,
+    meta2: ProductMetadata | None,
+) -> tuple[float | None, ProductMetadata | None]:
+    """Return RS's 120-minute forecast total: its two forecast hours added.
+
+    Half a forecast is not a 120-minute total, so a missing hour makes the
+    whole value None rather than counting as dry.
+    """
+    if hour1 is None or hour2 is None or meta1 is None or meta2 is None:
+        return None, None
+
+    return round(hour1 + hour2, MM_DECIMALS), ProductMetadata(
+        source_product=meta1.source_product,
+        source_timestamp=meta1.source_timestamp,
+        lead_time_minutes=120,
+        data_start=meta1.data_start,
+        data_end=meta2.data_end,
+    )
+
+
 class RadvorRS(BaseProductUpdateCoordinator):
     """DWD RS precipitation nowcast (RADVOR, ODIM_H5 format).
 
@@ -253,6 +276,8 @@ class RadvorRS(BaseProductUpdateCoordinator):
       filled with the ``full_rolling_series`` option on, since it needs all 25
       members decoded; otherwise ``None`` and RV provides the sensor (see
       RadvorRV).
+    * ``4`` — the whole 120-minute forecast: leads 60 + 120, so it is exactly
+      the sum of the two forecast sensors. ``None`` unless both are present.
     """
 
     PRODUCT_KEY = "rs"
@@ -339,9 +364,10 @@ class RadvorRS(BaseProductUpdateCoordinator):
 
         data = [cells[lead][0] if cells[lead] else None for lead in RS_HOURLY_LEADS]
         metadata = [per_lead[lead] for lead in RS_HOURLY_LEADS]
+        next_120 = _next_120(data[1], data[2], metadata[1], metadata[2])
 
         if not full:
-            return data + [None], metadata + [None]
+            return data + [None, next_120[0]], metadata + [None, next_120[1]]
 
         sums = [
             round(cells[lead][0], MM_DECIMALS)
@@ -361,7 +387,7 @@ class RadvorRS(BaseProductUpdateCoordinator):
             base.source_product if base else None,
             base.source_timestamp if base else None,
         )
-        return data + [peak], metadata + [peak_meta]
+        return data + [peak, next_120[0]], metadata + [peak_meta, next_120[1]]
 
 
 class RadvorRV(BaseProductUpdateCoordinator):
@@ -375,8 +401,8 @@ class RadvorRV(BaseProductUpdateCoordinator):
 
     * ``intensity_000`` / ``amount_000`` — the analysis (lead 0, the 5 minutes
       ending at T) as an hourly rate (mm/h) and as the raw amount (mm).
-    * ``max_060`` / ``max_120`` — peak intensity (mm/h) over [T, T+60] /
-      [T+60, T+120].
+    * ``max_060`` / ``max_120`` / ``max_0_120`` — peak intensity (mm/h) over
+      [T, T+60] / [T+60, T+120] / [T, T+120].
     * ``start_in`` / ``start_at`` / ``end_in`` / ``end_at`` — when precipitation
       begins / ends at the location (see radar.nowcast.detect_start_end).
     * ``rain_within_2h`` — whether any precipitation is forecast within the
@@ -649,6 +675,7 @@ class RadvorRV(BaseProductUpdateCoordinator):
         timing_meta = ProductMetadata(source_product="RV", source_timestamp=base_ts)
         hour1_meta = _bucket_meta(HOUR1_LEADS, 60)
         hour2_meta = _bucket_meta(HOUR2_LEADS, 120)
+        both_meta = _bucket_meta(HOUR1_LEADS + HOUR2_LEADS, 120)
         # The rain-expected flag owns the raw forecast curve: the full 25-point
         # 5-minute series is attached here so the binary sensor can surface it.
         rain_meta = ProductMetadata(
@@ -692,6 +719,7 @@ class RadvorRV(BaseProductUpdateCoordinator):
             "amount_000": now_mm,
             "max_060": bucket_max_intensity(values, HOUR1_LEADS),
             "max_120": bucket_max_intensity(values, HOUR2_LEADS),
+            "max_0_120": bucket_max_intensity(values, HOUR1_LEADS + HOUR2_LEADS),
             "start_in": start_in,
             "start_at": _at(start_in),
             "end_in": end_in,
@@ -704,6 +732,7 @@ class RadvorRV(BaseProductUpdateCoordinator):
             "amount_000": now_meta,
             "max_060": hour1_meta,
             "max_120": hour2_meta,
+            "max_0_120": both_meta,
             "start_in": timing_meta,
             "start_at": timing_meta,
             "end_in": timing_meta,

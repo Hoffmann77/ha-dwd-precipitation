@@ -60,7 +60,8 @@ poll loop.
 4. The coordinator wraps those in a `CoordinatorData` — its `data`/`metadata`
    are a scalar for RADOLAN products (`None` for a nodata cell, which the ODIM
    reader returns as NaN), parallel lists for RS (`[_000, _060,
-   _120, peak]`, `peak` being `None` unless `full_rolling_series` is on),
+   _120, peak, next_120]`, `peak` being `None` unless `full_rolling_series`
+   is on, `next_120` = `_060 + _120`),
    parallel dicts for RV
 5. `PrecipitationSensorEntity.native_value` calls
    `description.value_fn(coordinator.data.data)`
@@ -169,9 +170,9 @@ viewers and Windows consoles mangle typographic punctuation.
 
 | Class | Key | Format | Update | Description |
 |-------|-----|--------|--------|-------------|
-| `RadvorRS` | `rs` | ODIM_H5 (tar) | 5 min | RADVOR nowcast, 25 rolling 60-min accumulations; exposes the 0/60/120 min leads, plus — only with the `full_rolling_series` option — the wettest future hour with the 25-point rolling-hour series (see "RS product specifics") |
-| `RadvorRV` | `rv` | ODIM_H5 (tar) | 5 min | RV nowcast, 25×5-min grids; derives the current intensity (lead 0 × 12, mm/h, with the raw 5-min amount), +1h/+2h peak intensity (mm/h), precip start/end timing (episode/clearing end algorithm, user-selectable), a rain-within-2h flag (whose metadata carries the raw 25-point forecast series, exposed by default), and by default the wettest future hour (see "Peak hourly precipitation") |
-| `HymecNG` | `hymecng` | ODIM_H5 (single .hd5) | 5 min | Precipitation-*type* composite (rain/snow/freezing rain/hail/…); one enum "Precipitation type" sensor |
+| `RadvorRS` | `rs` | ODIM_H5 (tar) | 5 min | RADVOR nowcast, 25 rolling 60-min accumulations; exposes the 0/60/120 min leads and the 120-min total (60 + 120), plus — only with the `full_rolling_series` option — the wettest future hour with the 25-point rolling-hour series (see "RS product specifics") |
+| `RadvorRV` | `rv` | ODIM_H5 (tar) | 5 min | RV nowcast, 25×5-min grids; derives the current intensity (lead 0 × 12, mm/h, with the raw 5-min amount), peak intensity (mm/h) over the first hour, the second and both, precip start/end timing (episode/clearing end algorithm, user-selectable), a rain-within-2h flag (whose metadata carries the raw 25-point forecast series, exposed by default), and by default the wettest future hour (see "Peak hourly precipitation") |
+| `HymecNG` | `hymecng` | ODIM_H5 (single .hd5) | 5 min | Precipitation-*type* composite (rain/snow/freezing rain/hail/…); one enum "Precipitation type now" sensor |
 | `RadolanRW` | `rw` | ODIM_H5 (RADOLAN HDF5 edition) | 1 h | 1-hour precipitation analysis (gauge-adjusted), the run ending on the hour: one clock hour per release (see "RW 10-minute runs") |
 | `RadolanRW10` | `rw_10min` | same as RW | 10 min | RW's 10-minute runs: the sliding hour ending at each :x0. Built only for a dry streak counting RW (see "RW 10-minute runs") |
 | `RadolanSF` | `sf` | ODIM_H5 (RADOLAN HDF5 edition) | 1 h | 24-hour precipitation analysis |
@@ -214,15 +215,25 @@ get the new slugs. Up to 2026.10.0 the names were: RS `_000` `Precipitation
 now` (`precipitation_now`, named for its role, which hid that it is mm over the
 past hour and not a rate), RW `Precipitation last 1h` (`precipitation_last_1h`),
 and the forecasts `next 1h`, `next 1–2h`, `Peak intensity next 1h` /
-`next 1–2h`, `Peak hourly precipitation next 2h`. None of the new slugs is one
+`next 1–2h`, `Peak hourly precipitation next 2h`, and HymecNG's
+`Precipitation type`. None of the new slugs is one
 of those, so an id means one thing on every install, and HA's "recreate entity
 ids" on an old install cannot collide (giving RS `precipitation_last_1h` was
 considered and rejected for exactly that: RW still holds it there, so RS would
 land on `_2`). The README lists the old ids for older installs.
 
-`Precipitation intensity now` (RV lead 0 × 12, mm/h) is the only `now`: the
-latest 5-minute analysis, ending at the release time. The README states that
-"now" is the analysis window, which ended 4–10 minutes before the value appears.
+`now` means the latest 5-minute analysis, ending at the release time:
+`Precipitation intensity now` (RV lead 0 × 12, mm/h) and `Precipitation type
+now` (HymecNG). The README states that "now" is the analysis window, which
+ended 3–10 minutes before the value appears. A window total is never `now`
+(that was RS `_000`'s old name, see above).
+
+`Precipitation next 120 min` (RS `_060 + _120`) and `Peak intensity next 120
+min` (RV, the max over leads 5–120) cover the whole horizon, so no sum or max
+of two sensors is needed in a template. The total is RS's two forecast hours
+added, not RV's 24 steps summed, so it is exactly the sum of the two sensors
+shown next to it; it is `None` when either hour is, since half a forecast is
+not a 120-minute total.
 
 Everything else carries no window, and should keep it that way. The RV 2 h
 horizon in particular is a property of the *algorithm*, not of the value, so it
@@ -231,8 +242,6 @@ belongs in the docs rather than in four entity names:
 - `Precipitation start` / `Precipitation end` answer *when*; outside the horizon
   the state is simply `unknown`.
 - `Precipitation expected` is a flag; `off` already covers "not in the horizon".
-- `Precipitation type` is instantaneous too, but as a class rather than an
-  amount it cannot be mistaken for anything else, so it needs no qualifier.
 
 `Precipitation total (hourly)` / `(daily)` are the exception to the window rule: they hold
 no window at all (an ever-growing sum since setup), so the parenthesis names the
@@ -389,8 +398,8 @@ Current runtime deps: `numpy`, `h5py`
   `_000`/`_060`/`_120`, by range (see "Range reads"); with the
   `full_rolling_series` option it downloads the whole tar for all 25. Either
   way `_parse()` gets the members' bytes and decodes them off the loop. The
-  payload list is `[_000, _060, _120, peak]`, where `peak` is `None` unless
-  the option is on.
+  payload list is `[_000, _060, _120, peak, next_120]`, where `peak` is
+  `None` unless the option is on and `next_120` is `_060 + _120`.
 
 ## Peak hourly precipitation
 
@@ -568,4 +577,4 @@ real one and cannot serialize the form.
 - **Grid**: identical to RS/RV (1200×1100, same projection) → reuses `get_rs_grid_index` / `RS_GRID_SHAPE`
 - **Encoding**: `uint8` class index 0–10; `nodata=255` (outside coverage → sensor `unknown`), `undetect=254` (scanned, no echo → `no_precipitation`)
 - **Classes** (`PRECIP_TYPE_BY_INDEX` in `const.py`): 0 no_precipitation, 1 not_classified, 2 drizzle, 3 rain, 4 freezing_drizzle, 5 freezing_rain, 6 sleet, 7 snow, 8 graupel, 9 hail, 10 large_hail
-- **Sensor**: one `SensorDeviceClass.ENUM` "Precipitation type" sensor; state labels are translated via the `precipitation_type` entity translation key
+- **Sensor**: one `SensorDeviceClass.ENUM` "Precipitation type now" sensor (key `hymecng_precipitation_type`); state labels are translated via the `precipitation_type_now` entity translation key

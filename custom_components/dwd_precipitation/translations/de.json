@@ -105,6 +105,9 @@
       "precipitation_next_60_120_min": {
         "name": "Niederschlag nächste 60–120 min"
       },
+      "precipitation_next_120_min": {
+        "name": "Niederschlag nächste 120 min"
+      },
       "peak_hourly_precipitation_next_120_min": {
         "name": "Maximaler Stundenniederschlag nächste 120 min"
       },
@@ -117,6 +120,9 @@
       "peak_intensity_next_60_120_min": {
         "name": "Spitzenintensität nächste 60–120 min"
       },
+      "peak_intensity_next_120_min": {
+        "name": "Spitzenintensität nächste 120 min"
+      },
       "precipitation_start": {
         "name": "Niederschlagsbeginn"
       },
@@ -126,8 +132,8 @@
       "timespan_without_precipitation": {
         "name": "Zeitraum ohne Niederschlag"
       },
-      "precipitation_type": {
-        "name": "Niederschlagsart",
+      "precipitation_type_now": {
+        "name": "Niederschlagsart aktuell",
         "state": {
           "no_precipitation": "Kein Niederschlag",
           "not_classified": "Nicht klassifiziert",
