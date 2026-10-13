@@ -575,3 +575,19 @@ def test_overall_status_prefers_ongoing_and_ignores_unseen():
     assert overall_status(view("unseen")) == NO_EVENT
     assert overall_status(view("unseen", "upcoming")) == "upcoming"
     assert overall_status(view("upcoming", "ongoing")) == "ongoing"
+
+
+def test_the_published_view_is_the_declared_schema():
+    """RainEventsView / EventView / EndedRecord are the README's contract."""
+    from radar.rain_events import EndedRecord, EventView, RainEventsView, VIEW_KEYS
+
+    sim = Sim()
+    views = sim.run("13:00", "15:30", steady(1.0, "13:30", "14:00"),
+                    combine(steady(1.0, "13:30", "14:00"), steady(1.0, "15:00", "15:20")))
+    with_event = next(v for v in views.values() if v["events"])
+    ended = next(v for v in views.values() if v["last_ended"])["last_ended"]
+
+    assert tuple(with_event) == VIEW_KEYS == tuple(RainEventsView.__annotations__)
+    for event in with_event["events"]:
+        assert set(event) == set(EventView.__annotations__)
+    assert set(ended) == set(EndedRecord.__annotations__)

@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, TypedDict
 
 from .isotime import iso, parse_utc
 from .nowcast import LEAD_STEP, LEADS, MM_DECIMALS, STEPS_PER_HOUR
@@ -50,18 +50,90 @@ MAX_UNKNOWN_BRIDGE = 36
 WET, DRY, UNKNOWN = "wet", "dry", "unknown"
 UPCOMING, ONGOING, UNSEEN = "upcoming", "ongoing", "unseen"
 
-# The keys of the published view (see update), each a state attribute of the
-# "Rain events" sensor.
-VIEW_KEYS = (
-    "schema",
-    "base",
-    "wet_step_mm",
-    "steps_start",
-    "steps",
-    "history_complete",
-    "events",
-    "last_ended",
-)
+# The published view, schema 1: a contract with blueprints (README, "Rain
+# events"). Timestamps are ISO strings, amounts mm.
+
+
+class Peak(TypedDict):
+    """The wettest window of a given width: its amount and when."""
+
+    mm: float
+    start: str
+    end: str
+
+
+class Block(TypedDict):
+    """An amount with its wettest hour and wettest 10 minutes."""
+
+    mm: float
+    peak_1h: Peak | None
+    peak_10min: Peak | None
+
+
+class OnsetView(TypedDict):
+    """The forecast users were warned with, and how it compares so far."""
+
+    base: str
+    start: str
+    end: str
+    mm: float
+    peak_1h: Peak | None
+    peak_10min: Peak | None
+    expected_so_far_mm: float
+    observed_so_far_mm: float
+
+
+class EventView(TypedDict):
+    """An upcoming, ongoing or unseen event."""
+
+    id: str
+    status: str
+    first_seen: str
+    start: str
+    start_clipped: bool
+    end: str
+    beyond_horizon: bool
+    last_wet_observed: str | None
+    missing_steps: int
+    observed_complete: bool
+    observed: Block
+    forecast: Block
+    total: Block
+    forecast_at_onset: OnsetView | None
+    absorbed: list[str]
+
+
+class EndedRecord(TypedDict):
+    """An event that has ended: final."""
+
+    id: str
+    first_seen: str
+    start: str | None
+    start_clipped: bool
+    end: str | None
+    end_clipped: bool
+    missing_steps: int
+    observed_complete: bool
+    observed: Block
+    forecast_at_onset: OnsetView | None
+    absorbed: list[str]
+
+
+class RainEventsView(TypedDict):
+    """The attributes of the Rain events sensor."""
+
+    schema: int
+    base: str
+    wet_step_mm: float
+    steps_start: str
+    steps: list[float | None]
+    history_complete: bool
+    events: list[EventView]
+    last_ended: EndedRecord | None
+
+
+# Each a state attribute of the "Rain events" sensor.
+VIEW_KEYS = tuple(RainEventsView.__annotations__)
 
 # The sensor's state when no event is upcoming or ongoing.
 NO_EVENT = "none"
@@ -413,7 +485,7 @@ def _runs(tl: _Timeline) -> list[tuple[int, int]]:
 # ---------------------------------------------------------------------------
 
 
-def _peak(tl: _Timeline, lo: int, hi: int, width: int) -> dict[str, Any] | None:
+def _peak(tl: _Timeline, lo: int, hi: int, width: int) -> Peak | None:
     """Return the wettest ``width`` consecutive steps within [lo, hi].
 
     A part shorter than ``width`` is its own only window. Ties go to the
@@ -431,7 +503,7 @@ def _peak(tl: _Timeline, lo: int, hi: int, width: int) -> dict[str, Any] | None:
     return {"mm": mm, "start": _iso(tl.start(i)), "end": _iso(tl.end(i + width - 1))}
 
 
-def _block(tl: _Timeline, lo: int, hi: int) -> dict[str, Any]:
+def _block(tl: _Timeline, lo: int, hi: int) -> Block:
     """Return {mm, peak_1h, peak_10min} for the steps [lo, hi] (may be empty)."""
     if hi < lo:
         return {"mm": 0.0, "peak_1h": None, "peak_10min": None}
@@ -442,7 +514,7 @@ def _block(tl: _Timeline, lo: int, hi: int) -> dict[str, Any]:
     }
 
 
-def _total_peak_1h(tl: _Timeline, first: int, last: int) -> dict[str, Any] | None:
+def _total_peak_1h(tl: _Timeline, first: int, last: int) -> Peak | None:
     """Return the wettest hour of the published series that overlaps the event.
 
     Rain outside the event counts: DWD's heavy-rain criterion is the amount
@@ -459,7 +531,7 @@ def _total_peak_1h(tl: _Timeline, first: int, last: int) -> dict[str, Any] | Non
 
 def _onset_view(
     snapshot: dict[str, Any] | None, state: RainEventsState, base: datetime
-) -> dict[str, Any] | None:
+) -> OnsetView | None:
     """Return the published forecast_at_onset, with the like-for-like sums.
 
     Both sums run over the steps measured since the snapshot, and stop where
@@ -572,7 +644,7 @@ def _ended_record(
     first: int,
     last_wet: int,
     end_clipped: bool,
-) -> dict[str, Any]:
+) -> EndedRecord:
     missing = sum(1 for k in range(first, last_wet + 1) if tl.values[k] is None)
     start_clipped = _start_clipped(tl, first)
     return {
@@ -596,7 +668,7 @@ def update(
     analysis: float | None,
     forecast: list[float | None],
     milli: int,
-) -> dict[str, Any]:
+) -> RainEventsView:
     """Process release ``base`` and return the ``rain_events`` attribute.
 
     ``analysis`` is the measured step ending at ``base`` (None for no data),
@@ -618,6 +690,32 @@ def update(
         # entry, whose first refresh is this very release. The stored view is
         # also why a restart can answer here at all.
         return state.view
+
+    _reset_events_if_needed(state, base, milli)
+    record_measured(state, base, analysis)
+    state.base = base
+    _prune(state, base)
+
+    tl = _build_timeline(state, base, list(forecast), milli)
+    runs = _live_runs(state, tl)
+    survivors, matched_ids = _continue_events(state, runs, tl, base)
+    remaining, newly_ended = _set_aside_unmatched(state, matched_ids)
+    for event, (first, last) in survivors:
+        ended = _classify(state, event, tl, base, first, last, forecast)
+        if ended is not None:
+            newly_ended.append(ended)
+        else:
+            remaining.append(event)
+
+    if newly_ended:
+        state.last_ended = max(newly_ended, key=lambda r: r["end"])
+    state.events = remaining
+    state.view = _publish(state, tl, base, milli)
+    return state.view
+
+
+def _reset_events_if_needed(state: RainEventsState, base: datetime, milli: int) -> None:
+    """Start the events over when their ids or their split would be wrong."""
     if state.base is not None and base < state.base:
         state.events = []  # the clock went backwards; ids could repeat
     if state.wet_milli != milli:
@@ -626,19 +724,18 @@ def update(
         state.events = []
         state.wet_milli = milli
 
-    record_measured(state, base, analysis)
-    state.base = base
 
-    # Drop what is no longer needed before building the timeline.
+def _prune(state: RainEventsState, base: datetime) -> None:
+    """Drop the measured steps no event and no published window needs."""
     keep = _keep_from(state, base)
     state.measured = {t: v for t, v in state.measured.items() if keep <= t <= base}
     state.nodata = {t for t in state.nodata if t >= window_start(base)}
 
-    tl = _build_timeline(state, base, list(forecast), milli)
-    state.ended_spans = [
-        (a, b) for a, b in state.ended_spans if b > tl.start(0)
-    ]
-    runs = [
+
+def _live_runs(state: RainEventsState, tl: _Timeline) -> list[tuple[int, int]]:
+    """Return the runs of rain that are not an ended event's, seen again."""
+    state.ended_spans = [(a, b) for a, b in state.ended_spans if b > tl.start(0)]
+    return [
         (first, last)
         for first, last in _runs(tl)
         if not any(
@@ -647,11 +744,23 @@ def update(
         )
     ]
 
+
+def _continue_events(
+    state: RainEventsState,
+    runs: list[tuple[int, int]],
+    tl: _Timeline,
+    base: datetime,
+) -> tuple[list[tuple[dict[str, Any], tuple[int, int]]], set[str]]:
+    """Return each run's event (continued, merged or new), and the ids continued.
+
+    Events that continue as the same run merge into the one first seen
+    earliest; a run no event continues is a new event.
+    """
     by_run = _match(state.events, runs, tl)
     matched_ids = {e["id"] for evs in by_run.values() for e in evs}
     counter = 0
-    survivors: list[tuple[dict[str, Any], int]] = []
-    for i in range(len(runs)):
+    survivors: list[tuple[dict[str, Any], tuple[int, int]]] = []
+    for i, run in enumerate(runs):
         events = sorted(
             by_run[i], key=lambda e: (e["first_seen"], e["start"], e["id"])
         )
@@ -661,93 +770,107 @@ def update(
         else:
             survivor = _new_event(f"{base:%Y%m%dt%H%M}-{counter}", base)
             counter += 1
-        survivors.append((survivor, i))
+        survivors.append((survivor, run))
+    return survivors, matched_ids
 
-    # Events no run continues: upcoming ones get one release of grace.
+
+def _set_aside_unmatched(
+    state: RainEventsState, matched_ids: set[str]
+) -> tuple[list[dict[str, Any]], list[EndedRecord]]:
+    """Return (events kept although no run continues them, events that ended).
+
+    An upcoming event gets one release of grace as unseen; an event unseen
+    twice is dropped.
+    """
     remaining: list[dict[str, Any]] = []
-    newly_ended: list[dict[str, Any]] = []
+    newly_ended: list[EndedRecord] = []
     for event in state.events:
         if event["id"] in matched_ids:
             continue
         if event["status"] == ONGOING:
             # Cannot happen while its last rain is held; end it rather than
             # lose it.
-            newly_ended.append(
-                _orphan_record(event)
-            )
+            newly_ended.append(_orphan_record(event))
         elif event["status"] == UPCOMING:
             event["status"] = UNSEEN
             remaining.append(event)
-        # An event unseen twice is dropped.
+    return remaining, newly_ended
 
+
+def _classify(
+    state: RainEventsState,
+    event: dict[str, Any],
+    tl: _Timeline,
+    base: datetime,
+    first: int,
+    last: int,
+    forecast: list[float | None],
+) -> EndedRecord | None:
+    """Bring a continued event up to this release; its record if it ended."""
     m = tl.last_measured
-    for event, i in survivors:
-        first, last = runs[i]
-        measured_hi = min(last, m)
-        wet_measured = [k for k in range(first, measured_hi + 1) if tl.kinds[k] == WET]
-        forecast_block = _block(tl, max(first, m + 1), last)
+    measured_hi = min(last, m)
+    wet_measured = [k for k in range(first, measured_hi + 1) if tl.kinds[k] == WET]
+    forecast_block = _block(tl, max(first, m + 1), last)
 
-        if not wet_measured:
-            event["status"] = UPCOMING
-            event["candidate"] = {
-                "base": _iso(base),
-                "start": _iso(tl.start(first)),
-                "end": _iso(tl.end(last)),
-                "mm": forecast_block["mm"],
-                "peak_1h": forecast_block["peak_1h"],
-                "peak_10min": forecast_block["peak_10min"],
-                "forecast": list(forecast),
-            }
-        else:
-            event["status"] = ONGOING
-            if not event["onset_frozen"]:
-                # The last pure forecast is what users were warned with.
-                event["onset"] = event["candidate"]
-                event["onset_frozen"] = True
-            event["candidate"] = None
-        event["start"] = tl.start(first)
-        event["end"] = tl.end(last)
+    if not wet_measured:
+        event["status"] = UPCOMING
+        event["candidate"] = {
+            "base": _iso(base),
+            "start": _iso(tl.start(first)),
+            "end": _iso(tl.end(last)),
+            "mm": forecast_block["mm"],
+            "peak_1h": forecast_block["peak_1h"],
+            "peak_10min": forecast_block["peak_10min"],
+            "forecast": list(forecast),
+        }
+    else:
+        event["status"] = ONGOING
+        if not event["onset_frozen"]:
+            # The last pure forecast is what users were warned with.
+            event["onset"] = event["candidate"]
+            event["onset_frozen"] = True
+        event["candidate"] = None
+    event["start"] = tl.start(first)
+    event["end"] = tl.end(last)
 
-        if wet_measured:
-            last_wet = wet_measured[-1]
-            event["last_wet"] = tl.end(last_wet)
-            after = (last_wet + 1, last_wet + 2)
-            # Two dry steps end it. An unknown one postpones that until it is
-            # filled or has left the window, and then counts as dry.
-            if after[1] <= m and all(
-                tl.kinds[k] == DRY or tl.final_unknown(k) for k in after
-            ):
-                newly_ended.append(
-                    _ended_record(
-                        event,
-                        tl,
-                        state,
-                        base,
-                        first,
-                        last_wet,
-                        end_clipped=any(tl.final_unknown(k) for k in after),
-                    )
-                )
-                state.ended_spans.append((tl.start(first), tl.end(last_wet)))
-                continue
-        else:
-            event["last_wet"] = None
+    if wet_measured:
+        last_wet = wet_measured[-1]
+        event["last_wet"] = tl.end(last_wet)
+        after = (last_wet + 1, last_wet + 2)
+        # Two dry steps end it. An unknown one postpones that until it is
+        # filled or has left the window, and then counts as dry.
+        if after[1] <= m and all(
+            tl.kinds[k] == DRY or tl.final_unknown(k) for k in after
+        ):
+            state.ended_spans.append((tl.start(first), tl.end(last_wet)))
+            return _ended_record(
+                event,
+                tl,
+                state,
+                base,
+                first,
+                last_wet,
+                end_clipped=any(tl.final_unknown(k) for k in after),
+            )
+    else:
+        event["last_wet"] = None
 
-        event["view"] = _event_view(event, tl, state, base, first, last, forecast_block)
-        remaining.append(event)
+    event["view"] = _event_view(event, tl, state, base, first, last, forecast_block)
+    return None
 
-    if newly_ended:
-        state.last_ended = max(newly_ended, key=lambda r: r["end"])
 
-    state.events = remaining
-    events_view = []
-    for event in sorted(remaining, key=lambda e: e["start"]):
+def _publish(
+    state: RainEventsState, tl: _Timeline, base: datetime, milli: int
+) -> RainEventsView:
+    """Return the view of the events as they now stand."""
+    events_view: list[EventView] = []
+    for event in sorted(state.events, key=lambda e: e["start"]):
         view = dict(event["view"])
         view["status"] = event["status"]
         events_view.append(view)
 
     steps = tl.values[tl.series_start:]
-    state.view = {
+    return {
         "schema": SCHEMA,
         "base": _iso(base),
         "wet_step_mm": milli / 1000,
@@ -757,10 +880,9 @@ def update(
         "events": events_view,
         "last_ended": state.last_ended,
     }
-    return state.view
 
 
-def _orphan_record(event: dict[str, Any]) -> dict[str, Any]:
+def _orphan_record(event: dict[str, Any]) -> EndedRecord:
     """Return an ended record for an ongoing event no run continues.
 
     Defensive only: an ongoing event's last rain is always held, so it always
@@ -790,8 +912,8 @@ def _event_view(
     base: datetime,
     first: int,
     last: int,
-    forecast_block: dict[str, Any],
-) -> dict[str, Any]:
+    forecast_block: Block,
+) -> EventView:
     m = tl.last_measured
     measured_hi = min(last, m)
     observed = _block(tl, first, measured_hi)
