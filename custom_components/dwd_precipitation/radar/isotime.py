@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, overload
 
 
+@overload
+def iso(dt: datetime) -> str: ...
+@overload
+def iso(dt: None) -> None: ...
 def iso(dt: datetime | None) -> str | None:
     """Serialize a timestamp for a state attribute or a restore payload."""
     return dt.isoformat() if dt is not None else None

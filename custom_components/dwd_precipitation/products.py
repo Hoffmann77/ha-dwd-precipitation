@@ -40,6 +40,7 @@ from .radar.nowcast import (
     peak_rolling_hour,
     rolling_hour_sums,
 )
+from .radar.rain_events import RainEventsView
 from .rain_events_tracker import RainEventsTracker
 from .const import (
     KEY_AMOUNT,
@@ -166,7 +167,11 @@ def _peak_hour_payload(
 
     peak, peak_lead = peak_rolling_hour(sums)
     # A dry forecast has no wettest hour, so it gets no window either.
-    start, end = windows[peak_lead // LEAD_STEP] if peak else (None, None)
+    start, end = (
+        windows[peak_lead // LEAD_STEP]
+        if peak and peak_lead is not None
+        else (None, None)
+    )
     return peak, ProductMetadata(
         source_product=base.source_product if base else None,
         source_timestamp=base.source_timestamp if base else None,
@@ -373,7 +378,7 @@ class RadvorRS(RadvorProduct):
         }
 
         data: dict[str, Any] = {
-            key: cells[lead][0] if cells[lead] else None
+            key: cell[0] if (cell := cells[lead]) else None
             for key, lead in _RS_HOURS.items()
         }
         metadata = {key: per_lead[lead] for key, lead in _RS_HOURS.items()}
@@ -388,7 +393,7 @@ class RadvorRS(RadvorProduct):
         if not full:
             return data, metadata
 
-        sums = [_mm(cells[lead][0]) if cells[lead] else None for lead in LEADS]
+        sums = [_mm(cell[0]) if (cell := cells[lead]) else None for lead in LEADS]
         windows = [
             (m.data_start, m.data_end) if (m := per_lead[lead]) else (None, None)
             for lead in LEADS
@@ -463,7 +468,7 @@ class RadvorRV(RadvorProduct):
         if self._rain_tracker is not None:
             data["rain_events"] = await self._rain_tracker.async_track(release, metadata)
 
-    def _publish_rain_view(self, view: dict) -> None:
+    def _publish_rain_view(self, view: RainEventsView) -> None:
         """Publish a view the tracker finished after the RV update (a fill)."""
         if self.data is not None:
             self.data.data["rain_events"] = view
@@ -571,7 +576,9 @@ class RadvorRV(RadvorProduct):
         )
 
         # Rolling hour ending at T+L = the twelve 5-minute steps L-55..L.
-        windows = [(None, None)] * len(LEADS)
+        windows: list[tuple[datetime | None, datetime | None]] = [
+            (None, None)
+        ] * len(LEADS)
         for lead in FUTURE_HOUR_LEADS:
             start = starts[(lead - 60 + LEAD_STEP) // LEAD_STEP]
             end = ends[lead // LEAD_STEP]
@@ -611,7 +618,7 @@ class RadvorRV(RadvorProduct):
             "rain_within_2h": start_in is not None,
             "peak_1h": peak_1h,
         }
-        metadata = {
+        metadata: dict[str, ProductMetadata | None] = {
             "intensity_000": now_meta,
             "amount_000": now_meta,
             "max_060": hour1_meta,

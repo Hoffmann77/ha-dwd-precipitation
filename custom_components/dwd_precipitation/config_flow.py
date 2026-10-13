@@ -7,7 +7,7 @@ import logging
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.core import callback
-from homeassistant.data_entry_flow import FlowResult, section
+from homeassistant.data_entry_flow import section
 from homeassistant.helpers import selector
 from homeassistant.const import CONF_NAME
 
@@ -65,7 +65,7 @@ def _dropdown(options: list[str], translation_key: str) -> selector.SelectSelect
 class OptionsFlowHandler(config_entries.OptionsFlow):
     """Handle options flow for DWD Precipitation."""
 
-    async def async_step_init(self, user_input=None) -> FlowResult:
+    async def async_step_init(self, user_input=None) -> config_entries.ConfigFlowResult:
         """Manage the options.
 
         The form nests the rarely needed options in a collapsed section, but
@@ -110,10 +110,19 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 current(CONF_DRY_STREAK_SOURCE): _dropdown(
                     list(DRY_STREAK_SOURCES), CONF_DRY_STREAK_SOURCE
                 ),
-                vol.Required(SECTION_ADVANCED): section(advanced, {"collapsed": True}),
+                vol.Required(SECTION_ADVANCED): section(
+                    advanced,  # pyright: ignore[reportArgumentType]  (probatio, see below)
+                    {"collapsed": True},
+                ),
             }
         )
-        return self.async_show_form(step_id="init", data_schema=schema)
+        # HA's annotations name probatio.Schema, which HA installs as
+        # voluptuous at runtime: the same class there, two to pyright.
+        # Importing probatio here would break every HA from before the alias.
+        return self.async_show_form(
+            step_id="init",
+            data_schema=schema,  # pyright: ignore[reportArgumentType]
+        )
 
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -130,7 +139,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Return the options flow handler."""
         return OptionsFlowHandler()
 
-    async def async_step_user(self, user_input=None) -> FlowResult:
+    async def async_step_user(self, user_input=None) -> config_entries.ConfigFlowResult:
         """Handle the user step."""
         errors: dict[str, str] = {}
 
@@ -166,7 +175,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="user",
-            data_schema=self.get_shema_user_step(),
+            data_schema=self.get_shema_user_step(),  # pyright: ignore[reportArgumentType]  (probatio, see above)
             errors=errors,
         )
 

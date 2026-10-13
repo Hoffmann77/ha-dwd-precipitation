@@ -68,9 +68,7 @@ def bucket_max_intensity(
     ``None`` only when *every* constituent is missing.
     """
     present = [
-        values[lead // LEAD_STEP]
-        for lead in leads
-        if values[lead // LEAD_STEP] is not None
+        value for lead in leads if (value := values[lead // LEAD_STEP]) is not None
     ]
     if not present:
         return None

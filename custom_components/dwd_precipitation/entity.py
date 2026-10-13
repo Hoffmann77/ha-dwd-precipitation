@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from homeassistant.helpers.entity import EntityDescription
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
@@ -85,17 +85,26 @@ class DwdCoordinatorEntity(CoordinatorEntity[BaseProductUpdateCoordinator]):
         """
         return self.coordinator.data_is_reportable
 
+    @property
+    def _description(self) -> DwdEntityDescriptionMixin:
+        """Return the DWD part of this entity's description.
+
+        Every platform's description includes DwdEntityDescriptionMixin; HA
+        types entity_description as the plain EntityDescription.
+        """
+        return cast(DwdEntityDescriptionMixin, self.entity_description)
+
     def _value(self) -> Any:
         """Return what the description picks from the data, None without data."""
         if self.coordinator.data is None:
             return None
-        return self.coordinator.data.data.get(self.entity_description.sub_key)
+        return self.coordinator.data.data.get(self._description.sub_key)
 
     def _metadata(self) -> ProductMetadata | None:
         """Return this entity's ProductMetadata, if the coordinator has it."""
         if self.coordinator.data is None:
             return None
-        return self.coordinator.data.metadata.get(self.entity_description.sub_key)
+        return self.coordinator.data.metadata.get(self._description.sub_key)
 
     def _described_attributes(self) -> dict[str, Any]:
         """Return the description's companion and metadata attributes."""
@@ -103,7 +112,7 @@ class DwdCoordinatorEntity(CoordinatorEntity[BaseProductUpdateCoordinator]):
         if self.coordinator.data is None:
             return attrs
 
-        description = self.entity_description
+        description = self._description
         data = self.coordinator.data.data
         if description.attrs_fn is not None:
             attrs.update(

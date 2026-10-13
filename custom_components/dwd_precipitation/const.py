@@ -116,7 +116,7 @@ PRECIP_TYPE_BY_INDEX = (
     "hail",               # 9  HAIL
     "large_hail",         # 10 LARGE_HAIL
 )
-PRECIP_TYPE_OPTIONS = list(PRECIP_TYPE_BY_INDEX)
+PRECIP_TYPE_OPTIONS: list[str] = list(PRECIP_TYPE_BY_INDEX)
 
 # Sub-keys of the coordinator payloads: each product's data and metadata are
 # dicts keyed by these (RV's are its own, see RadvorRV), and every entity

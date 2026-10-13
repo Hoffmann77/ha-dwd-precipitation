@@ -23,6 +23,7 @@ from homeassistant.helpers.storage import Store
 from .const import DOMAIN
 from .radar.rain_events import (
     RainEventsState,
+    RainEventsView,
     at_stake,
     record_measured,
     steps_to_fill,
@@ -90,7 +91,7 @@ class RainEventsTracker:
         entry: ConfigEntry,
         threshold_mmh: float,
         fetch_analysis: Callable[[datetime], Awaitable[float | None]],
-        publish: Callable[[dict[str, Any]], None],
+        publish: Callable[[RainEventsView], None],
         store: Store | None = None,
     ) -> None:
         """Set up the tracker; nothing is loaded before the first release.
@@ -112,7 +113,7 @@ class RainEventsTracker:
         # The background fill-and-track round, if one was started; and the
         # last view this run published, shown while a round is still running.
         self.fill_task: asyncio.Task | None = None
-        self._view: dict[str, Any] | None = None
+        self._view: RainEventsView | None = None
         self.fill_latch = FailureLatch()
         self._latch = FailureLatch()
         entry.async_on_unload(self.async_save)
@@ -124,7 +125,7 @@ class RainEventsTracker:
 
     async def async_track(
         self, release: datetime, metadata: dict[str, Any]
-    ) -> dict[str, Any] | None:
+    ) -> RainEventsView | None:
         """Track the release just adopted; return the view to publish now.
 
         ``metadata`` is RV's; its ``rain_within_2h`` samples are the analysis
@@ -170,7 +171,7 @@ class RainEventsTracker:
         base: datetime,
         values: list[float | None],
         milli: int,
-    ) -> dict[str, Any] | None:
+    ) -> RainEventsView | None:
         """Feed release ``base`` to the tracker (filled already); None on failure."""
         try:
             view = update_rain_events(state, base, values[0], values[1:], milli)
