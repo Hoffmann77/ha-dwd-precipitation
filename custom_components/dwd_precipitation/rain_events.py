@@ -30,11 +30,10 @@ from typing import Any
 SCHEMA = 1
 
 STEP = timedelta(minutes=5)
-WINDOW_STEPS = 12  # measured steps published, ending at T
-FORECAST_STEPS = 24  # leads 5..120
-HOUR_STEPS = 12
-PAIR_STEPS = 2
 STEPS_PER_HOUR = 12
+WINDOW_STEPS = STEPS_PER_HOUR  # measured steps published: the hour ending at T
+FORECAST_STEPS = 24  # leads 5..120
+PAIR_STEPS = 2
 MM_DECIMALS = 3
 
 # An upcoming event continues as the run whose window overlaps its own,
@@ -218,9 +217,6 @@ class _Timeline:
     first_end: datetime  # end of step 0
     values: list[float | None]
     kinds: list[str]
-    # Unknown measured steps that have left the window and can no longer be
-    # filled: they still bridge rain, but count as dry for ending an event.
-    final_unknown: list[bool]
     last_measured: int  # index of the step ending at T
 
     def end(self, i: int) -> datetime:
@@ -236,6 +232,14 @@ class _Timeline:
     @property
     def last(self) -> int:
         return len(self.values) - 1
+
+    def final_unknown(self, i: int) -> bool:
+        """Whether step ``i`` is unknown and has left the window for good.
+
+        It can no longer be filled: it still bridges rain, but counts as dry
+        for ending an event. Forecast steps are never unknown.
+        """
+        return self.kinds[i] == UNKNOWN and i < self.series_start
 
 
 def _keep_from(state: RainEventsState, base: datetime) -> datetime:
@@ -258,21 +262,16 @@ def _build_timeline(
     milli: int,
 ) -> _Timeline:
     first = _keep_from(state, base)
-    oldest_window = window_start(base)
     values: list[float | None] = []
     kinds: list[str] = []
-    final_unknown: list[bool] = []
 
     t = first
     while t <= base:
         value = state.measured.get(t)
         values.append(value)
-        if value is None:
-            kinds.append(UNKNOWN)
-            final_unknown.append(t < oldest_window)
-        else:
-            kinds.append(WET if is_wet(value, milli) else DRY)
-            final_unknown.append(False)
+        kinds.append(
+            UNKNOWN if value is None else WET if is_wet(value, milli) else DRY
+        )
         t += STEP
     last_measured = len(values) - 1
 
@@ -280,9 +279,8 @@ def _build_timeline(
         values.append(value)
         # A forecast step without data (coverage edge) counts as dry.
         kinds.append(WET if is_wet(value, milli) else DRY)
-        final_unknown.append(False)
 
-    return _Timeline(first, values, kinds, final_unknown, last_measured)
+    return _Timeline(first, values, kinds, last_measured)
 
 
 def _runs(tl: _Timeline) -> list[tuple[int, int]]:
@@ -349,7 +347,7 @@ def _block(tl: _Timeline, lo: int, hi: int) -> dict[str, Any]:
         return {"mm": 0.0, "peak_1h": None, "peak_10min": None}
     return {
         "mm": _mm(sum(tl.values[k] or 0.0 for k in range(lo, hi + 1))),
-        "peak_1h": _peak(tl, lo, hi, HOUR_STEPS),
+        "peak_1h": _peak(tl, lo, hi, STEPS_PER_HOUR),
         "peak_10min": _peak(tl, lo, hi, PAIR_STEPS),
     }
 
@@ -361,17 +359,12 @@ def _total_peak_1h(tl: _Timeline, first: int, last: int) -> dict[str, Any] | Non
     within an hour, so two cells close together add up. Only whole windows
     of the series are considered.
     """
-    best: tuple[float, int] | None = None
-    for i in range(tl.series_start, tl.last - HOUR_STEPS + 2):
-        if i > last or i + HOUR_STEPS - 1 < first:
-            continue
-        total = _mm(sum(tl.values[k] or 0.0 for k in range(i, i + HOUR_STEPS)))
-        if best is None or total > best[0]:
-            best = (total, i)
-    if best is None:
+    # The windows starting in [lo, hi] are the whole ones that overlap it.
+    lo = max(tl.series_start, first - STEPS_PER_HOUR + 1)
+    hi = min(last, tl.last - STEPS_PER_HOUR + 1)
+    if hi < lo:
         return None
-    mm, i = best
-    return {"mm": mm, "start": _iso(tl.start(i)), "end": _iso(tl.end(i + HOUR_STEPS - 1))}
+    return _peak(tl, lo, hi + STEPS_PER_HOUR - 1, STEPS_PER_HOUR)
 
 
 def _onset_view(
@@ -415,7 +408,7 @@ def _start_clipped(tl: _Timeline, first: int) -> bool:
     if first < 2:
         return True
     return any(
-        tl.kinds[k] != DRY or tl.final_unknown[k] for k in (first - 1, first - 2)
+        tl.kinds[k] != DRY or tl.final_unknown(k) for k in (first - 1, first - 2)
     )
 
 
@@ -429,7 +422,6 @@ def _new_event(event_id: str, base: datetime) -> dict[str, Any]:
         "id": event_id,
         "first_seen": base,
         "status": UPCOMING,
-        "unseen": 0,
         "start": None,
         "end": None,
         "last_wet": None,
@@ -591,7 +583,6 @@ def update(
             )
         elif event["status"] == UPCOMING:
             event["status"] = UNSEEN
-            event["unseen"] = 1
             remaining.append(event)
         # An event unseen twice is dropped.
 
@@ -620,7 +611,6 @@ def update(
                 event["onset"] = event["candidate"]
                 event["onset_frozen"] = True
             event["candidate"] = None
-        event["unseen"] = 0
         event["start"] = tl.start(first)
         event["end"] = tl.end(last)
 
@@ -631,7 +621,7 @@ def update(
             # Two dry steps end it. An unknown one postpones that until it is
             # filled or has left the window, and then counts as dry.
             if after[1] <= m and all(
-                tl.kinds[k] == DRY or tl.final_unknown[k] for k in after
+                tl.kinds[k] == DRY or tl.final_unknown(k) for k in after
             ):
                 newly_ended.append(
                     _ended_record(
@@ -641,7 +631,7 @@ def update(
                         base,
                         first,
                         last_wet,
-                        end_clipped=any(tl.final_unknown[k] for k in after),
+                        end_clipped=any(tl.final_unknown(k) for k in after),
                     )
                 )
                 state.ended_spans.append((tl.start(first), tl.end(last_wet)))
