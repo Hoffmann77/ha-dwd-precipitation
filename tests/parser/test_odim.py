@@ -12,6 +12,7 @@ from radar.odim import (
     read_odim_composite,
     read_odim_composite_cell,
     read_odim_classification,
+    read_odim_classification_cell,
     rs_grid_contains,
 )
 
@@ -253,6 +254,23 @@ def test_classification_returns_validity_window():
 def test_classification_shape_pinning_rejects_wrong_size():
     with pytest.raises(ValueError, match="Unexpected composite shape"):
         read_odim_classification(make_hymecng_h5(shape=(5, 5)), expected_shape=RS_GRID_SHAPE)
+
+
+def test_classification_cell_matches_the_grid():
+    raw, dataset_what, moment_what = read_odim_classification(make_hymecng_h5())
+    for row in range(raw.shape[0]):
+        for col in range(raw.shape[1]):
+            value, cell_what, cell_moment = read_odim_classification_cell(
+                make_hymecng_h5(), row, col
+            )
+            assert value == int(raw[row, col])
+            assert (cell_what, cell_moment) == (dataset_what, moment_what)
+
+
+@pytest.mark.parametrize(("row", "col"), [(-1, 0), (0, -1), (5, 0), (0, 5)])
+def test_classification_cell_outside_the_grid_raises(row, col):
+    with pytest.raises(ValueError, match="outside"):
+        read_odim_classification_cell(make_hymecng_h5(), row, col)
 
 
 # ===========================================================================

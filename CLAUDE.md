@@ -329,7 +329,12 @@ use, since scaling and masking the whole grid to keep one value was over half
 the decode time; libhdf5 still inflates the single whole-grid chunk, so reading
 fewer *cells* cannot save more) and `read_odim_classification` (HymecNG's `CLASS` quantity —
 discrete class indices returned unscaled, with the `nodata`/`undetect`
-sentinels preserved so the caller can tell "outside coverage" from "dry").
+sentinels preserved so the caller can tell "outside coverage" from "dry"),
+with `read_odim_classification_cell` as its one-cell form, which HymecNG
+uses. Both cell readers reject a cell outside the grid, which a plain index
+would wrap around to the far edge. The whole-grid readers have no runtime
+caller: they are the oracle for the parser, reference and live tiers and for
+`scripts/`.
 
 ## Dependencies
 
