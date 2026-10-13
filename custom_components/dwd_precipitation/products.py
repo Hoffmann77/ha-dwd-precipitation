@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from functools import cached_property
 from io import BytesIO
 
+import aiohttp
 import numpy as np
 from homeassistant.helpers.storage import Store
 
@@ -52,6 +53,7 @@ from .const import (
     CONF_DRY_STREAK_SOURCE,
     DEFAULT_DRY_STREAK_SOURCE,
     DRY_STREAK_SOURCE_RW,
+    DRY_STREAK_SOURCES,
     RW_SLIDING_KEY,
     CONF_RAIN_EVENTS,
     DEFAULT_RAIN_EVENTS,
@@ -101,7 +103,7 @@ RANGE_MAX_BYTES = 8 * 1024 * 1024
 
 RAIN_EVENTS_STORE_VERSION = 1
 
-# Filling missed analyses may hold an RV update this long, at most.
+# One background round of filling missed analyses takes this long, at most.
 RAIN_FILL_BUDGET = timedelta(seconds=30)
 
 # How soon the rain_events state is written: promptly while an event or an
@@ -109,6 +111,43 @@ RAIN_FILL_BUDGET = timedelta(seconds=30)
 # RadvorRV._schedule_rain_save).
 RAIN_SAVE_DELAY = timedelta(seconds=10)
 RAIN_IDLE_SAVE_DELAY = timedelta(hours=12)
+
+
+def _describe_fill_failure(err: Exception, step_end: datetime) -> str:
+    """Return the warning for a missed RV analysis that could not be filled.
+
+    Only a failed download is DWD's doing; a file that arrived but could not
+    be read is worth a report. Plain ASCII, like _describe_fetch_error.
+    """
+    what = (
+        f"the missed DWD RV release {step_end.strftime('%Y-%m-%d %H:%M UTC')} "
+        f"to fill the rain_events history ({err or type(err).__name__})"
+    )
+    if isinstance(err, (aiohttp.ClientError, TimeoutError)):
+        cause = (
+            f"Could not fetch {what}. DWD OpenData did not serve it; nothing "
+            "is wrong with your setup."
+        )
+    else:
+        cause = (
+            f"Could not read {what}. This is likely a change on DWD's side or "
+            "a bug in the integration; please report it if it keeps happening."
+        )
+    return f"{cause} The step stays unknown and is retried with the next releases"
+
+
+def dry_streak_coordinator_key(options) -> str:
+    """Return the key of the coordinator the dry streak counts.
+
+    The option's values are product keys, except that RW counts its 10-minute
+    runs. An unknown stored value counts as the default. RadolanRW10.is_needed
+    and the sensor setup both ask this, so the coordinator the sensor binds to
+    is always one that was built.
+    """
+    source = options.get(CONF_DRY_STREAK_SOURCE, DEFAULT_DRY_STREAK_SOURCE)
+    if source not in DRY_STREAK_SOURCES:
+        source = DEFAULT_DRY_STREAK_SOURCE
+    return RW_SLIDING_KEY if source == DRY_STREAK_SOURCE_RW else source
 
 
 def rain_events_enabled(options) -> bool:
@@ -443,6 +482,10 @@ class RadvorRV(BaseProductUpdateCoordinator):
     _rain_saved_ended: str | None = None
     _rain_fill_failing: bool = False
     _rain_broken: bool = False
+    # The background fill-and-track round, if one was started; and the last
+    # view this run published, shown while a round is still running.
+    _rain_fill_task: asyncio.Task | None = None
+    _rain_view: dict | None = None
 
     def __init__(self, hass, entry, async_client, lat, lon) -> None:
         """Initialize the coordinator and, if tracked, its rain_events store."""
@@ -485,30 +528,93 @@ class RadvorRV(BaseProductUpdateCoordinator):
     ) -> dict | None:
         """Update the rain_events tracker with this release; None if it failed.
 
+        The missed analyses must be filled *before* the tracker sees the
+        release: updating first and recomputing after the fill can swap event
+        ids and lose ``forecast_at_onset`` when it rained during a downtime.
+        A fill takes seconds, though, and this runs inside the RV refresh
+        that setup waits for. So when there is anything to fill, the tracker
+        update moves to a background task that fills, updates and publishes
+        the view; until then the sensor keeps the view it showed before (none
+        right after a restart). Every later release queues behind a running
+        fill, so releases always reach the tracker in order.
+
         A failure here must not cost the RV sensors their update, so it is
         logged (once per run of failures) and the attribute is left out.
         """
         try:
             state = await self._async_rain_state()
-            milli = wet_step_milli(
-                self.config_entry.options.get(
-                    CONF_RAIN_EVENT_THRESHOLD, DEFAULT_RAIN_EVENT_THRESHOLD
-                )
+        except Exception:
+            self._rain_failed()
+            return None
+        milli = wet_step_milli(
+            self.config_entry.options.get(
+                CONF_RAIN_EVENT_THRESHOLD, DEFAULT_RAIN_EVENT_THRESHOLD
             )
-            # Fill first: a lost release must not look like rain that vanished.
-            await self._async_fill_missed(state, base)
+        )
+        running = self._rain_fill_task is not None and not self._rain_fill_task.done()
+        if running or steps_to_fill(state, base):
+            self._rain_fill_task = self.config_entry.async_create_background_task(
+                self.hass,
+                self._async_fill_and_track(
+                    self._rain_fill_task if running else None, state, base, values, milli
+                ),
+                "dwd_precipitation rain_events fill",
+            )
+            return self._rain_view
+        return self._track_rain(state, base, values, milli)
+
+    def _track_rain(
+        self,
+        state: RainEventsState,
+        base: datetime,
+        values: list[float | None],
+        milli: int,
+    ) -> dict | None:
+        """Feed release ``base`` to the tracker (filled already); None on failure."""
+        try:
             view = update_rain_events(state, base, values[0], values[1:], milli)
         except Exception:
-            if not self._rain_broken:
-                self._rain_broken = True
-                _LOGGER.exception(
-                    "Could not update the Rain events sensor; the other RV "
-                    "sensors are not affected"
-                )
+            self._rain_failed()
             return None
         self._rain_broken = False
         self._schedule_rain_save(state)
+        self._rain_view = view
         return view
+
+    def _rain_failed(self) -> None:
+        """Log a tracker failure once per run of failures."""
+        if not self._rain_broken:
+            self._rain_broken = True
+            _LOGGER.exception(
+                "Could not update the Rain events sensor; the other RV "
+                "sensors are not affected"
+            )
+
+    async def _async_fill_and_track(
+        self,
+        previous: asyncio.Task | None,
+        state: RainEventsState,
+        base: datetime,
+        values: list[float | None],
+        milli: int,
+    ) -> None:
+        """Fill release ``base``'s window, track it, and publish the view."""
+        if previous is not None:
+            await asyncio.wait([previous])
+        try:
+            await self._async_fill_missed(state, base)
+        except Exception:
+            self._rain_failed()
+            return
+        view = self._track_rain(state, base, values, milli)
+        # A newer release queued behind this one publishes its own view.
+        if (
+            view is not None
+            and self.data is not None
+            and self._rain_fill_task is asyncio.current_task()
+        ):
+            self.data.data["rain_events"] = view
+            self.async_update_listeners()
 
     async def _async_rain_state(self) -> RainEventsState:
         """Return the tracker state, loading it from the store on first use."""
@@ -531,7 +637,8 @@ class RadvorRV(BaseProductUpdateCoordinator):
 
         Sequential, newest first, within RAIN_FILL_BUDGET; the first failure
         ends the round and the rest wait for the next release. Each fill reads
-        only the analysis member, ~4-7 % of the archive.
+        only the analysis member, ~4-7 % of the archive. Runs in the
+        background round, never in the refresh (see _async_rain_events).
         """
         missing = steps_to_fill(state, base)
         if not missing:
@@ -542,21 +649,22 @@ class RadvorRV(BaseProductUpdateCoordinator):
             remaining = deadline - loop.time()
             if remaining <= 0:
                 return
+            budget = asyncio.timeout(remaining)
             try:
-                async with asyncio.timeout(remaining):
+                async with budget:
                     value = await self._async_fetch_analysis(step_end)
             except Exception as err:  # noqa: BLE001 - every failure is retried later
+                if budget.expired():
+                    # Our own limit, not a failure: the rest waits for the
+                    # next release.
+                    _LOGGER.debug(
+                        "Fill budget used up at the RV analysis of %s", step_end
+                    )
+                    return
                 _LOGGER.debug("Could not fill the RV analysis of %s: %s", step_end, err)
                 if not self._rain_fill_failing:
                     self._rain_fill_failing = True
-                    _LOGGER.warning(
-                        "Could not fetch the missed DWD RV release %s to fill "
-                        "the rain_events history (%s). DWD OpenData did not "
-                        "serve it; nothing is wrong with your setup. The step "
-                        "stays unknown and is retried with the next releases",
-                        step_end.strftime("%Y-%m-%d %H:%M UTC"),
-                        err or type(err).__name__,
-                    )
+                    _LOGGER.warning(_describe_fill_failure(err, step_end))
                 return
             _LOGGER.debug("Filled the RV analysis of %s: %s", step_end, value)
             record_measured(state, step_end, value)
@@ -944,10 +1052,7 @@ class RadolanRW10(RadolanRW):
     @classmethod
     def is_needed(cls, options) -> bool:
         """Whether the dry streak counts RW, the only user of the sliding hour."""
-        return (
-            options.get(CONF_DRY_STREAK_SOURCE, DEFAULT_DRY_STREAK_SOURCE)
-            == DRY_STREAK_SOURCE_RW
-        )
+        return dry_streak_coordinator_key(options) == cls.PRODUCT_KEY
 
 class RadolanSF(RadolanProduct):
     """DWD RADOLAN SF: 24-hour precipitation analysis."""

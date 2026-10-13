@@ -480,6 +480,9 @@ def _dry_streak_sensor(hass: HomeAssistant):
         (1, {}, "rs"),
         # ...unless it already carries a source, which the migration leaves alone.
         (1, {CONF_DRY_STREAK_SOURCE: "rw"}, "rw"),
+        # A value no version ever wrote counts as the default, and the RW
+        # coordinator it binds to is built for it.
+        (2, {CONF_DRY_STREAK_SOURCE: "radar"}, "rw"),
     ],
 )
 async def test_dry_streak_sensor_binds_to_the_configured_source(

@@ -522,8 +522,16 @@ def update(
     missed measured steps (steps_to_fill / record_measured) *before* calling
     this: a lost release must never cause an unseen event, a split or an end.
     """
-    if state.base is not None and base == state.base and state.view is not None:
-        return state.view  # the same release again: nothing has changed
+    if (
+        state.base is not None
+        and base == state.base
+        and state.view is not None
+        and state.wet_milli == milli
+    ):
+        # The same release again: nothing has changed. Not after a threshold
+        # change, though: an options change reloads the entry, whose first
+        # refresh is this very release.
+        return state.view
     if state.base is not None and base < state.base:
         state.events = []  # the clock went backwards; ids could repeat
     if state.wet_milli != milli:
@@ -743,8 +751,13 @@ def at_stake(state: RainEventsState) -> bool:
         return True
     if state.base is None:
         return False
+    # An unknown step may still be filled. A step whose release had no data
+    # for the cell is final, like a dry one: it is not refetched, so it must
+    # not keep the store writing every release at a coverage edge.
+    if steps_to_fill(state, state.base):
+        return True
     return any(
-        value is None or is_wet(value, state.wet_milli or 0)
+        value is not None and is_wet(value, state.wet_milli or 0)
         for t, value in state.measured.items()
         if t >= window_start(state.base)
     )

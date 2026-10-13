@@ -127,6 +127,20 @@ def test_threshold_change_drops_events_but_keeps_steps_and_last_ended():
     assert view["steps"][:5] == [1.0, 1.0, 1.0, 1.0, 0.0]
 
 
+def test_threshold_change_applies_to_the_same_release():
+    # An options change reloads the entry, and its first refresh is the
+    # release the old threshold already processed.
+    sim = Sim(threshold_mmh=0.1)
+    drizzle = steady(0.02, "15:30", "15:40")  # 0.24 mm/h
+    assert only(sim.release(at("14:55"), DRY, drizzle))["status"] == "upcoming"
+
+    sim.milli = wet_step_milli(0.5)
+    view = sim.release(at("14:55"), DRY, drizzle)
+
+    assert view["wet_step_mm"] == sim.milli / 1000
+    assert view["events"] == []
+
+
 # ---------------------------------------------------------------------------
 # Scenario 1: an approaching cell
 # ---------------------------------------------------------------------------
@@ -458,6 +472,21 @@ def test_nothing_at_stake_on_a_dry_day():
     sim.run("12:00", "13:00", DRY)
     assert at_stake(sim.state) is False
     sim.release(at("13:05"), DRY, steady(1.0, "14:00", "14:10"))
+    assert at_stake(sim.state) is True
+
+
+def test_nodata_steps_are_not_at_stake():
+    # A coverage-edge cell: no data, nothing to refetch, nothing to save.
+    sim = Sim()
+    sim.run("12:00", "13:00", lambda _t: None, DRY)
+    assert at_stake(sim.state) is False
+
+
+def test_an_unknown_step_is_at_stake():
+    sim = Sim()
+    sim.unfillable.add(at("12:30"))
+    sim.run("12:00", "13:00", DRY, skip=["12:30"])
+    assert steps_to_fill(sim.state, at("13:00")) == [at("12:30")]
     assert at_stake(sim.state) is True
 
 
