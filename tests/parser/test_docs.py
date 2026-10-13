@@ -46,3 +46,13 @@ def test_readme_names_the_old_id_of_every_renamed_entity():
         if f"_{RELEASED_2026_10_0_IDS[key]}`" not in note
     ]
     assert missing == []
+
+
+def test_adr_references_resolve():
+    """Every "ADR NNNN" CLAUDE.md cites exists, and the index lists every record."""
+    adr = ROOT / "docs" / "adr"
+    records = {p.name[:4]: p.name for p in adr.glob("[0-9][0-9][0-9][0-9]-*.md")}
+    cited = set(re.findall(r"ADR (\d{4})", (ROOT / "CLAUDE.md").read_text(encoding="utf-8")))
+    assert sorted(cited - records.keys()) == [], "CLAUDE.md cites records that do not exist"
+    index = (adr / "README.md").read_text(encoding="utf-8")
+    assert sorted(n for n in records.values() if f"({n})" not in index) == []
