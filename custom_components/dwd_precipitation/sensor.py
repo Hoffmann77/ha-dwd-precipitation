@@ -49,7 +49,7 @@ from .dry_streak import (
     fresh_anchor,
     scalar_reading,
 )
-from .entity import DwdCoordinatorEntity
+from .entity import DwdCoordinatorEntity, unique_id_for
 from .products import dry_streak_coordinator_key, rain_events_enabled
 from .utils import iso
 from .rain_events import NO_EVENT, ONGOING, UPCOMING, VIEW_KEYS, overall_status
@@ -415,10 +415,12 @@ async def async_setup_entry(
     # entity goes too, rather than lingering as "no longer provided".
     if rain_events_enabled(entry.options):
         entities.append(RainEventsSensor(coordinators["rv"], RAIN_EVENTS_SENSOR))
-    elif entity_id := er.async_get(hass).async_get_entity_id(
-        "sensor", DOMAIN, f"{entry.entry_id}_{RAIN_EVENTS_SENSOR.key}"
-    ):
-        er.async_get(hass).async_remove(entity_id)
+    else:
+        registry = er.async_get(hass)
+        if entity_id := registry.async_get_entity_id(
+            "sensor", DOMAIN, unique_id_for(entry.entry_id, RAIN_EVENTS_SENSOR.key)
+        ):
+            registry.async_remove(entity_id)
 
     # Changing the source reloads the entry, so binding once at setup is enough.
     # The unique id does not depend on it, so the entity and its persisted

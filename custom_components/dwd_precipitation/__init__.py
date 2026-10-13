@@ -10,14 +10,12 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.storage import Store
 
 from .coordinator import BaseProductUpdateCoordinator
 from .const import CONF_DRY_STREAK_SOURCE, LEGACY_DRY_STREAK_SOURCE, PLATFORMS
 from .products import (
-    RAIN_EVENTS_STORE_VERSION,
     rain_events_enabled,
-    rain_events_store_key,
+    rain_events_store,
     RadvorRS,
     RadvorRV,
     HymecNG,
@@ -101,9 +99,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: MyConfigEntry) -> bool:
     if not rain_events_enabled(entry.options):
         # Turned off: drop what the tracker stored, so turning it on again
         # starts clean rather than from a state days out of date.
-        await Store(
-            hass, RAIN_EVENTS_STORE_VERSION, rain_events_store_key(entry.entry_id)
-        ).async_remove()
+        await rain_events_store(hass, entry.entry_id).async_remove()
 
     entry.runtime_data = MyData({c.PRODUCT_KEY: c for c in product_coordinators})
     entry.async_on_unload(entry.add_update_listener(update_listener))
@@ -150,6 +146,4 @@ async def async_unload_entry(hass: HomeAssistant, entry: MyConfigEntry) -> bool:
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Delete what the entry stored when it is removed."""
-    await Store(
-        hass, RAIN_EVENTS_STORE_VERSION, rain_events_store_key(entry.entry_id)
-    ).async_remove()
+    await rain_events_store(hass, entry.entry_id).async_remove()

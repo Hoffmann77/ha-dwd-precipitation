@@ -168,6 +168,15 @@ def rain_events_store_key(entry_id: str) -> str:
     return f"{DOMAIN}.{entry_id}.rain_events"
 
 
+def rain_events_store(hass, entry_id: str) -> Store:
+    """Return the Store of one config entry's rain_events state.
+
+    The one place it is built, so a version bump (or a migration) reaches the
+    tracker and the clean-up on option-off and entry removal alike.
+    """
+    return Store(hass, RAIN_EVENTS_STORE_VERSION, rain_events_store_key(entry_id))
+
+
 def _tar_members(content: bytes, prefix: str, leads) -> dict[str, bytes]:
     """Return the requested members of a whole RADVOR tar, by name (blocking)."""
     return members_from_archive(content, member_names(prefix, leads))
@@ -473,9 +482,7 @@ class RadvorRV(BaseProductUpdateCoordinator):
         """Initialize the coordinator and, if tracked, its rain_events store."""
         super().__init__(hass, entry, async_client, lat, lon)
         if rain_events_enabled(entry.options):
-            self._rain_store = Store(
-                hass, RAIN_EVENTS_STORE_VERSION, rain_events_store_key(entry.entry_id)
-            )
+            self._rain_store = rain_events_store(hass, entry.entry_id)
 
     @cached_property
     def index(self) -> tuple[int, int]:

@@ -10,6 +10,15 @@ from .const import DOMAIN
 from .coordinator import BaseProductUpdateCoordinator
 
 
+def unique_id_for(entry_id: str, key: str) -> str:
+    """Return the unique id of an entry's entity with description ``key``.
+
+    Released ids must never change (it would orphan the user's entity), so
+    the format lives here only.
+    """
+    return f"{entry_id}_{key}"
+
+
 class DwdCoordinatorEntity(CoordinatorEntity[BaseProductUpdateCoordinator]):
     """Base coordinator entity shared by all DWD Precipitation platforms."""
 
@@ -23,8 +32,8 @@ class DwdCoordinatorEntity(CoordinatorEntity[BaseProductUpdateCoordinator]):
         """Initialize the entity."""
         super().__init__(coordinator)
         self.entity_description = description
-        self._attr_unique_id = (
-            f"{coordinator.config_entry.entry_id}_{description.key}"
+        self._attr_unique_id = unique_id_for(
+            coordinator.config_entry.entry_id, description.key
         )
         self._attr_device_info = DeviceInfo(
             entry_type=DeviceEntryType.SERVICE,
