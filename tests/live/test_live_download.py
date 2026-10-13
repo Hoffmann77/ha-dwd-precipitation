@@ -22,7 +22,7 @@ import numpy as np
 import pytest
 import requests
 
-from radar import read_odim_composite
+from radar.odim import read_odim_composite
 
 _OPENDATA = "https://opendata.dwd.de/weather/radar"
 

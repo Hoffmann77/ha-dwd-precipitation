@@ -172,7 +172,11 @@ def read_odim_composite(
     moment: str = "data1",
     expected_shape=None,
 ):
-    """Read a Cartesian ODIM_H5 composite.
+    """Read a Cartesian ODIM_H5 composite, the whole grid.
+
+    No runtime caller: the integration reads one cell
+    (:func:`read_odim_composite_cell`). This is the oracle the test tiers and
+    scripts/ compare against.
 
     Returns (data, dataset_what) where data is a float32 array and dataset_what
     is the normalised /dataset/what attribute dict.
@@ -221,6 +225,9 @@ def read_odim_classification(
     expected_shape=None,
 ):
     """Read a Cartesian ODIM_H5 *classification* composite (e.g. HymecNG).
+
+    The whole grid, for the test tiers; HymecNG reads one cell with
+    :func:`read_odim_classification_cell`.
 
     Unlike :func:`read_odim_composite`, the payload holds a discrete class index
     (a precipitation-type category) rather than a physical quantity, so it is

@@ -32,7 +32,7 @@ import requests
 
 pytest.importorskip("wradlib")
 
-from radar import (  # noqa: E402
+from radar.odim import (  # noqa: E402
     RS_GRID_SHAPE,
     get_rs_grid_index,
     read_odim_classification,
