@@ -29,7 +29,7 @@ BINARY_SENSORS = (
         translation_key="precipitation_expected",
         icon="mdi:weather-rainy",
         product_key="rv",
-        access_fn=lambda d: d["rain_within_2h"],
+        sub_key="rain_within_2h",
         attrs_fn=lambda d: {"minutes_until": d.get("start_in"), "at": d.get("start_at")},
         # The full 25-point RV forecast series, always exposed (not behind the
         # extra-attributes option, unlike the other sensors' diagnostics):

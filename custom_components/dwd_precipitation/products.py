@@ -14,6 +14,7 @@ import numpy as np
 from .coordinator import (
     DEFAULT_OVERDUE_GRACE,
     BaseProductUpdateCoordinator,
+    Payload,
     ProductMetadata,
 )
 from .radar.isotime import iso
@@ -41,6 +42,13 @@ from .radar.nowcast import (
 )
 from .rain_events_tracker import RainEventsTracker
 from .const import (
+    KEY_AMOUNT,
+    KEY_LAST_60,
+    KEY_NEXT_60,
+    KEY_NEXT_60_120,
+    KEY_NEXT_120,
+    KEY_PEAK_1H,
+    KEY_PRECIPITATION_TYPE,
     PRECIP_TYPE_BY_INDEX,
     RW_SLIDING_KEY,
 )
@@ -70,7 +78,8 @@ def _mm(value: float | None) -> float | None:
 
 
 # The three non-overlapping RS hours: past, next and second-next.
-RS_HOURLY_LEADS = (0, 60, 120)
+_RS_HOURS = {KEY_LAST_60: 0, KEY_NEXT_60: 60, KEY_NEXT_60_120: 120}
+RS_HOURLY_LEADS = tuple(_RS_HOURS.values())
 
 
 # A 206 answer is one window of a RADVOR tar, at most a few members of under
@@ -208,10 +217,10 @@ class WholeFileProduct(BaseProductUpdateCoordinator, ABC):
         return product_url(self.PRODUCT_KEY, ts)
 
     @abstractmethod
-    def _parse(self, content: bytes, ts: datetime) -> tuple[Any, Any]:
+    def _parse(self, content: bytes, ts: datetime) -> Payload:
         """Return (data, metadata) from the file's bytes (blocking)."""
 
-    async def _fetch_and_parse(self, ts: datetime) -> tuple[Any, Any]:
+    async def _fetch_and_parse(self, ts: datetime) -> Payload:
         """Fetch the release's file and decode it off the event loop."""
         url = self._get_url(ts)
         if self.SHARES_FILES and self.download_cache is not None:
@@ -298,17 +307,18 @@ class RadvorRS(RadvorProduct):
     0..120 min, 5-min steps). Each member is a *rolling 60-minute* accumulation
     (mm) ending at T+lead, so consecutive members overlap by 55 minutes.
 
-    precipitation → list[float | None], metadata → list[ProductMetadata | None],
-    both indexed:
+    data and metadata are keyed by:
 
-    * ``0`` / ``1`` / ``2`` — the non-overlapping hours: leads 0 / 60 / 120.
-    * ``3`` — the wettest rolling hour wholly in the future, with the full
-      25-point rolling-hour series as ``rolling_1h`` on its metadata. Only
-      filled with the ``full_rolling_series`` option on, since it needs all 25
-      members decoded; otherwise ``None`` and RV provides the sensor (see
-      RadvorRV).
-    * ``4`` — the whole 120-minute forecast: leads 60 + 120, so it is exactly
-      the sum of the two forecast sensors. ``None`` unless both are present.
+    * ``last_60`` / ``next_60`` / ``next_60_120`` — the non-overlapping hours:
+      leads 0 / 60 / 120.
+    * ``peak_1h`` — the wettest rolling hour wholly in the future, with the
+      full 25-point rolling-hour series as ``rolling_1h`` on its metadata.
+      Only filled with the ``full_rolling_series`` option on, since it needs
+      all 25 members decoded; otherwise ``None`` and RV provides the sensor
+      (see RadvorRV).
+    * ``next_120`` — the whole 120-minute forecast: leads 60 + 120, so it is
+      exactly the sum of the two forecast sensors. ``None`` unless both are
+      present.
     """
 
     PRODUCT_KEY = "rs"
@@ -331,7 +341,7 @@ class RadvorRS(RadvorProduct):
         """Whether this entry decodes every member for the rolling-hour series."""
         return self.options.full_rolling_series
 
-    async def _fetch_and_parse(self, ts: datetime) -> tuple[list, list]:
+    async def _fetch_and_parse(self, ts: datetime) -> Payload:
         """Fetch the members this entry decodes, then decode them off the loop.
 
         All 25 for the full rolling series, so the whole archive; otherwise
@@ -342,13 +352,11 @@ class RadvorRS(RadvorProduct):
         members = await self._async_read_members(ts, RS_HOURLY_LEADS)
         return await self.hass.async_add_executor_job(self._parse_members, members, ts)
 
-    def _parse(self, content: bytes, ts: datetime) -> tuple[list, list]:
+    def _parse(self, content: bytes, ts: datetime) -> Payload:
         """Derive the RS entity payloads from a whole tar (blocking)."""
         return self._parse_members(_tar_members(content, self._prefix(ts), LEADS), ts)
 
-    def _parse_members(
-        self, members: dict[str, bytes], ts: datetime
-    ) -> tuple[list, list]:
+    def _parse_members(self, members: dict[str, bytes], ts: datetime) -> Payload:
         """Derive the RS entity payloads from its members' bytes (blocking)."""
         full = self.full_rolling_series
         cells = _decode_cells(
@@ -364,12 +372,21 @@ class RadvorRS(RadvorProduct):
             for lead, cell in cells.items()
         }
 
-        data = [cells[lead][0] if cells[lead] else None for lead in RS_HOURLY_LEADS]
-        metadata = [per_lead[lead] for lead in RS_HOURLY_LEADS]
-        next_120 = _next_120(data[1], data[2], metadata[1], metadata[2])
+        data: dict[str, Any] = {
+            key: cells[lead][0] if cells[lead] else None
+            for key, lead in _RS_HOURS.items()
+        }
+        metadata = {key: per_lead[lead] for key, lead in _RS_HOURS.items()}
+        data[KEY_NEXT_120], metadata[KEY_NEXT_120] = _next_120(
+            data[KEY_NEXT_60],
+            data[KEY_NEXT_60_120],
+            metadata[KEY_NEXT_60],
+            metadata[KEY_NEXT_60_120],
+        )
+        data[KEY_PEAK_1H] = metadata[KEY_PEAK_1H] = None
 
         if not full:
-            return data + [None, next_120[0]], metadata + [None, next_120[1]]
+            return data, metadata
 
         sums = [_mm(cells[lead][0]) if cells[lead] else None for lead in LEADS]
         windows = [
@@ -377,8 +394,10 @@ class RadvorRS(RadvorProduct):
             for lead in LEADS
         ]
         base = next((m for m in per_lead.values() if m is not None), None)
-        peak, peak_meta = _peak_hour_payload(sums, windows, LEADS, base)
-        return data + [peak, next_120[0]], metadata + [peak_meta, next_120[1]]
+        data[KEY_PEAK_1H], metadata[KEY_PEAK_1H] = _peak_hour_payload(
+            sums, windows, LEADS, base
+        )
+        return data, metadata
 
 
 class RadvorRV(RadvorProduct):
@@ -469,7 +488,7 @@ class RadvorRV(RadvorProduct):
             raise ValueError(f"{prefix} analysis ends at {end}, not {step_end}")
         return _mm(cell[0])
 
-    def _parse(self, content: bytes, ts: datetime) -> tuple[dict, dict]:
+    def _parse(self, content: bytes, ts: datetime) -> Payload:
         """Derive the RV entity payloads from the tar bytes (blocking)."""
         prefix = self._prefix(ts)
         cells = _decode_cells(
@@ -616,7 +635,7 @@ class HymecNG(WholeFileProduct):
     class index (rain, snow, freezing rain, hail, …) at 2 m above ground,
     rather than an amount.
 
-    precipitation → str | None (the class label), metadata → ProductMetadata.
+    data[``precipitation_type``] is the class label (None outside coverage).
     """
 
     PRODUCT_KEY = "hymecng"
@@ -636,9 +655,7 @@ class HymecNG(WholeFileProduct):
     # is still informative.
     OVERDUE_GRACE = DEFAULT_OVERDUE_GRACE
 
-    def _parse(
-        self, content: bytes, ts: datetime
-    ) -> tuple[str | None, ProductMetadata]:
+    def _parse(self, content: bytes, ts: datetime) -> Payload:
         """Return the cell's precipitation-type label (blocking)."""
         value, dataset_what, moment_what = read_odim_classification_cell(
             BytesIO(content), *self.index, expected_shape=RS_GRID_SHAPE
@@ -657,7 +674,10 @@ class HymecNG(WholeFileProduct):
             _LOGGER.warning("HymecNG: unexpected class index %s", value)
             precip_type = None
 
-        return precip_type, _odim_metadata(dataset_what)
+        return (
+            {KEY_PRECIPITATION_TYPE: precip_type},
+            {KEY_PRECIPITATION_TYPE: _odim_metadata(dataset_what)},
+        )
 
 
 class RadolanProduct(WholeFileProduct, ABC):
@@ -673,16 +693,14 @@ class RadolanProduct(WholeFileProduct, ABC):
 
     Concrete subclasses provide PRODUCT_KEY and the timing constants; the
     URL follows from the key (radar/urls.py).
-    precipitation -> float, metadata -> ProductMetadata
+    data[``amount``] is the cell's mm (None for no data).
     """
 
     # rw/rw_10min and sf/sf_2350 read the same files (small, ~30 KB).
     SHARES_FILES = True
 
-    def _parse(
-        self, content: bytes, ts: datetime
-    ) -> tuple[float | None, ProductMetadata]:
-        """Return (scalar_value, ProductMetadata) from the HDF5 bytes (blocking).
+    def _parse(self, content: bytes, ts: datetime) -> Payload:
+        """Return the cell's amount and its ProductMetadata (blocking).
 
         The value is ``None`` where the cell holds no data (radar outage, masked
         cell, outside coverage), as for RS/RV/HymecNG: the reader returns NaN
@@ -691,7 +709,7 @@ class RadolanProduct(WholeFileProduct, ABC):
         value, what = read_odim_composite_cell(
             BytesIO(content), *self.index, expected_shape=RS_GRID_SHAPE
         )
-        return _nan_to_none(value), _odim_metadata(what)
+        return {KEY_AMOUNT: _nan_to_none(value)}, {KEY_AMOUNT: _odim_metadata(what)}
 
 
 class RadolanRW(RadolanProduct):

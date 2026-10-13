@@ -13,6 +13,7 @@ from typing import Any
 
 from homeassistant.helpers.restore_state import ExtraStoredData
 
+from .const import KEY_AMOUNT
 from .radar.isotime import iso, parse_utc
 
 
@@ -32,21 +33,21 @@ class DryStreakExtraData(ExtraStoredData):
         return cls(dry_since=parse_utc(restored.get("dry_since")))
 
 
-def scalar_reading(
+def amount_reading(
     coordinator: Any,
 ) -> tuple[float | None, datetime | None, datetime | None]:
-    """Return (value, data_start, data_end) from a scalar RADOLAN coordinator.
+    """Return (value, data_start, data_end) of a RADOLAN coordinator's amount.
 
     Yields (None, None, None) when the coordinator or its data is missing.
     """
     cdata = getattr(coordinator, "data", None) if coordinator else None
-    if cdata is None or cdata.data is None:
+    if cdata is None or (value := cdata.data.get(KEY_AMOUNT)) is None:
         return (None, None, None)
 
-    meta = cdata.metadata
+    meta = cdata.metadata.get(KEY_AMOUNT)
 
     return (
-        float(cdata.data),
+        float(value),
         getattr(meta, "data_start", None),
         getattr(meta, "data_end", None),
     )

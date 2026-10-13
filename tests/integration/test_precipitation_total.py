@@ -76,9 +76,9 @@ def _make_total_sensor(
     sensor.async_write_ha_state = lambda: None
     sensor.coordinator = SimpleNamespace(
         curr_release=release,
-        data=None if release is None else CoordinatorData(data=value, metadata={}),
+        data=None if release is None else CoordinatorData({"amount": value}, {}),
         grid=RW_GRID,
-        async_fetch_release=AsyncMock(return_value=CoordinatorData(1.0, {})),
+        async_fetch_release=AsyncMock(return_value=CoordinatorData({"amount": 1.0}, {})),
         config_entry=SimpleNamespace(async_create_background_task=_create_task),
     )
 
@@ -350,7 +350,7 @@ async def test_backfill_keeps_a_failed_release_pending():
     sensor._pending = list(missed)
     sensor._backfilling = True
     sensor.coordinator.async_fetch_release = AsyncMock(
-        side_effect=[OSError("not there yet"), CoordinatorData(1.5, {})]
+        side_effect=[OSError("not there yet"), CoordinatorData({"amount": 1.5}, {})]
     )
 
     await sensor._async_backfill()
@@ -386,7 +386,7 @@ async def test_release_without_data_leaves_the_list_and_adds_nothing():
     sensor, _ = _make_total_sensor(total=10.0, last_release=RELEASE)
     sensor._pending = [RELEASE - timedelta(hours=1)]
     sensor.coordinator.async_fetch_release = AsyncMock(
-        return_value=CoordinatorData(None, {})
+        return_value=CoordinatorData({"amount": None}, {})
     )
 
     await sensor._async_backfill()
@@ -455,7 +455,7 @@ async def test_restart_resumes_a_pending_backfill(hass: HomeAssistant, freezer) 
     )
     entry.add_to_hass(hass)
 
-    rw_value, _ = WORKING_PRODUCTS[RadolanRW]
+    rw_value = WORKING_PRODUCTS[RadolanRW][0]["amount"]
     with _patched_products():
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
@@ -549,7 +549,7 @@ async def test_restart_restores_total_and_backfills_the_gap(
     )
     entry.add_to_hass(hass)
 
-    rw_value, _ = WORKING_PRODUCTS[RadolanRW]
+    rw_value = WORKING_PRODUCTS[RadolanRW][0]["amount"]
     with _patched_products():
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()

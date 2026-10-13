@@ -358,10 +358,10 @@ async def test_successful_update_stops_fast_polling():
         assert delays == [60]
         unsub = coord._fast_poll_unsub
 
-        coord._fetch_and_parse = AsyncMock(return_value=(3.2, {}))
+        coord._fetch_and_parse = AsyncMock(return_value=({"amount": 3.2}, {}))
         result = await coord._async_update_data()
 
-    assert result.data == 3.2
+    assert result.data == {"amount": 3.2}
     assert coord.curr_release == datetime(2025, 6, 1, 12, 0, tzinfo=UTC)
     unsub.assert_called_once_with()
     assert coord._fast_poll_unsub is None

@@ -312,6 +312,27 @@ The base the next three PRs stand on. *(TD 1, 3, 6, 10, 18; S-altitude 2, 6, 9, 
   special case, and the "data and metadata happen to have the same shape" coupling.
 - Fix the type gaps (HymecNG `str`, `None` in metadata lists) along the way.
 
+**Step 7 outcome (done, 1 commit).**
+- Every product returns `Payload` = two dicts keyed by the same sub-keys
+  (`KEY_*` in `const.py`: RS `last_60`/`next_60`/`next_60_120`/`next_120`/
+  `peak_1h`, RADOLAN `amount`, HymecNG `precipitation_type`; RV keeps its
+  own). `CoordinatorData` is typed `dict[str, Any]` /
+  `dict[str, ProductMetadata | None]`, which covers the HymecNG `str` and the
+  `None` metadata gaps.
+- Descriptions name a `sub_key` instead of an `access_fn`; the RS indices,
+  the per-description lambdas and `scalar_reading` are gone. The dry streak
+  takes its sub-key from `_PAST_HOUR_KEY` by source; the totals and
+  backfill read `amount`. `countable` stays: it filters NaN and negative
+  values, which is not shape-related.
+- *Deviation:* two parallel dicts rather than `Mapping[str, Reading(value,
+  meta)]`. RV's `attrs_fn`s read sibling values (`start_in`, `start_at`, ...)
+  from the whole data dict, and a value may have no metadata
+  (`rain_events`). Wrapping each value would have touched every RV
+  description and the totals' restore path for no gain. The shared shape is
+  now a stated contract (one sub-key indexes both) rather than a coincidence.
+- No user-visible change: unique ids, states and attributes are as before
+  (the integration tier's setup and sensor tests assert them).
+
 ## PR 8 — URLs, scripts, live tiers, duplicate fetches
 
 *(TD 8, 12; S-altitude 1, 10; S-reuse 12, 15; S-efficiency 8)*

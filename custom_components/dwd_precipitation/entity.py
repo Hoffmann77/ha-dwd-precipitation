@@ -20,9 +20,9 @@ class DwdEntityDescriptionMixin:
     """What a DWD entity reads, for every platform's entity description."""
 
     product_key: str
-    # Picks this entity's value out of the coordinator's data (and its
-    # ProductMetadata out of the metadata, which has the same shape).
-    access_fn: Callable[[Any], Any]
+    # The key of this entity's value in the coordinator's data, and of its
+    # ProductMetadata in the metadata (see CoordinatorData).
+    sub_key: str
     # Companion attributes computed from the data payload. Always exposed
     # (not gated behind the diagnostic-attributes option).
     attrs_fn: Callable[[Any], dict[str, Any]] | None = None
@@ -87,15 +87,15 @@ class DwdCoordinatorEntity(CoordinatorEntity[BaseProductUpdateCoordinator]):
 
     def _value(self) -> Any:
         """Return what the description picks from the data, None without data."""
-        if self.coordinator.data is None or self.coordinator.data.data is None:
+        if self.coordinator.data is None:
             return None
-        return self.entity_description.access_fn(self.coordinator.data.data)
+        return self.coordinator.data.data.get(self.entity_description.sub_key)
 
     def _metadata(self) -> ProductMetadata | None:
         """Return this entity's ProductMetadata, if the coordinator has it."""
-        if self.coordinator.data is None or not self.coordinator.data.metadata:
+        if self.coordinator.data is None:
             return None
-        return self.entity_description.access_fn(self.coordinator.data.metadata)
+        return self.coordinator.data.metadata.get(self.entity_description.sub_key)
 
     def _described_attributes(self) -> dict[str, Any]:
         """Return the description's companion and metadata attributes."""
@@ -105,7 +105,7 @@ class DwdCoordinatorEntity(CoordinatorEntity[BaseProductUpdateCoordinator]):
 
         description = self.entity_description
         data = self.coordinator.data.data
-        if description.attrs_fn is not None and data is not None:
+        if description.attrs_fn is not None:
             attrs.update(
                 {k: plain_value(v) for k, v in description.attrs_fn(data).items()}
             )

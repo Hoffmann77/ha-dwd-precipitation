@@ -117,3 +117,14 @@ PRECIP_TYPE_BY_INDEX = (
     "large_hail",         # 10 LARGE_HAIL
 )
 PRECIP_TYPE_OPTIONS = list(PRECIP_TYPE_BY_INDEX)
+
+# Sub-keys of the coordinator payloads: each product's data and metadata are
+# dicts keyed by these (RV's are its own, see RadvorRV), and every entity
+# description names the one it shows.
+KEY_LAST_60 = "last_60"          # RS _000: the past hour
+KEY_NEXT_60 = "next_60"          # RS _060
+KEY_NEXT_60_120 = "next_60_120"  # RS _120
+KEY_NEXT_120 = "next_120"        # RS _060 + _120
+KEY_PEAK_1H = "peak_1h"          # RS (full series) or RV: wettest future hour
+KEY_AMOUNT = "amount"            # RADOLAN: mm in the analysis window
+KEY_PRECIPITATION_TYPE = "precipitation_type"  # HymecNG

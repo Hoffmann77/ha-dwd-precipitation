@@ -170,14 +170,21 @@ class ProductMetadata:
 
 @dataclass
 class CoordinatorData:
-    """Single-product coordinator payload.
+    """One release of a product: its values and their metadata, by sub-key.
 
-    ``data``/``metadata`` are a scalar+``ProductMetadata`` for RADOLAN products,
-    parallel lists for RS, or parallel dicts keyed by entity sub-key for RV.
+    Every product keys both dicts the same way (const.KEY_*: RS ``last_60``,
+    ``next_60``, ...; RADOLAN ``amount``; HymecNG ``precipitation_type``; RV's
+    own keys), and every entity description names the sub-key it shows. A
+    value may come without metadata (RV's ``rain_events``), and either may be
+    None (no data for the cell).
     """
 
-    data: float | None | list[float | None] | dict[str, Any]
-    metadata: ProductMetadata | list[ProductMetadata] | dict[str, ProductMetadata]
+    data: dict[str, Any]
+    metadata: dict[str, ProductMetadata | None]
+
+
+# What a product's fetch returns: CoordinatorData's two dicts.
+type Payload = tuple[dict[str, Any], dict[str, ProductMetadata | None]]
 
 
 class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
@@ -569,10 +576,11 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
         return get_rs_grid_index(*self.coords)
 
     @abstractmethod
-    async def _fetch_and_parse(self, ts: datetime) -> tuple[Any, Any]:
+    async def _fetch_and_parse(self, ts: datetime) -> Payload:
         """Fetch and parse the product for release timestamp ts.
 
-        Return (precipitation, metadata). Must raise on any failure — the
+        Return (data, metadata), two dicts keyed by the same sub-keys (see
+        CoordinatorData). Must raise on any failure — the
         base class owns the stale/retry logic in _async_update_data. Must
         have no side effects: the totals' backfill fetches past releases
         through it (async_fetch_release). What a newly adopted release should

@@ -103,20 +103,20 @@ async def test_rs_fetch_derives_base_source_timestamp_and_window() -> None:
     data, meta, _ = await _rs_fetch(ts, {lead: float(lead) for lead in range(0, 121, 5)})
 
     # The three non-overlapping hours come from leads 0 / 60 / 120.
-    assert data[:3] == [0.0, 60.0, 120.0]
+    assert [data["last_60"], data["next_60"], data["next_60_120"]] == [0.0, 60.0, 120.0]
     base = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
-    assert [m.source_timestamp for m in meta] == [base] * 5
-    assert [m.lead_time_minutes for m in meta[:3]] == [0, 60, 120]
-    assert meta[0].data_start == datetime(2026, 5, 18, 15, 0, tzinfo=timezone.utc)
-    assert meta[0].data_end == base
-    assert meta[2].data_start == datetime(2026, 5, 18, 17, 0, tzinfo=timezone.utc)
-    assert meta[2].data_end == datetime(2026, 5, 18, 18, 0, tzinfo=timezone.utc)
+    assert [m.source_timestamp for m in meta.values()] == [base] * 5
+    assert [m.lead_time_minutes for m in (meta["last_60"], meta["next_60"], meta["next_60_120"])] == [0, 60, 120]
+    assert meta["last_60"].data_start == datetime(2026, 5, 18, 15, 0, tzinfo=timezone.utc)
+    assert meta["last_60"].data_end == base
+    assert meta["next_60_120"].data_start == datetime(2026, 5, 18, 17, 0, tzinfo=timezone.utc)
+    assert meta["next_60_120"].data_end == datetime(2026, 5, 18, 18, 0, tzinfo=timezone.utc)
 
     # The whole 120-minute forecast is the two forecast hours added.
-    assert data[4] == pytest.approx(180.0)
-    assert meta[4].lead_time_minutes == 120
-    assert meta[4].data_start == base
-    assert meta[4].data_end == datetime(2026, 5, 18, 18, 0, tzinfo=timezone.utc)
+    assert data["next_120"] == pytest.approx(180.0)
+    assert meta["next_120"].lead_time_minutes == 120
+    assert meta["next_120"].data_start == base
+    assert meta["next_120"].data_end == datetime(2026, 5, 18, 18, 0, tzinfo=timezone.utc)
 
 
 @pytest.mark.asyncio
@@ -131,8 +131,8 @@ async def test_rs_peak_hour_and_rolling_series() -> None:
 
     # Lead 0 (the past hour, 30 mm) is not a forecast and is excluded; the tie
     # between leads 90 and 95 goes to the earlier window.
-    assert data[3] == pytest.approx(18.0)
-    peak = meta[3]
+    assert data["peak_1h"] == pytest.approx(18.0)
+    peak = meta["peak_1h"]
     assert peak.lead_time_minutes == 90
     assert peak.data_start == datetime(2026, 5, 18, 16, 30, tzinfo=timezone.utc)
     assert peak.data_end == datetime(2026, 5, 18, 17, 30, tzinfo=timezone.utc)
@@ -148,7 +148,7 @@ async def test_rs_peak_hour_and_rolling_series() -> None:
     }
     assert series[18]["value"] == pytest.approx(18.0)  # lead 90
     # The fixed-hour members keep no series of their own.
-    assert all(m.rolling_1h is None for m in meta[:3])
+    assert all(m.rolling_1h is None for m in (meta["last_60"], meta["next_60"], meta["next_60_120"]))
 
 
 @pytest.mark.asyncio
@@ -157,11 +157,11 @@ async def test_rs_dry_forecast_has_no_peak_window() -> None:
     ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
     data, meta, _ = await _rs_fetch(ts, {lead: 0.0 for lead in range(0, 121, 5)})
 
-    assert data[3] == 0.0
-    assert meta[3].data_start is None
-    assert meta[3].data_end is None
-    assert meta[3].lead_time_minutes is None
-    assert len(meta[3].rolling_1h) == 25
+    assert data["peak_1h"] == 0.0
+    assert meta["peak_1h"].data_start is None
+    assert meta["peak_1h"].data_end is None
+    assert meta["peak_1h"].lead_time_minutes is None
+    assert len(meta["peak_1h"].rolling_1h) == 25
 
 
 @pytest.mark.asyncio
@@ -172,9 +172,11 @@ async def test_rs_without_option_decodes_only_the_three_hours() -> None:
     data, meta, decoded = await _rs_fetch(ts, values, full=False)
 
     assert decoded == [0, 60, 120]
-    assert data == [0.0, 60.0, 120.0, None, 180.0]
-    assert meta[3] is None
-    assert [m.lead_time_minutes for m in meta[:3]] == [0, 60, 120]
+    assert data == {
+        "last_60": 0.0, "next_60": 60.0, "next_60_120": 120.0, "peak_1h": None, "next_120": 180.0,
+    }
+    assert meta["peak_1h"] is None
+    assert [m.lead_time_minutes for m in (meta["last_60"], meta["next_60"], meta["next_60_120"])] == [0, 60, 120]
 
 
 
@@ -205,7 +207,7 @@ async def test_rs_range_fallback_is_said_once_and_its_end_once(caplog) -> None:
         for server in (ignores_ranges, ignores_ranges, ignores_ranges, serves_ranges):
             with patch.object(products, "async_get", side_effect=server):
                 data, _ = await coord._fetch_and_parse(ts)
-            assert data[:3] == [0.0, 60.0, 120.0]  # values are unaffected
+            assert [data["last_60"], data["next_60"], data["next_60_120"]] == [0.0, 60.0, 120.0]  # values are unaffected
 
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert len(warnings) == 1
@@ -241,7 +243,7 @@ async def test_rs_without_option_reads_the_hours_by_range() -> None:
     ):
         data, _ = await coord._fetch_and_parse(ts)
 
-    assert data[:3] == [0.0, 60.0, 120.0]
+    assert [data["last_60"], data["next_60"], data["next_60_120"]] == [0.0, 60.0, 120.0]
     # The test archive is tiny, so the first window already holds all three.
     assert len(calls) == 1
     assert calls[0]["Range"].startswith("bytes=0-")
@@ -457,7 +459,8 @@ async def test_hymecng_fetch_maps_class_index_to_label() -> None:
     with patch.object(products, "async_get", new=get_mock):
         data, meta = await coord._fetch_and_parse(ts)
 
-    assert data == "snow"
+    assert data == {"precipitation_type": "snow"}
+    meta = meta["precipitation_type"]
     assert meta.source_product == "HymecNG_top_view"
     assert meta.source_timestamp == ts
     assert meta.data_end == ts
@@ -500,7 +503,7 @@ async def test_hymecng_class_and_sentinel_mapping(class_value, expected) -> None
     ):
         data, _meta = await coord._fetch_and_parse(ts)
 
-    assert data == expected
+    assert data == {"precipitation_type": expected}
 
 
 def _radolan_what(product: str, end: datetime, hours: int) -> dict:
@@ -533,7 +536,8 @@ async def test_radolan_reads_the_hdf5_edition_and_its_window(cls, product, hours
     assert reader.call_args.args[1:] == coord.index
     assert reader.call_args.kwargs["expected_shape"] == RS_GRID_SHAPE
     assert coord.index == get_rs_grid_index(*coord.coords)
-    assert value == pytest.approx(1.7)
+    assert value == {"amount": pytest.approx(1.7)}
+    meta = meta["amount"]
     assert meta.source_product == product
     assert meta.source_timestamp == meta.data_end == ts
     assert meta.data_start == ts - timedelta(hours=hours)
@@ -555,7 +559,7 @@ async def test_radolan_nodata_cell_reads_as_none(cell_value, expected) -> None:
     ):
         value, _meta = await coord._fetch_and_parse(ts)
 
-    assert value == (pytest.approx(expected) if expected is not None else None)
+    assert value == {"amount": pytest.approx(expected) if expected is not None else None}
 
 
 _FIXTURES = Path(__file__).parent.parent / "fixtures"
@@ -580,7 +584,8 @@ async def test_radolan_real_hdf5_file(coords, expected) -> None:
     ):
         value, meta = await coord._fetch_and_parse(datetime(2026, 10, 12, 12, 50, tzinfo=timezone.utc))
 
-    assert value == expected
+    assert value == {"amount": expected}
+    meta = meta["amount"]
     assert meta.source_product == "RW"
     assert meta.data_end == datetime(2026, 10, 12, 12, 50, tzinfo=timezone.utc)
     assert meta.data_start == datetime(2026, 10, 12, 11, 50, tzinfo=timezone.utc)
@@ -630,19 +635,19 @@ async def test_rv_peak_hour_matches_rs_for_the_same_rain() -> None:
     rv_data, rv_meta = await _rv_fetch(ts, rv)
     rs_data, rs_meta, _ = await _rs_fetch(ts, rs)
 
-    assert rv_data["peak_1h"] == pytest.approx(rs_data[3])
+    assert rv_data["peak_1h"] == pytest.approx(rs_data["peak_1h"])
     # Wettest hour ends at +95: steps +40..+95 catch the tail of the first
     # shower too (0.9 + 0.3), beating the window ending at +100 (5.6 mm).
     assert rv_data["peak_1h"] == pytest.approx(0.9 + 0.3 + 0.6 + 1.7 + 2.2)
     for attr in ("lead_time_minutes", "data_start", "data_end"):
-        assert getattr(rv_meta["peak_1h"], attr) == getattr(rs_meta[3], attr), attr
+        assert getattr(rv_meta["peak_1h"], attr) == getattr(rs_meta["peak_1h"], attr), attr
     assert rv_meta["peak_1h"].lead_time_minutes == 95
     assert rv_meta["peak_1h"].data_start == datetime(2026, 5, 18, 16, 35, tzinfo=timezone.utc)
     assert rv_meta["peak_1h"].data_end == datetime(2026, 5, 18, 17, 35, tzinfo=timezone.utc)
 
     # RV's series is the 13 wholly-future hours, point for point equal to RS's.
     rv_series = rv_meta["peak_1h"].rolling_1h
-    rs_series = {p["lead"]: p for p in rs_meta[3].rolling_1h}
+    rs_series = {p["lead"]: p for p in rs_meta["peak_1h"].rolling_1h}
     assert [p["lead"] for p in rv_series] == list(range(60, 121, 5))
     assert len(rs_series) == 25
     for point in rv_series:
