@@ -7,7 +7,6 @@ the last test runs a real entry setup to cover restore and backfill end to end.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
@@ -55,33 +54,40 @@ SF_2350_GRID = ReleaseGrid(
 )
 
 
-def _make_total_sensor(
-    *, release=None, value=None, total=None, last_release=None, desc=RW_DESC
-) -> tuple[PrecipitationTotalSensor, list]:
-    """Return a total sensor on a stub RW coordinator, and its started tasks."""
-    tasks: list = []
+@pytest.fixture
+def make_total_sensor(make_coordinator):
+    """Return a factory: the RW total sensor on an RW coordinator.
 
-    def _create_task(_hass, coro, _name):
-        tasks.append(coro)
+    ``release``/``value`` are the coordinator's current release and reading;
+    ``total``/``last_release``/``pending`` a restored state, given to the
+    sensor the way a restart does. The factory returns the sensor and the
+    background tasks it starts, as coroutines a test awaits or closes.
+    """
 
-    sensor = PrecipitationTotalSensor.__new__(PrecipitationTotalSensor)
-    sensor.entity_description = desc
-    sensor.entity_id = "sensor.home_precipitation_total"
-    sensor.hass = None
-    sensor._total = total
-    sensor._last_release = last_release
-    sensor._pending = []
-    sensor._backfilling = False
-    sensor.async_write_ha_state = lambda: None
-    sensor.coordinator = SimpleNamespace(
-        curr_release=release,
-        data=None if release is None else CoordinatorData({"amount": value}, {}),
-        grid=RW_GRID,
-        async_fetch_release=AsyncMock(return_value=CoordinatorData({"amount": 1.0}, {})),
-        config_entry=SimpleNamespace(async_create_background_task=_create_task),
-    )
+    def _make(*, release=None, value=None, total=None, last_release=None, pending=()):
+        coordinator = make_coordinator(
+            RadolanRW,
+            curr_release=release,
+            data=None if release is None else CoordinatorData({"amount": value}, {}),
+        )
+        coordinator.async_fetch_release = AsyncMock(
+            return_value=CoordinatorData({"amount": 1.0}, {})
+        )
+        tasks: list = []
+        coordinator.config_entry.async_create_background_task = (
+            lambda _hass, coro, _name: tasks.append(coro)
+        )
+        sensor = PrecipitationTotalSensor(coordinator, RW_DESC)
+        # Not added to hass: an id for the log lines, and no state to write.
+        sensor.entity_id = "sensor.home_precipitation_total"
+        sensor.async_write_ha_state = lambda: None
+        if total is not None:
+            sensor._restore(
+                PrecipitationTotalExtraData(total, last_release, list(pending))
+            )
+        return sensor, tasks
 
-    return sensor, tasks
+    return _make
 
 
 def _close(tasks: list) -> None:
@@ -237,8 +243,8 @@ def test_missed_daily_releases_follow_local_time_across_dst():
 RELEASE = datetime(2026, 7, 3, 11, 0, tzinfo=UTC)
 
 
-def test_first_release_sets_starting_point_only():
-    sensor, tasks = _make_total_sensor(release=RELEASE, value=2.5)
+async def test_first_release_sets_starting_point_only(make_total_sensor):
+    sensor, tasks = make_total_sensor(release=RELEASE, value=2.5)
 
     sensor._count_new_release()
 
@@ -248,16 +254,16 @@ def test_first_release_sets_starting_point_only():
     assert tasks == []
 
 
-def test_no_data_yet_is_unavailable():
-    sensor, _ = _make_total_sensor()
+async def test_no_data_yet_is_unavailable(make_total_sensor):
+    sensor, _ = make_total_sensor()
     sensor._count_new_release()
 
     assert sensor.native_value is None
     assert not sensor.available
 
 
-def test_next_release_is_added():
-    sensor, tasks = _make_total_sensor(
+async def test_next_release_is_added(make_total_sensor):
+    sensor, tasks = make_total_sensor(
         release=RELEASE, value=2.5, total=10.0, last_release=RELEASE - timedelta(hours=1)
     )
 
@@ -268,8 +274,8 @@ def test_next_release_is_added():
     assert tasks == []
 
 
-def test_same_release_is_counted_once():
-    sensor, _ = _make_total_sensor(
+async def test_same_release_is_counted_once(make_total_sensor):
+    sensor, _ = make_total_sensor(
         release=RELEASE, value=2.5, total=10.0, last_release=RELEASE - timedelta(hours=1)
     )
 
@@ -279,9 +285,9 @@ def test_same_release_is_counted_once():
     assert sensor.native_value == approx(12.5)
 
 
-def test_equal_consecutive_values_are_both_counted():
+async def test_equal_consecutive_values_are_both_counted(make_total_sensor):
     """Keyed on the release, not on the value changing."""
-    sensor, _ = _make_total_sensor(
+    sensor, _ = make_total_sensor(
         release=RELEASE, value=0.4, total=0.0, last_release=RELEASE - timedelta(hours=1)
     )
     sensor._count_new_release()
@@ -292,8 +298,8 @@ def test_equal_consecutive_values_are_both_counted():
     assert sensor.native_value == approx(0.8)
 
 
-def test_unusable_reading_is_skipped_but_marked_counted():
-    sensor, _ = _make_total_sensor(
+async def test_unusable_reading_is_skipped_but_marked_counted(make_total_sensor):
+    sensor, _ = make_total_sensor(
         release=RELEASE,
         value=float("nan"),
         total=10.0,
@@ -306,8 +312,8 @@ def test_unusable_reading_is_skipped_but_marked_counted():
     assert sensor._last_release == RELEASE
 
 
-def test_gap_starts_a_backfill_of_the_missed_releases():
-    sensor, tasks = _make_total_sensor(
+async def test_gap_starts_a_backfill_of_the_missed_releases(make_total_sensor):
+    sensor, tasks = make_total_sensor(
         release=RELEASE, value=2.5, total=10.0, last_release=RELEASE - timedelta(hours=3)
     )
 
@@ -320,10 +326,10 @@ def test_gap_starts_a_backfill_of_the_missed_releases():
     _close(tasks)
 
 
-def test_release_overlapping_an_old_grid_total_is_not_counted():
+async def test_release_overlapping_an_old_grid_total_is_not_counted(make_total_sensor):
     """Upgraded from RW's HH:50 grid: 11:00 overlaps 10:50, 12:00 does not."""
     old = datetime(2026, 7, 3, 10, 50, tzinfo=UTC)
-    sensor, tasks = _make_total_sensor(release=RELEASE, value=2.5)
+    sensor, tasks = make_total_sensor(release=RELEASE, value=2.5)
     sensor._restore(PrecipitationTotalExtraData(total=10.0, last_release=old))
 
     # Restored onto the new grid: 11:00 stands for it, so it is not counted.
@@ -342,17 +348,17 @@ def test_release_overlapping_an_old_grid_total_is_not_counted():
 
 
 @pytest.mark.asyncio
-async def test_backfill_keeps_a_failed_release_pending():
+async def test_backfill_keeps_a_failed_release_pending(make_total_sensor):
     """A failed fetch is not lost: it stays on the list for the next round."""
-    sensor, _ = _make_total_sensor(total=10.0, last_release=RELEASE)
     missed = [RELEASE - timedelta(hours=2), RELEASE - timedelta(hours=1)]
-    sensor._pending = list(missed)
-    sensor._backfilling = True
+    sensor, tasks = make_total_sensor(total=10.0, last_release=RELEASE, pending=missed)
     sensor.coordinator.async_fetch_release = AsyncMock(
         side_effect=[OSError("not there yet"), CoordinatorData({"amount": 1.5}, {})]
     )
 
-    await sensor._async_backfill()
+    sensor._start_backfill()  # what a restart does
+    assert len(tasks) == 1
+    await tasks[0]
 
     assert sensor.native_value == approx(11.5)
     fetched = sensor.coordinator.async_fetch_release.call_args_list
@@ -364,11 +370,14 @@ async def test_backfill_keeps_a_failed_release_pending():
 
 
 @pytest.mark.asyncio
-async def test_failed_release_is_retried_with_the_next_release():
-    sensor, tasks = _make_total_sensor(
-        release=RELEASE, value=2.5, total=10.0, last_release=RELEASE - timedelta(hours=1)
+async def test_failed_release_is_retried_with_the_next_release(make_total_sensor):
+    sensor, tasks = make_total_sensor(
+        release=RELEASE,
+        value=2.5,
+        total=10.0,
+        last_release=RELEASE - timedelta(hours=1),
+        pending=[RELEASE - timedelta(hours=3)],
     )
-    sensor._pending = [RELEASE - timedelta(hours=3)]
 
     sensor._count_new_release()
 
@@ -380,22 +389,24 @@ async def test_failed_release_is_retried_with_the_next_release():
 
 
 @pytest.mark.asyncio
-async def test_release_without_data_leaves_the_list_and_adds_nothing():
+async def test_release_without_data_leaves_the_list_and_adds_nothing(make_total_sensor):
     """A file DWD serves without data for the cell is done, not retried."""
-    sensor, _ = _make_total_sensor(total=10.0, last_release=RELEASE)
-    sensor._pending = [RELEASE - timedelta(hours=1)]
+    sensor, tasks = make_total_sensor(
+        total=10.0, last_release=RELEASE, pending=[RELEASE - timedelta(hours=1)]
+    )
     sensor.coordinator.async_fetch_release = AsyncMock(
         return_value=CoordinatorData({"amount": None}, {})
     )
 
-    await sensor._async_backfill()
+    sensor._start_backfill()
+    await tasks[0]
 
     assert sensor.native_value == approx(10.0)
     assert sensor._pending == []
 
 
-def test_only_one_backfill_runs_at_a_time():
-    sensor, tasks = _make_total_sensor(
+async def test_only_one_backfill_runs_at_a_time(make_total_sensor):
+    sensor, tasks = make_total_sensor(
         release=RELEASE, value=0.0, total=0.0, last_release=RELEASE - timedelta(hours=3)
     )
     sensor._count_new_release()
@@ -412,11 +423,14 @@ def test_only_one_backfill_runs_at_a_time():
     _close(tasks)
 
 
-def test_pending_too_old_to_fetch_is_given_up(caplog):
-    sensor, tasks = _make_total_sensor(
-        release=RELEASE, value=0.0, total=0.0, last_release=RELEASE - timedelta(hours=1)
+async def test_pending_too_old_to_fetch_is_given_up(make_total_sensor, caplog):
+    sensor, tasks = make_total_sensor(
+        release=RELEASE,
+        value=0.0,
+        total=0.0,
+        last_release=RELEASE - timedelta(hours=1),
+        pending=[RELEASE - timedelta(hours=49), RELEASE - timedelta(hours=2)],
     )
-    sensor._pending = [RELEASE - timedelta(hours=49), RELEASE - timedelta(hours=2)]
 
     sensor._count_new_release()
 

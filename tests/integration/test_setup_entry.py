@@ -24,6 +24,7 @@ from pytest import approx
 from custom_components.dwd_precipitation import PRODUCT_CLASSES
 from custom_components.dwd_precipitation.const import CONF_DRY_STREAK_SOURCE, DOMAIN
 from custom_components.dwd_precipitation.coordinator import ProductMetadata
+from custom_components.dwd_precipitation.entity import unique_id_for
 from custom_components.dwd_precipitation.rain_events_tracker import RainEventsTracker
 from custom_components.dwd_precipitation.products import (
     HymecNG,
@@ -188,34 +189,19 @@ async def test_entry_setup_creates_sensors_with_correct_values(
     assert coordinators["rv"].data.data["max_060"] == approx(48.0)
     assert coordinators["hymecng"].data.data["precipitation_type"] == "snow"
 
-    # Resolve entity_id via unique_id (avoids relying on HA's slug logic)
+    # Resolve entity ids via unique ids (avoids relying on HA's slug logic).
     ent_reg = er.async_get(hass)
-    rw_entry = next(
-        e
-        for e in ent_reg.entities.values()
-        if e.domain == "sensor" and e.unique_id.endswith("radolan_rw")
-    )
-    state = hass.states.get(rw_entry.entity_id)
+    state = _state_for(hass, entry, "radolan_rw")
     assert state is not None
     assert float(state.state) == approx(3.2)
 
-    rs_000_entry = next(
-        e
-        for e in ent_reg.entities.values()
-        if e.domain == "sensor" and e.unique_id.endswith("radvor_rs_000")
-    )
-    state = hass.states.get(rs_000_entry.entity_id)
+    state = _state_for(hass, entry, "radvor_rs_000")
     assert state is not None
     assert float(state.state) == approx(1.5)
 
     # The peak-hour sensor reads whichever product the option selects, and
     # carries that product's window and rolling-hour series.
-    peak_entry = next(
-        e
-        for e in ent_reg.entities.values()
-        if e.domain == "sensor" and e.unique_id.endswith("radvor_peak_1h_120")
-    )
-    state = hass.states.get(peak_entry.entity_id)
+    state = _state_for(hass, entry, "radvor_peak_1h_120")
     assert state is not None
     peak, start, end = (
         (6.5, "12:15", "13:15") if full_rolling_series else (4.0, "12:30", "13:30")
@@ -227,12 +213,7 @@ async def test_entry_setup_creates_sensors_with_correct_values(
 
     # The current intensity is the analysis step as mm/h, with that 5-minute
     # window and its raw amount alongside.
-    now_entry = next(
-        e
-        for e in ent_reg.entities.values()
-        if e.domain == "sensor" and e.unique_id.endswith("radvor_rv_intensity_000")
-    )
-    state = hass.states.get(now_entry.entity_id)
+    state = _state_for(hass, entry, "radvor_rv_intensity_000")
     assert state is not None
     assert float(state.state) == approx(2.4)
     assert state.attributes["unit_of_measurement"] == "mm/h"
@@ -262,37 +243,21 @@ async def test_entry_setup_creates_sensors_with_correct_values(
     }
 
     # The two 120-minute sensors: RS's two forecast hours added, RV's peak.
-    assert float(_state_for(hass, "radvor_rs_000_120").state) == approx(2.5)
-    assert float(_state_for(hass, "radvor_rv_max_intensity_000_120").state) == approx(48.0)
+    assert float(_state_for(hass, entry, "radvor_rs_000_120").state) == approx(2.5)
+    assert float(_state_for(hass, entry, "radvor_rv_max_intensity_000_120").state) == approx(48.0)
 
     # The peak-intensity sensor reports the extrapolated mm/h rate.
-    max_060_entry = next(
-        e
-        for e in ent_reg.entities.values()
-        if e.domain == "sensor" and e.unique_id.endswith("radvor_rv_max_intensity_060")
-    )
-    state = hass.states.get(max_060_entry.entity_id)
+    state = _state_for(hass, entry, "radvor_rv_max_intensity_060")
     assert state is not None
     assert float(state.state) == approx(48.0)
 
     # The new binary-sensor platform wires up and reflects rain_within_2h.
-    rain_entry = next(
-        e
-        for e in ent_reg.entities.values()
-        if e.domain == "binary_sensor"
-        and e.unique_id.endswith("radvor_rv_precipitation_expected_120")
-    )
-    state = hass.states.get(rain_entry.entity_id)
+    state = _state_for(hass, entry, "radvor_rv_precipitation_expected_120", "binary_sensor")
     assert state is not None
     assert state.state == "on"
 
     # The HymecNG enum sensor reports the precipitation-type class label.
-    hymec_entry = next(
-        e
-        for e in ent_reg.entities.values()
-        if e.domain == "sensor" and e.unique_id.endswith("hymecng_precipitation_type")
-    )
-    state = hass.states.get(hymec_entry.entity_id)
+    state = _state_for(hass, entry, "hymecng_precipitation_type")
     assert state is not None
     assert state.state == "snow"
 
@@ -364,15 +329,13 @@ def _patched_products(**failures: Exception):
         yield
 
 
-def _state_for(hass: HomeAssistant, unique_id_suffix: str, domain: str = "sensor"):
-    """Return the state of the entity whose unique id ends with the suffix."""
-    entry = next(
-        e
-        for e in er.async_get(hass).entities.values()
-        if e.domain == domain and e.unique_id.endswith(unique_id_suffix)
+def _state_for(hass: HomeAssistant, entry, key: str, domain: str = "sensor"):
+    """Return the state of ``entry``'s entity with description ``key``."""
+    entity_id = er.async_get(hass).async_get_entity_id(
+        domain, DOMAIN, unique_id_for(entry.entry_id, key)
     )
-
-    return hass.states.get(entry.entity_id)
+    assert entity_id is not None, f"no {domain} {key}"
+    return hass.states.get(entity_id)
 
 
 @pytest.mark.parametrize("expected_lingering_timers", [True])
@@ -395,8 +358,8 @@ async def test_one_failing_product_does_not_block_the_entry(
     assert coordinators["hymecng"].last_update_success is False
     assert coordinators["rw"].last_update_success is True
 
-    assert _state_for(hass, "hymecng_precipitation_type").state == "unavailable"
-    assert float(_state_for(hass, "radolan_rw").state) == approx(3.2)
+    assert _state_for(hass, entry, "hymecng_precipitation_type").state == "unavailable"
+    assert float(_state_for(hass, entry, "radolan_rw").state) == approx(3.2)
 
 
 @pytest.mark.parametrize("expected_lingering_timers", [True])
@@ -537,7 +500,7 @@ async def test_sliding_rw_is_built_only_when_used(
         if entity.unique_id.endswith("_radolan_rw_total")
     )
     assert total.coordinator is coordinators["rw"]
-    assert float(_state_for(hass, "radolan_rw").state) == approx(3.2)
+    assert float(_state_for(hass, entry, "radolan_rw").state) == approx(3.2)
 
 
 @pytest.mark.asyncio
@@ -647,7 +610,7 @@ async def test_rain_events_sensor_with_the_option(make_entry, hass: HomeAssistan
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
-    state = _state_for(hass, "radvor_rv_rain_events")
+    state = _state_for(hass, entry, "radvor_rv_rain_events")
     assert state.entity_id == "sensor.home_rain_events"
     assert state.state == "upcoming"
     assert state.attributes["schema"] == 1
@@ -655,7 +618,7 @@ async def test_rain_events_sensor_with_the_option(make_entry, hass: HomeAssistan
     assert state.attributes["options"] == ["none", "upcoming", "ongoing"]
     assert entry.runtime_data.coordinators["rv"]._rain_tracker is not None
 
-    flag = _state_for(hass, "radvor_rv_precipitation_expected_120", "binary_sensor")
+    flag = _state_for(hass, entry, "radvor_rv_precipitation_expected_120", "binary_sensor")
     assert "rain_events" not in flag.attributes
 
 
