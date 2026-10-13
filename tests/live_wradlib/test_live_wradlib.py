@@ -40,6 +40,7 @@ from radar.odim import (  # noqa: E402
     read_odim_composite_cell,
     rs_grid_contains,
 )
+from radar import nowcast  # noqa: E402
 from radar.urls import product_url, radvor_prefix  # noqa: E402
 from tests.live_wradlib import report  # noqa: E402
 from tests.wradlib_ref import (  # noqa: E402
@@ -72,7 +73,7 @@ FIXED_LOCATIONS = {
 LOCATIONS = report.custom_locations() or FIXED_LOCATIONS
 
 # All RADVOR leads (RS rolling hours / RV 5-minute steps).
-LEADS = tuple(range(0, 121, 5))
+LEADS = tuple(nowcast.LEADS)
 
 
 # ---------------------------------------------------------------------------

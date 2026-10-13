@@ -86,7 +86,7 @@ uv run --group unit-test pytest tests
   ```sh
   uv run --group wradlib-comparison python scripts/create_fixture.py
   ```
-- `factories/` holds shared synthetic builders (e.g. `make_odim_h5`, `make_rs_tar`),
+- `factories/` holds shared synthetic builders (e.g. `make_odim_h5`, `make_radvor_tar`, `RangeServer`),
   imported as `from tests.factories.odim import make_odim_h5`.
 
 ## CI workflows

@@ -30,7 +30,8 @@ from custom_components.dwd_precipitation.radar import RS_GRID_SHAPE, get_rs_grid
 from custom_components.dwd_precipitation.rain_events_tracker import RainEventsTracker
 from custom_components.dwd_precipitation.utils import AsyncResponse
 
-from tests.factories.odim import make_hymecng_h5, make_rs_tar, make_rv_tar
+from tests.factories.odim import make_hymecng_h5
+from tests.factories.radvor import LEADS, RangeServer, make_radvor_tar
 
 
 class _FakeHass:
@@ -71,7 +72,7 @@ async def _rs_fetch(ts: datetime, values: dict[int, float], full: bool = True):
     decoded: list[int] = []
 
     def _read(fileobj, _row, _col, **_kw):
-        lead = int(fileobj.getvalue())  # make_rs_tar's payload is the lead
+        lead = int(fileobj.getvalue())  # make_radvor_tar's payload is the lead
         decoded.append(lead)
         return np.float32(values[lead]), _rs_what(ts, lead)
 
@@ -81,7 +82,7 @@ async def _rs_fetch(ts: datetime, values: dict[int, float], full: bool = True):
         patch.object(
             products,
             "async_get",
-            new=AsyncMock(return_value=AsyncResponse(content=make_rs_tar(ts))),
+            new=AsyncMock(return_value=AsyncResponse(content=make_radvor_tar("rs", ts))),
         ),
         patch.object(products, "read_odim_composite_cell", side_effect=_read),
     ):
@@ -100,7 +101,7 @@ async def test_rs_fetch_derives_base_source_timestamp_and_window() -> None:
     (which used it directly) was only correct for the 0-min member.
     """
     ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
-    data, meta, _ = await _rs_fetch(ts, {lead: float(lead) for lead in range(0, 121, 5)})
+    data, meta, _ = await _rs_fetch(ts, {lead: float(lead) for lead in LEADS})
 
     # The three non-overlapping hours come from leads 0 / 60 / 120.
     assert [data["last_60"], data["next_60"], data["next_60_120"]] == [0.0, 60.0, 120.0]
@@ -125,7 +126,7 @@ async def test_rs_peak_hour_and_rolling_series() -> None:
     ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
     # A storm straddling the fixed hours: its heaviest hour ends at T+90, which
     # neither "next 60 min" (lead 60) nor "next 60-120 min" (lead 120) sees in full.
-    values = {lead: 0.0 for lead in range(0, 121, 5)}
+    values = {lead: 0.0 for lead in LEADS}
     values.update({0: 30.0, 60: 4.0, 85: 9.0, 90: 18.0, 95: 18.0, 120: 5.0})
     data, meta, _ = await _rs_fetch(ts, values)
 
@@ -139,7 +140,7 @@ async def test_rs_peak_hour_and_rolling_series() -> None:
     assert peak.source_timestamp == ts
 
     series = peak.rolling_1h
-    assert [p["lead"] for p in series] == list(range(0, 121, 5))
+    assert [p["lead"] for p in series] == LEADS
     assert series[0] == {
         "lead": 0,
         "start": "2026-05-18T15:00:00+00:00",
@@ -155,7 +156,7 @@ async def test_rs_peak_hour_and_rolling_series() -> None:
 async def test_rs_dry_forecast_has_no_peak_window() -> None:
     """RS: a dry forecast peaks at 0 mm, but has no wettest hour to point at."""
     ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
-    data, meta, _ = await _rs_fetch(ts, {lead: 0.0 for lead in range(0, 121, 5)})
+    data, meta, _ = await _rs_fetch(ts, {lead: 0.0 for lead in LEADS})
 
     assert data["peak_1h"] == 0.0
     assert meta["peak_1h"].data_start is None
@@ -168,7 +169,7 @@ async def test_rs_dry_forecast_has_no_peak_window() -> None:
 async def test_rs_without_option_decodes_only_the_three_hours() -> None:
     """RS: with the option off only leads 0/60/120 are decoded; RV owns the peak."""
     ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
-    values = {lead: float(lead) for lead in range(0, 121, 5)}
+    values = {lead: float(lead) for lead in LEADS}
     data, meta, decoded = await _rs_fetch(ts, values, full=False)
 
     assert decoded == [0, 60, 120]
@@ -184,19 +185,9 @@ async def test_rs_without_option_decodes_only_the_three_hours() -> None:
 async def test_rs_range_fallback_is_said_once_and_its_end_once(caplog) -> None:
     """Whole archives instead of ranges: one WARNING per run, one INFO after."""
     ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
-    archive = make_rs_tar(ts)
-
-    async def ignores_ranges(url, _client, headers=None, **_kw):
-        return AsyncResponse(content=archive)  # 200: the whole file
-
-    async def serves_ranges(url, _client, headers=None, **_kw):
-        start, end = (int(x) for x in headers["Range"][6:].split("-"))
-        end = min(end, len(archive) - 1)
-        return AsyncResponse(
-            content=archive[start:end + 1],
-            status=206,
-            headers={"Content-Range": f"bytes {start}-{end}/{len(archive)}"},
-        )
+    archive = make_radvor_tar("rs", ts)
+    ignores_ranges = RangeServer(archive, ranges=False).async_get  # 200: the whole file
+    serves_ranges = RangeServer(archive).async_get
 
     def _read(fileobj, _row, _col, **_kw):
         lead = int(fileobj.getvalue())
@@ -219,18 +210,7 @@ async def test_rs_range_fallback_is_said_once_and_its_end_once(caplog) -> None:
 async def test_rs_without_option_reads_the_hours_by_range() -> None:
     """RS: the default mode asks for byte ranges instead of the whole archive."""
     ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
-    archive = make_rs_tar(ts)
-    calls: list[dict | None] = []
-
-    async def fake_get(url, _client, headers=None, **_kw):
-        calls.append(headers)
-        start, end = (int(x) for x in headers["Range"][6:].split("-"))
-        end = min(end, len(archive) - 1)
-        return AsyncResponse(
-            content=archive[start:end + 1],
-            status=206,
-            headers={"Content-Range": f"bytes {start}-{end}/{len(archive)}"},
-        )
+    server = RangeServer(make_radvor_tar("rs", ts))
 
     def _read(fileobj, _row, _col, **_kw):
         lead = int(fileobj.getvalue())
@@ -238,15 +218,15 @@ async def test_rs_without_option_reads_the_hours_by_range() -> None:
 
     coord = _coord(RadvorRS, {"full_rolling_series": False})
     with (
-        patch.object(products, "async_get", side_effect=fake_get),
+        patch.object(products, "async_get", side_effect=server.async_get),
         patch.object(products, "read_odim_composite_cell", side_effect=_read),
     ):
         data, _ = await coord._fetch_and_parse(ts)
 
     assert [data["last_60"], data["next_60"], data["next_60_120"]] == [0.0, 60.0, 120.0]
     # The test archive is tiny, so the first window already holds all three.
-    assert len(calls) == 1
-    assert calls[0]["Range"].startswith("bytes=0-")
+    assert len(server.requests) == 1
+    assert server.requests[0]["Range"].startswith("bytes=0-")
     assert coord.hass.executor_jobs == 1
 
 def _rv_what(base: datetime, lead: int) -> dict:
@@ -265,7 +245,7 @@ async def test_rv_fetch_derives_buckets_and_timing() -> None:
     """RV: peak intensity, start/end detection, and the raw 5-min series."""
     ts = datetime(2026, 7, 16, 20, 30, tzinfo=timezone.utc)
     # Scenario: dry now, rain at leads 30..60 (1.0 mm each), dry afterwards.
-    leads = list(range(0, 121, 5))
+    leads = LEADS
     values = {lead: (1.0 if 30 <= lead <= 60 else 0.0) for lead in leads}
     reads = iter([
         (np.float32(values[lead]), _rv_what(ts, lead))
@@ -278,7 +258,7 @@ async def test_rv_fetch_derives_buckets_and_timing() -> None:
         patch.object(
             products,
             "async_get",
-            new=AsyncMock(return_value=AsyncResponse(content=make_rv_tar(ts))),
+            new=AsyncMock(return_value=AsyncResponse(content=make_radvor_tar("rv", ts))),
         ),
         patch.object(products, "read_odim_composite_cell", side_effect=lambda _f, _r, _c, **_kw: next(reads)),
     ):
@@ -325,7 +305,7 @@ async def test_rv_fetch_derives_buckets_and_timing() -> None:
 async def test_rv_threshold_from_options_suppresses_light_rain() -> None:
     """RV: light rain below the configured mm/h threshold does not trigger start/end."""
     ts = datetime(2026, 7, 16, 20, 30, tzinfo=timezone.utc)
-    leads = list(range(0, 121, 5))
+    leads = LEADS
     values = {lead: (0.2 if lead >= 30 else 0.0) for lead in leads}  # 0.2 mm/5min = 2.4 mm/h
     reads = iter([
         (np.float32(values[lead]), _rv_what(ts, lead))
@@ -340,7 +320,7 @@ async def test_rv_threshold_from_options_suppresses_light_rain() -> None:
         patch.object(
             products,
             "async_get",
-            new=AsyncMock(return_value=AsyncResponse(content=make_rv_tar(ts))),
+            new=AsyncMock(return_value=AsyncResponse(content=make_radvor_tar("rv", ts))),
         ),
         patch.object(products, "read_odim_composite_cell", side_effect=lambda _f, _r, _c, **_kw: next(reads)),
     ):
@@ -357,7 +337,7 @@ async def test_rv_threshold_from_options_suppresses_light_rain() -> None:
 async def test_rv_threshold_is_interpreted_as_mm_per_hour() -> None:
     """RV: the mm/h threshold is divided by 12 before comparison to 5-min values."""
     ts = datetime(2026, 7, 16, 20, 30, tzinfo=timezone.utc)
-    leads = list(range(0, 121, 5))
+    leads = LEADS
     # Dry now; 0.4 mm/5min (=4.8 mm/h) at lead 30, 0.6 mm/5min (=7.2 mm/h) at lead 60.
     values = {lead: 0.0 for lead in leads}
     values[30] = 0.4
@@ -375,7 +355,7 @@ async def test_rv_threshold_is_interpreted_as_mm_per_hour() -> None:
         patch.object(
             products,
             "async_get",
-            new=AsyncMock(return_value=AsyncResponse(content=make_rv_tar(ts))),
+            new=AsyncMock(return_value=AsyncResponse(content=make_radvor_tar("rv", ts))),
         ),
         patch.object(products, "read_odim_composite_cell", side_effect=lambda _f, _r, _c, **_kw: next(reads)),
     ):
@@ -390,7 +370,7 @@ async def test_rv_threshold_is_interpreted_as_mm_per_hour() -> None:
 async def test_rv_end_algorithm_option_selects_clearing() -> None:
     """RV: the clearing algorithm looks past a lull to the last forecast wave."""
     ts = datetime(2026, 7, 16, 20, 30, tzinfo=timezone.utc)
-    leads = list(range(0, 121, 5))
+    leads = LEADS
     # Dry now; a wave at lead 10, a lull, then a second wave at lead 60.
     values = {lead: (1.0 if lead in (10, 60) else 0.0) for lead in leads}
 
@@ -409,7 +389,7 @@ async def test_rv_end_algorithm_option_selects_clearing() -> None:
         patch.object(
             products,
             "async_get",
-            new=AsyncMock(return_value=AsyncResponse(content=make_rv_tar(ts))),
+            new=AsyncMock(return_value=AsyncResponse(content=make_radvor_tar("rv", ts))),
         ),
         patch.object(products, "read_odim_composite_cell", side_effect=lambda _f, _r, _c, **_kw: next(episode_reads)),
     ):
@@ -425,7 +405,7 @@ async def test_rv_end_algorithm_option_selects_clearing() -> None:
         patch.object(
             products,
             "async_get",
-            new=AsyncMock(return_value=AsyncResponse(content=make_rv_tar(ts))),
+            new=AsyncMock(return_value=AsyncResponse(content=make_radvor_tar("rv", ts))),
         ),
         patch.object(products, "read_odim_composite_cell", side_effect=lambda _f, _r, _c, **_kw: next(clearing_reads)),
     ):
@@ -594,7 +574,7 @@ async def test_radolan_real_hdf5_file(coords, expected) -> None:
 async def _rv_fetch(ts: datetime, values: dict[int, float | None]):
     """Run RadvorRV._fetch_and_parse, serving each lead from ``values`` (None = missing member)."""
     def _read(fileobj, _row, _col, **_kw):
-        lead = int(fileobj.getvalue())  # make_rv_tar's payload is the lead
+        lead = int(fileobj.getvalue())  # make_radvor_tar's payload is the lead
         value = values[lead]
         return np.float32("nan" if value is None else value), _rv_what(ts, lead)
 
@@ -603,7 +583,7 @@ async def _rv_fetch(ts: datetime, values: dict[int, float | None]):
         patch.object(
             products,
             "async_get",
-            new=AsyncMock(return_value=AsyncResponse(content=make_rv_tar(ts))),
+            new=AsyncMock(return_value=AsyncResponse(content=make_radvor_tar("rv", ts))),
         ),
         patch.object(products, "read_odim_composite_cell", side_effect=_read),
     ):
@@ -620,7 +600,7 @@ async def test_rv_peak_hour_matches_rs_for_the_same_rain() -> None:
     not move when a user flips it.
     """
     ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
-    leads = list(range(0, 121, 5))
+    leads = LEADS
     # 5-minute rain: a shower around +40 min and a heavier cell around +95 min.
     rv = {lead: 0.0 for lead in leads}
     rv.update({35: 0.4, 40: 0.9, 45: 0.3, 85: 0.6, 90: 1.7, 95: 2.2, 100: 0.8})
@@ -658,7 +638,7 @@ async def test_rv_peak_hour_matches_rs_for_the_same_rain() -> None:
 async def test_rv_intensity_now_is_the_analysis_step_as_a_rate() -> None:
     """RV: lead 0 (the 5 minutes ending at T) becomes mm/h, with its window."""
     ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
-    rv: dict[int, float | None] = {lead: 0.0 for lead in range(0, 121, 5)}
+    rv: dict[int, float | None] = {lead: 0.0 for lead in LEADS}
     # The float32 reading carries noise below the ODIM 0.001 mm resolution.
     rv.update({0: 0.123, 5: 2.0})
     data, meta = await _rv_fetch(ts, rv)
@@ -675,7 +655,7 @@ async def test_rv_intensity_now_is_the_analysis_step_as_a_rate() -> None:
 async def test_rv_intensity_now_is_unknown_without_the_analysis() -> None:
     """RV: a missing lead-0 member leaves both values None rather than 0."""
     ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
-    rv: dict[int, float | None] = {lead: 0.0 for lead in range(0, 121, 5)}
+    rv: dict[int, float | None] = {lead: 0.0 for lead in LEADS}
     rv[0] = None
     data, _ = await _rv_fetch(ts, rv)
 
@@ -687,7 +667,7 @@ async def test_rv_intensity_now_is_unknown_without_the_analysis() -> None:
 async def test_rv_peak_hour_treats_missing_step_as_dry() -> None:
     """RV: a missing 5-minute member counts as 0, as RS does at the coverage edge."""
     ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
-    rv: dict[int, float | None] = {lead: 0.0 for lead in range(0, 121, 5)}
+    rv: dict[int, float | None] = {lead: 0.0 for lead in LEADS}
     rv.update({5: None, 60: 1.0, 65: 2.0})
     data, meta = await _rv_fetch(ts, rv)
 
@@ -727,17 +707,7 @@ class _FakeStore:
 
 def _rv_release_tar(ts: datetime) -> bytes:
     """An RV tar whose member payloads name their release and lead."""
-    import io
-    import tarfile
-
-    buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode="w", format=tarfile.USTAR_FORMAT) as tf:
-        for lead in range(0, 121, 5):
-            payload = f"{ts:%H%M}:{lead:03d}".encode()
-            info = tarfile.TarInfo(f"composite_rv_{ts:%Y%m%d_%H%M}_{lead:03d}-hd5")
-            info.size = len(payload)
-            tf.addfile(info, io.BytesIO(payload))
-    return buf.getvalue()
+    return make_radvor_tar("rv", ts, lambda lead: f"{ts:%H%M}:{lead:03d}".encode())
 
 
 class _RVWorld:
@@ -762,16 +732,7 @@ class _RVWorld:
 
             info = aiohttp.RequestInfo(URL(url), "GET", {}, URL(url))
             raise aiohttp.ClientResponseError(info, (), status=404, message="Not Found")
-        archive = _rv_release_tar(ts)
-        if not headers:
-            return AsyncResponse(content=archive)
-        start, end = (int(x) for x in headers["Range"][6:].split("-"))
-        end = min(end, len(archive) - 1)
-        return AsyncResponse(
-            content=archive[start:end + 1],
-            status=206,
-            headers={"Content-Range": f"bytes {start}-{end}/{len(archive)}"},
-        )
+        return await RangeServer(_rv_release_tar(ts)).fetch(url, headers)
 
     def read(self, fileobj, _row, _col, **_kw):
         stamp, lead = fileobj.getvalue().decode().split(":")
