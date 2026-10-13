@@ -52,7 +52,7 @@ DEFAULT_PRECIPITATION_END_ALGORITHM = DEFAULT_END_ALGO
 
 CONF_FULL_ROLLING_SERIES = "full_rolling_series"
 
-# Where "Peak hourly precipitation next 2h" comes from. Off: summed from the RV
+# Where "Peak hourly precipitation next 120 min" comes from. Off: summed from the RV
 # 5-minute steps that are decoded anyway, which only reaches the 13 rolling
 # hours wholly in the future. On: RS decodes all 25 of its members, adding the
 # 12 windows that straddle now. The peak itself is identical either way.

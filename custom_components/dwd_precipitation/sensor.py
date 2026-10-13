@@ -77,8 +77,8 @@ class PrecipitationSensorEntityDescription(SensorEntityDescription):
 
 
 # The gauge-adjusted analyses. RW's is a clock hour, so it is the "previous
-# hour" rather than a "last 1h": that name belongs to RS's rolling hour, a
-# sliding window like every other "last"/"next" one.
+# hour" rather than a "last 60 min": that name belongs to RS's rolling hour,
+# a sliding window like every other "last"/"next" one.
 RADOLAN_SENSORS = (
     PrecipitationSensorEntityDescription(
         key="radolan_rw",
@@ -153,7 +153,7 @@ TOTAL_SENSORS = (
 RADVOR_SENSORS = (
     PrecipitationSensorEntityDescription(
         key="radvor_rs_000",
-        translation_key="precipitation_last_1h",
+        translation_key="precipitation_last_60_min",
         native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
@@ -163,7 +163,7 @@ RADVOR_SENSORS = (
     ),
     PrecipitationSensorEntityDescription(
         key="radvor_rs_060",
-        translation_key="precipitation_next_1h",
+        translation_key="precipitation_next_60_min",
         native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
@@ -173,7 +173,7 @@ RADVOR_SENSORS = (
     ),
     PrecipitationSensorEntityDescription(
         key="radvor_rs_120",
-        translation_key="precipitation_next_1_2h",
+        translation_key="precipitation_next_60_120_min",
         native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
@@ -194,7 +194,7 @@ def _peak_hour_attrs(meta: ProductMetadata) -> dict[str, Any]:
 
 
 def _peak_hour_sensor(full_rolling_series: bool) -> PrecipitationSensorEntityDescription:
-    """Return "Peak hourly precipitation next 2h", bound to the product feeding it.
+    """Return "Peak hourly precipitation next 120 min", bound to its product.
 
     The value is the same from either product (RS equals summed RV for every
     window wholly in the future). RV is the default because it has already
@@ -204,7 +204,7 @@ def _peak_hour_sensor(full_rolling_series: bool) -> PrecipitationSensorEntityDes
     """
     common = dict(
         key="radvor_peak_1h_120",
-        translation_key="peak_hourly_precipitation_next_2h",
+        translation_key="peak_hourly_precipitation_next_120_min",
         native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
@@ -242,7 +242,7 @@ RADVOR_RV_SENSORS = (
     ),
     PrecipitationSensorEntityDescription(
         key="radvor_rv_max_intensity_060",
-        translation_key="peak_intensity_next_1h",
+        translation_key="peak_intensity_next_60_min",
         native_unit_of_measurement=UnitOfVolumetricFlux.MILLIMETERS_PER_HOUR,
         device_class=SensorDeviceClass.PRECIPITATION_INTENSITY,
         suggested_display_precision=1,
@@ -252,7 +252,7 @@ RADVOR_RV_SENSORS = (
     ),
     PrecipitationSensorEntityDescription(
         key="radvor_rv_max_intensity_120",
-        translation_key="peak_intensity_next_1_2h",
+        translation_key="peak_intensity_next_60_120_min",
         native_unit_of_measurement=UnitOfVolumetricFlux.MILLIMETERS_PER_HOUR,
         device_class=SensorDeviceClass.PRECIPITATION_INTENSITY,
         suggested_display_precision=1,

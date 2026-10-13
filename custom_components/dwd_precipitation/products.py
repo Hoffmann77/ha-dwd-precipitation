@@ -205,7 +205,7 @@ def _peak_hour_payload(
     source_product: str | None,
     source_timestamp: datetime | None,
 ) -> tuple[float | None, ProductMetadata]:
-    """Build the "Peak hourly precipitation next 2h" value and metadata.
+    """Build the "Peak hourly precipitation next 120 min" value and metadata.
 
     ``sums`` (rolling 60-minute totals, mm) and ``windows`` are aligned to
     LEADS; ``series_leads`` picks the points exposed as ``rolling_1h``. RS and

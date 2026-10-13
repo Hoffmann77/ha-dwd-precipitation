@@ -30,31 +30,28 @@ All entities belong to one **DWD Precipitation** device per configured location.
 
 Names ending in **`last <N>`** are measured totals over the window ending now.
 
-Names ending in **`next <N>`** are forecasts. 
+Names ending in **`next <N>`** are forecasts. The radar nowcast states its windows in minutes: `next 60–120 min` is the *second* hour ahead.
 
 **`previous hour`** and **`yesterday`** are the last complete clock hour and calendar day.
 
 The RADVOR values come from radar alone and update every 5 minutes. The RADOLAN values (`previous hour`, `last 24h`, `yesterday` and the running totals) are DWD's analysis corrected with rain-gauge measurements: they arrive about 30 minutes later, but are more accurate.
 
 > [!NOTE]
-> **`next 1–2h`** is the *second* hour ahead (60–120 min), not the coming two hours.
-
-> [!NOTE]
-> Installs set up before 2026.10.1 keep their entity ids. There, `Precipitation last 1h` is `sensor.<name>_precipitation_now`, and `sensor.<name>_precipitation_last_1h` is `Precipitation previous hour`.
+> Installs set up before 2026.10.1 keep their entity ids; only the names changed. There, `Precipitation last 60 min` is `sensor.<name>_precipitation_now`, `Precipitation previous hour` is `sensor.<name>_precipitation_last_1h`, and the forecast sensors keep their hour-based ids (`…_precipitation_next_1h`, `…_precipitation_next_1_2h`, `…_peak_intensity_next_1h`, `…_peak_intensity_next_1_2h`, `…_peak_hourly_precipitation_next_2h`).
 
 **RADVOR RS: radar nowcast · updated every 5 min**
 
-- **Precipitation last 1h** (mm): rain that fell in the past 60 minutes, from radar alone. This is a total, not a mm/h rate.
-- **Precipitation next 1h** (mm): forecast total for the next 0–60 min
-- **Precipitation next 1–2h** (mm): forecast total for 60–120 min from now
-- **Peak hourly precipitation next 2h** (mm): the wettest 60-minute window forecast within the next 2 h
+- **Precipitation last 60 min** (mm): rain that fell in the past 60 minutes, from radar alone. This is a total, not a mm/h rate.
+- **Precipitation next 60 min** (mm): forecast total for the next 0–60 min
+- **Precipitation next 60–120 min** (mm): forecast total for 60–120 min from now
+- **Peak hourly precipitation next 120 min** (mm): the wettest 60-minute window forecast within the next 2 h
 - **Timespan without precipitation** (days): time since the selected source (DWD's gauge-adjusted hour on new installs) last reached the reset threshold.
 
 **RADVOR RV: nowcast in 5-min steps · updated every 5 min**
 
 - **Precipitation intensity now** (mm/h): how hard it is raining, from the latest 5-minute radar analysis
-- **Peak intensity next 1h** (mm/h): heaviest expected rain rate in the next 0–60 min
-- **Peak intensity next 1–2h** (mm/h): the same for 60–120 min
+- **Peak intensity next 60 min** (mm/h): heaviest expected rain rate in the next 0–60 min
+- **Peak intensity next 60–120 min** (mm/h): the same for 60–120 min
 - **Precipitation start** (time or min): when rain begins; `unknown` if none within 2 h
 - **Precipitation end** (time or min): when rain stops; `unknown` if it lasts beyond 2 h
 - **Precipitation expected** (binary sensor): `on` if rain is forecast within 2 h
@@ -65,7 +62,7 @@ The RADVOR values come from radar alone and update every 5 minutes. The RADOLAN 
 
 **RADOLAN RW / SF: radar + rain-gauge analysis · updated hourly / daily**
 
-- **Precipitation previous hour** (mm): the last full clock hour, e.g. 11:00–12:00, available about 30 minutes after it ends. Slower than `Precipitation last 1h`, but more accurate
+- **Precipitation previous hour** (mm): the last full clock hour, e.g. 11:00–12:00, available about 30 minutes after it ends. Slower than `Precipitation last 60 min`, but more accurate
 - **Precipitation last 24h** (mm): rolling past 24 hours
 - **Precipitation yesterday** (mm): the previous calendar day's total, available around 00:20 local time
 - **Precipitation total (hourly)** (mm): running total of all rain since setup, grows once an hour. For "rain this week" and same-day automations
@@ -136,9 +133,9 @@ Open **Settings > Devices & Services > DWD Precipitation > Configure**. None of 
 - **Rain needed to reset the dry-streak counter (mm)** (default: 1.0): the selected product's past-hour total at or above this value resets `Timespan without precipitation`.
 - **Product that resets the dry-streak counter**: which past-hour total `Timespan without precipitation` compares against the threshold.
   - *Gauge-adjusted hour* (RW, default for new installs): more accurate. DWD reruns its gauge-adjusted analysis of the latest 60 minutes every 10 minutes, and the counter follows those runs, so a reset shows about 30 to 40 minutes after the rain.
-  - `Precipitation last 1h` (RS): updated every 5 minutes. Faster, but noisier, and its rolling hour keeps resetting the counter for up to an hour after the rain stops.
+  - `Precipitation last 60 min` (RS): updated every 5 minutes. Faster, but noisier, and its rolling hour keeps resetting the counter for up to an hour after the rain stops.
 
-  Installs set up before this option existed keep `Precipitation last 1h`, so upgrading changes nothing; switch here if you prefer RW. The counter keeps its value when you switch, and is unavailable while the selected product is.
+  Installs set up before this option existed keep `Precipitation last 60 min`, so upgrading changes nothing; switch here if you prefer RW. The counter keeps its value when you switch, and is unavailable while the selected product is.
 
 #### Advanced options
 
@@ -146,26 +143,26 @@ Collapsed at the bottom of the form; most installations never need them.
 
 - **Rain event threshold (mm per hour)** (default: 0.1): how much rain a 5-minute step needs to count towards an event in the [`rain_events`](#rain-events) attribute. 0 means any trace forms an event. It is independent of the rain detection threshold above, so the events and `Precipitation start` can disagree when the two differ.
 - **When "Precipitation end" counts rain as over** (default: first dry gap): see `Precipitation end` below.
-- **Include the past hour in the hourly forecast series** (default: off): makes the `forecast_rolling_1h` attribute of `Peak hourly precipitation next 2h` start one hour earlier, so the first entries also include rain that has already fallen and a chart shows the past hour and the forecast as one curve. The sensor's value does not change. Roughly doubles the processing time per update, which can matter on small devices such as a Raspberry Pi.
+- **Include the past hour in the hourly forecast series** (default: off): makes the `forecast_rolling_1h` attribute of `Peak hourly precipitation next 120 min` start one hour earlier, so the first entries also include rain that has already fallen and a chart shows the past hour and the forecast as one curve. The sensor's value does not change. Roughly doubles the processing time per update, which can matter on small devices such as a Raspberry Pi.
 - **Show sensors as unavailable when the data is out of date** (default: on): if DWD does not publish a new file in time, sensors report `unavailable` instead of keeping the last value. See [Troubleshooting](#troubleshooting) for how long "in time" is. The missing file keeps being retried either way.
 
 ## Entity details
 
-For the full two-hour forecast total, add `Precipitation next 1h` and `Precipitation next 1–2h`.
+For the full two-hour forecast total, add `Precipitation next 60 min` and `Precipitation next 60–120 min`.
 
 ### RADVOR RS: radar nowcast · every 5 min
 
-- **Precipitation last 1h** (mm): rain that fell in the past 60 minutes, from radar alone, updated every 5 minutes. This is a total, not a mm/h rate. For the gauge-adjusted value of a clock hour see `Precipitation previous hour`; for how hard it is raining at the moment, `Precipitation intensity now`.
-- **Precipitation next 1h** (mm): forecast total for the next 0–60 min.
-- **Precipitation next 1–2h** (mm): forecast total for 60–120 min from now.
-- **Peak hourly precipitation next 2h** (mm): the most rain forecast to fall in any 60-minute window within the next 2 h, checked in 5-minute steps. Calculated from the RV 5-minute forecast by default, and from RS when *Include the past hour in the hourly forecast series* is on; the value is identical either way, so switching the option keeps the entity and its history. A downpour that straddles the one-hour mark shows here in full, where `Precipitation next 1h` and `next 1–2h` each only see part of it. This matches how DWD's heavy-rain warnings are defined (amount per hour), so it suits alert automations. `0` when no rain is forecast. The hours it compares are listed in the `forecast_rolling_1h` attribute.
+- **Precipitation last 60 min** (mm): rain that fell in the past 60 minutes, from radar alone, updated every 5 minutes. This is a total, not a mm/h rate. For the gauge-adjusted value of a clock hour see `Precipitation previous hour`; for how hard it is raining at the moment, `Precipitation intensity now`.
+- **Precipitation next 60 min** (mm): forecast total for the next 0–60 min.
+- **Precipitation next 60–120 min** (mm): forecast total for 60–120 min from now.
+- **Peak hourly precipitation next 120 min** (mm): the most rain forecast to fall in any 60-minute window within the next 2 h, checked in 5-minute steps. Calculated from the RV 5-minute forecast by default, and from RS when *Include the past hour in the hourly forecast series* is on; the value is identical either way, so switching the option keeps the entity and its history. A downpour that straddles the one-hour mark shows here in full, where `Precipitation next 60 min` and `next 1–2h` each only see part of it. This matches how DWD's heavy-rain warnings are defined (amount per hour), so it suits alert automations. `0` when no rain is forecast. The hours it compares are listed in the `forecast_rolling_1h` attribute.
 - **Timespan without precipitation** (days): time since the selected source (DWD's gauge-adjusted hour on new installs; see *Product that resets the dry-streak counter*) last reached the reset threshold. Survives restarts; rain during downtime is caught up from the RADOLAN totals on startup. A reading without data (`unknown`) does not reset it.
 
 ### RADVOR RV: nowcast in 5-min steps · every 5 min · 2 h horizon
 
 - **Precipitation intensity now** (mm/h): the rain rate in the latest radar analysis, the 5 minutes ending at DWD's release time, scaled to an hourly rate (1 mm in 5 minutes = 12 mm/h). Updated every 5 minutes; the window it describes ended about 4 to 10 minutes earlier. `unknown` when the radar has no data for your location.
-- **Peak intensity next 1h** (mm/h): heaviest expected rain rate in the next 0–60 min. Tells drizzle from a downpour; `Precipitation next 1h` gives the amount.
-- **Peak intensity next 1–2h** (mm/h): the same for 60–120 min from now.
+- **Peak intensity next 60 min** (mm/h): heaviest expected rain rate in the next 0–60 min. Tells drizzle from a downpour; `Precipitation next 60 min` gives the amount.
+- **Peak intensity next 60–120 min** (mm/h): the same for 60–120 min from now.
 - **Precipitation start** (time or min): when rain begins. Now / `0` if it is already raining, `unknown` if none is forecast within 2 h.
 - **Precipitation end** (time or min): when rain stops. `unknown` if it continues beyond 2 h, which means "still raining in 2 hours", not "never".
   - *First dry gap*: end of the current burst. Moves around during showers.
@@ -178,7 +175,7 @@ For the full two-hour forecast total, add `Precipitation next 1h` and `Precipita
 
 ### RADOLAN RW / SF: radar + rain-gauge analysis · hourly / daily
 
-- **Precipitation previous hour** (mm): rain that fell in the last full clock hour, corrected with rain-gauge data. Updated hourly, about 30 minutes after the hour ends (11:00–12:00 arrives around 12:30), but more accurate than `Precipitation last 1h`.
+- **Precipitation previous hour** (mm): rain that fell in the last full clock hour, corrected with rain-gauge data. Updated hourly, about 30 minutes after the hour ends (11:00–12:00 arrives around 12:30), but more accurate than `Precipitation last 60 min`.
 - **Precipitation last 24h** (mm): rain that fell in the rolling past 24 hours. Updated hourly.
 - **Precipitation yesterday** (mm): total for the previous calendar day. Updated once a day, around 00:20 German local time.
 
@@ -202,10 +199,10 @@ Always present:
 | `minutes_until` / `at` | `Precipitation start`, `Precipitation end`, `Precipitation expected` | The form *not* shown as the state: whole minutes until the event, or its ISO-8601 UTC time. The binary sensor carries both, pointing at the forecast start (`null` when no rain is expected) |
 | `forecast_5min` | `Precipitation expected` | The full 25-point RV forecast (0–120 min in 5-minute steps); each point has `lead` (minutes from now), `start`, `end`, `value` (mm in those 5 minutes) and `intensity` (mm/h). `value` and `intensity` are `null` for a step without data. Not recorded in history |
 | `rain_events` | `Precipitation expected` | The rain around your location split into events, each with a stable id, measured and forecast amounts and their peaks. See [Rain events](#rain-events). Not recorded in history |
-| `window_start` / `window_end` | `Peak hourly precipitation next 2h` | ISO-8601 UTC start and end of the wettest hour; `null` when no rain is forecast. If two windows tie, the earlier one |
+| `window_start` / `window_end` | `Peak hourly precipitation next 120 min` | ISO-8601 UTC start and end of the wettest hour; `null` when no rain is forecast. If two windows tie, the earlier one |
 | `window_start` / `window_end` | `Precipitation intensity now` | ISO-8601 UTC start and end of the 5-minute radar analysis the rate comes from |
 | `amount_5min` | `Precipitation intensity now` | The rain in that window in mm, before it is scaled to mm/h; `null` without data |
-| `forecast_rolling_1h` | `Peak hourly precipitation next 2h` | The hourly forecast series the sensor picks its value from: one entry every 5 minutes, each the mm of rain in the hour from `start` to `end`. At 14:00 the entries run from 14:00–15:00 to 15:00–16:00 (13 entries); the sensor shows the largest. With *Include the past hour in the hourly forecast series* on, the series starts one hour earlier, at 13:00–14:00 (25 entries); the first entry then equals `Precipitation last 1h`. `lead` is the minutes from now to `end`. Not recorded in history |
+| `forecast_rolling_1h` | `Peak hourly precipitation next 120 min` | The hourly forecast series the sensor picks its value from: one entry every 5 minutes, each the mm of rain in the hour from `start` to `end`. At 14:00 the entries run from 14:00–15:00 to 15:00–16:00 (13 entries); the sensor shows the largest. With *Include the past hour in the hourly forecast series* on, the series starts one hour earlier, at 13:00–14:00 (25 entries); the first entry then equals `Precipitation last 60 min`. `lead` is the minutes from now to `end`. Not recorded in history |
 | `hours_without_precipitation` | `Timespan without precipitation` | The dry streak in hours; `null` until the counter has started |
 | `dry_since` | `Timespan without precipitation` | ISO-8601 UTC time of the rain that last reset the counter |
 | `counted_until` | `Precipitation total (hourly)`, `Precipitation total (daily)` | ISO-8601 UTC end of the newest DWD window included in the total; `null` until the first file arrives. Missed files fetched later are added without moving it back |
@@ -216,8 +213,8 @@ With **Add technical details to each sensor** enabled, every DWD sensor except `
 |-----------|-------------|
 | `source_product` | DWD product identifier from the file header (e.g. `"RADVOR-RS"`, `"RW"`) |
 | `source_timestamp` | UTC reference time of the DWD file. For RADVOR, the analysis time before the forecast lead; for RADOLAN, the end of the measurement window |
-| `lead_time_minutes` | Forecast lead in minutes (`0`, `60` or `120` for RADVOR, the end of the wettest hour for `Peak hourly precipitation next 2h`, `null` there when no rain is forecast; `null` for RADOLAN) |
-| `data_start` / `data_end` | ISO-8601 UTC start and end of the period the value covers (for `Peak hourly precipitation next 2h`, the wettest hour, same as `window_start` / `window_end`); omitted for values without a period |
+| `lead_time_minutes` | Forecast lead in minutes (`0`, `60` or `120` for RADVOR, the end of the wettest hour for `Peak hourly precipitation next 120 min`, `null` there when no rain is forecast; `null` for RADOLAN) |
+| `data_start` / `data_end` | ISO-8601 UTC start and end of the period the value covers (for `Peak hourly precipitation next 120 min`, the wettest hour, same as `window_start` / `window_end`); omitted for values without a period |
 
 ### Rain events
 

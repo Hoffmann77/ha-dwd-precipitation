@@ -36,6 +36,38 @@ from custom_components.dwd_precipitation.products import (
 )
 
 
+# Entity ids 2026.10.0 gave a new install, by key.
+RELEASED_2026_10_0_IDS = {
+    "radvor_rs_000": "precipitation_now",
+    "radvor_rs_060": "precipitation_next_1h",
+    "radvor_rs_120": "precipitation_next_1_2h",
+    "radvor_peak_1h_120": "peak_hourly_precipitation_next_2h",
+    "radvor_rv_max_intensity_060": "peak_intensity_next_1h",
+    "radvor_rv_max_intensity_120": "peak_intensity_next_1_2h",
+    "radvor_rv_precipitation_start": "precipitation_start",
+    "radvor_rv_precipitation_end": "precipitation_end",
+    "radvor_rv_precipitation_expected_120": "precipitation_expected",
+    "hymecng_precipitation_type": "precipitation_type",
+    "radolan_rw": "precipitation_last_1h",
+    "radolan_sf": "precipitation_last_24h",
+    "radolan_sf_yesterday": "precipitation_yesterday",
+    "radolan_rw_total": "precipitation_total_hourly",
+    "radolan_sf_yesterday_total": "precipitation_total_daily",
+    "timespan_without_precipitation": "timespan_without_precipitation",
+}
+
+# What a new install gets for the entities renamed since.
+RENAMED_SINCE_2026_10_0 = {
+    "radvor_rs_000": "precipitation_last_60_min",
+    "radvor_rs_060": "precipitation_next_60_min",
+    "radvor_rs_120": "precipitation_next_60_120_min",
+    "radvor_peak_1h_120": "peak_hourly_precipitation_next_120_min",
+    "radvor_rv_max_intensity_060": "peak_intensity_next_60_min",
+    "radvor_rv_max_intensity_120": "peak_intensity_next_60_120_min",
+    "radolan_rw": "precipitation_previous_hour",
+}
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("full_rolling_series", [False, True])
 async def test_entry_setup_creates_sensors_with_correct_values(
@@ -197,25 +229,24 @@ async def test_entry_setup_creates_sensors_with_correct_values(
 
     # Entity ids follow the English names. Keys are unchanged, so existing
     # installs keep the ids they already have; these are what new ones get.
-    assert {
-        e.unique_id.removeprefix(f"{entry.entry_id}_"): e.entity_id
+    new_ids = {
+        e.unique_id.removeprefix(f"{entry.entry_id}_"): e.entity_id.split(".", 1)[1]
         for e in ent_reg.entities.values()
-        if e.domain == "sensor"
-        and e.unique_id.removeprefix(f"{entry.entry_id}_")
-        in {
-            "radvor_rs_000",
-            "radolan_rw",
-            "radolan_sf",
-            "radolan_sf_yesterday",
-            "radvor_rv_intensity_000",
-        }
-    } == {
-        "radvor_rs_000": "sensor.mock_title_precipitation_last_1h",
-        "radolan_rw": "sensor.mock_title_precipitation_previous_hour",
-        "radolan_sf": "sensor.mock_title_precipitation_last_24h",
-        "radolan_sf_yesterday": "sensor.mock_title_precipitation_yesterday",
-        "radvor_rv_intensity_000": "sensor.mock_title_precipitation_intensity_now",
+        if e.config_entry_id == entry.entry_id
     }
+    # No new id is one a released version gave another entity: on an old
+    # install that entity still holds it, so recreating ids would collide.
+    for key, entity_id in new_ids.items():
+        slug = entity_id.removeprefix("mock_title_")
+        owner = next(
+            (k for k, s in RELEASED_2026_10_0_IDS.items() if s == slug), key
+        )
+        assert owner == key, f"{key} takes {slug}, which was {owner}'s"
+
+    assert {key: new_ids[key] for key in RENAMED_SINCE_2026_10_0} == {
+        key: f"mock_title_{slug}" for key, slug in RENAMED_SINCE_2026_10_0.items()
+    }
+    assert new_ids["radvor_rv_intensity_000"] == "mock_title_precipitation_intensity_now"
 
     # The peak-intensity sensor reports the extrapolated mm/h rate.
     max_060_entry = next(
@@ -525,8 +556,8 @@ async def test_entry_from_a_newer_major_version_is_not_migrated(
 async def test_renamed_sensor_keeps_an_existing_entity_id(hass: HomeAssistant) -> None:
     """The renames change names, never the entity ids users already have.
 
-    Up to 2026.10.0 RS was "Precipitation now" and RW "Precipitation last 1h";
-    a new install gives RS that second id, an existing one keeps both.
+    Up to 2026.10.0 RS was "Precipitation now" and RW "Precipitation last 1h".
+    New installs get new ids for both; an existing one keeps the old ones.
     """
     entry = _entry(hass)
     ent_reg = er.async_get(hass)
@@ -547,7 +578,7 @@ async def test_renamed_sensor_keeps_an_existing_entity_id(hass: HomeAssistant) -
         await hass.async_block_till_done()
 
     rs = hass.states.get("sensor.home_precipitation_now")
-    assert rs.attributes["friendly_name"].endswith("Precipitation last 1h")
+    assert rs.attributes["friendly_name"].endswith("Precipitation last 60 min")
     rw = hass.states.get("sensor.home_precipitation_last_1h")
     assert rw.attributes["friendly_name"].endswith("Precipitation previous hour")
 

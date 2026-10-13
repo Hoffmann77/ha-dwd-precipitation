@@ -181,40 +181,44 @@ viewers and Windows consoles mangle typographic punctuation.
 
 Every entity name is set via `translation_key` + `translations/en.json` — never a
 hardcoded `name=` / `_attr_name`. HA derives the entity id by slugifying the
-English name, so the name is also the id: `Precipitation next 1–2h` →
-`sensor.<device>_precipitation_next_1_2h`. Keep names slug-friendly.
+English name, so the name is also the id: `Precipitation next 60–120 min` →
+`sensor.<device>_precipitation_next_60_120_min`. Keep names slug-friendly.
 
 A name states a window only when the window is part of the *value*. Three forms:
 
 | form | meaning | examples |
 |------|---------|----------|
-| `last <N>` | measured accumulation over a sliding window ending at the latest release | `Precipitation last 1h`, `Precipitation last 24h` |
-| `next <N>` | forecast value over a future window | `Precipitation next 1h`, `Precipitation next 1–2h`, `Peak intensity next 1h` |
+| `last <N>` | measured accumulation over a sliding window ending at the latest release | `Precipitation last 60 min`, `Precipitation last 24h` |
+| `next <N>` | forecast value over a future window | `Precipitation next 60 min`, `Precipitation next 60–120 min`, `Peak intensity next 60 min` |
 | calendar period | the last complete clock hour / calendar day | `Precipitation previous hour`, `Precipitation yesterday` |
 
-`next 1–2h` is the 60–120 min window, *not* the coming two hours.
+**Units follow the product.** The RADVOR nowcast (RS/RV) states its windows in
+minutes, matching its 5-minute steps and the `minutes_until` attributes:
+`next 60–120 min` says what it covers, where the old `next 1–2h` needed a note
+that it is the second hour, not the coming two. RADOLAN keeps hours and days
+(`last 24h`, `previous hour`, `yesterday`); `last 1440 min` would be absurd,
+and none of them ever collided. `24h` keeps its released spelling (no space,
+unlike `60 min`) because a space would change its slug for nothing.
 
-`Precipitation last 1h` is RS `_000`: the rolling hour, every 5 minutes, from
-the same product as `next 1h` / `next 1–2h`. RW is a clock hour (the run
-ending on the hour, see "RW 10-minute runs"), so it is `Precipitation previous
-hour` rather than a second `last 1h`. No two names share a window, so none
-needs a source qualifier: radar vs. gauge-adjusted is explained in the README,
-not carried in names. (The release branch after 2026.10.0 briefly carried
-`(radar)` / `(gauge-adjusted)` suffixes; they never shipped.)
+`Precipitation last 60 min` is RS `_000`: the rolling hour, every 5 minutes,
+from the same product as `next 60 min` / `next 60–120 min`. RW is a clock hour
+(the run ending on the hour, see "RW 10-minute runs"), so it is `Precipitation
+previous hour`. No two names share a window, so none needs a source qualifier:
+radar vs. gauge-adjusted is explained in the README, not carried in names.
+(The release branch after 2026.10.0 briefly carried `(radar)` /
+`(gauge-adjusted)` suffixes; they never shipped.)
 
-RS `_000` was `Precipitation now` up to 2026.10.0, named for its role rather
-than its window. That hid the fact that it is mm accumulated over the past
-hour, **not** a rate, and left `now` unavailable for the one sensor that really
-is current. The keys (`radvor_rs_000`, `radolan_rw`, …) did not change, so
-existing installs keep their entity ids; only new installs get the new slugs.
-
-That rename made one deliberate exception to "never reuse an old slug for a
-different value": up to 2026.10.0, `precipitation_last_1h` was RW; new
-installs give it to RS. It was accepted because both are mm over a 60-minute
-window, so a template written against either still reads the same quantity,
-and keeping the old slug would have forced a qualifier back into the name.
-The README tells users of older installs which id is which. Do not extend the
-exception: any other reuse needs the same case made for it.
+**Never reuse an old slug for a different value.** Keys did not change, so
+existing installs keep their entity ids and only see new names; new installs
+get the new slugs. Up to 2026.10.0 the names were: RS `_000` `Precipitation
+now` (`precipitation_now`, named for its role, which hid that it is mm over the
+past hour and not a rate), RW `Precipitation last 1h` (`precipitation_last_1h`),
+and the forecasts `next 1h`, `next 1–2h`, `Peak intensity next 1h` /
+`next 1–2h`, `Peak hourly precipitation next 2h`. None of the new slugs is one
+of those, so an id means one thing on every install, and HA's "recreate entity
+ids" on an old install cannot collide (giving RS `precipitation_last_1h` was
+considered and rejected for exactly that: RW still holds it there, so RS would
+land on `_2`). The README lists the old ids for older installs.
 
 `Precipitation intensity now` (RV lead 0 × 12, mm/h) is the only `now`: the
 latest 5-minute analysis, ending at the release time. The README states that
@@ -239,9 +243,10 @@ counted once. RW backs the hourly one, `sf_2350` the daily one; they are
 separate entities rather than one with a source option, because switching the
 source would make a `TOTAL_INCREASING` sensor jump.
 
-`Peak intensity next 1h` / `next 1–2h` drop the `Precipitation` head noun on
-purpose: they are mm/h rather than mm, and the shorter head stops them reading
-as near-duplicates of `Precipitation next 1h` / `next 1–2h` in the entity list.
+`Peak intensity next 60 min` / `next 60–120 min` drop the `Precipitation` head
+noun on purpose: they are mm/h rather than mm, and the shorter head stops them
+reading as near-duplicates of `Precipitation next 60 min` / `next 60–120 min`
+in the entity list.
 
 Entity `key`s are separate from names: they are the unique-id suffix, stay
 product-prefixed (`radvor_*` / `radolan_*` / `hymecng_*`), and must not change
@@ -372,7 +377,7 @@ Current runtime deps: `numpy`, `h5py`
   rate — `_000`'s `what/startdate..enddate` spans T−60 min to T (verified against
   `tests/fixtures/composite_rs_sample.hd5`: 06:50 → 07:50 for a 07:50 file). So
   `_000` is "precipitation over the past hour" — exposed as `Precipitation last
-  1h` (see "Entity naming") —
+  60 min` (see "Entity naming") —
   `_060` covers T→T+60, and `_120` covers T+60→T+120.
 - **Grid**: `xsize=1100`, `ysize=1200`, `xscale=yscale=1000.0 m`
 - **Projection**: `+proj=stere +lat_ts=60 +lat_0=90 +lon_0=10 +x_0=543196.835... +y_0=3622588.861...` (WGS84)
@@ -389,7 +394,7 @@ Current runtime deps: `numpy`, `h5py`
 
 ## Peak hourly precipitation
 
-`Peak hourly precipitation next 2h` is the wettest rolling hour wholly in the
+`Peak hourly precipitation next 120 min` is the wettest rolling hour wholly in the
 future (windows ending at +60..+120, `FUTURE_HOUR_LEADS`; ties go to the earlier
 window), with the window as `data_start`/`data_end` (`None` on a dry forecast)
 and the rolling-hour series as `rolling_1h`. Two products can feed it, and
@@ -459,8 +464,8 @@ hour; `RadolanRW10` (`rw_10min`) is the same file family on a 10-minute grid
   for anything new.
 - **`rw_10min` is built only when used** (`is_needed(options)`, checked in
   `async_setup_entry`): when the dry streak counts RW. Otherwise the entry
-  makes no extra requests. No sensor shows the sliding RW hour: as a "last 1h"
-  it would be 28-38 min behind, where RS is 4-9 min, and gauge accuracy is
+  makes no extra requests. No sensor shows the sliding RW hour: as a "last 60
+  min" it would be 28-38 min behind, where RS is 4-9 min, and gauge accuracy is
   what `Precipitation previous hour` is for. A pre-release had a
   `rw_last_hour_mode` option for it; it never shipped, and a stored value is
   ignored.

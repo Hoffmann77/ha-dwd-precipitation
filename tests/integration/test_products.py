@@ -111,7 +111,7 @@ async def test_rs_peak_hour_and_rolling_series() -> None:
     """RS: the wettest future rolling hour, its window, and the 25-point series."""
     ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
     # A storm straddling the fixed hours: its heaviest hour ends at T+90, which
-    # neither "next 1h" (lead 60) nor "next 1-2h" (lead 120) sees in full.
+    # neither "next 60 min" (lead 60) nor "next 60-120 min" (lead 120) sees in full.
     values = {lead: 0.0 for lead in range(0, 121, 5)}
     values.update({0: 30.0, 60: 4.0, 85: 9.0, 90: 18.0, 95: 18.0, 120: 5.0})
     data, meta, _ = await _rs_fetch(ts, values)
