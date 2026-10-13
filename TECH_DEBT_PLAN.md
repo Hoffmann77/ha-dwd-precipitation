@@ -267,6 +267,22 @@ The base the next three PRs stand on. *(TD 1, 3, 6, 10, 18; S-altitude 2, 6, 9, 
   latter not forcing UTC), because it cannot import a sibling module yet;
   move `utils.iso`/`utils.parse_utc` into `radar/` alongside it and use them.
 
+**Step 6 outcome (done, 4 commits `f6a99d5`..`d9ab098`).**
+- `rain_events.py` -> `radar/rain_events.py` (D4 decided: move); constants
+  from `nowcast`, `iso`/`parse_utc` -> `radar/isotime.py`.
+- Restored state validated field by field; any load or check failure
+  discards the store once (bug 4 closed). *Deviation:* the derived views stay
+  persisted - an `unseen` event is republished from its last view, and the
+  stored view answers the same release after a restart (processing it twice
+  is not harmless). The shortcut checks the view's schema.
+- `RainEventsTracker` (`rain_events_tracker.py`) owns store, fill, save
+  policy, latches; RV only hands it releases; it saves itself on unload.
+- `update()` split into named steps; schema-1 declared as TypedDicts with a
+  test that the published view matches. Identical views on 1000 random
+  scenarios vs. before step 6.
+- *Not done:* event records as a dataclass (validation covers the contract),
+  prefix sums / executor (measured 1-5 ms per release).
+
 ## PR 7 — One payload shape
 
 *(TD 14; S-altitude 5)*
@@ -293,6 +309,17 @@ The base the next three PRs stand on. *(TD 1, 3, 6, 10, 18; S-altitude 2, 6, 9, 
 - Live test for the production range-read path (requests ≤ N, no fallback).
 - **Decision D2:** dedupe the fetches of the same file (`rw` and `rw_10min`
   at :00, 24×/day; `sf` and `sf_2350`, 1×/day).
+
+**Step 8 outcome (3 commits `dbe65c0`..`4a06c68`; D2 open).**
+- `radar/urls.py` holds every URL pattern; products derive theirs from
+  `PRODUCT_KEY` (six `_get_url` overrides gone); probe, both scripts and both
+  live tiers use it. Golden test spells out all seven URLs.
+- Release-delay probe covers RV (live: 3m58s observed vs 4m10s); `sf_2350`
+  pinned to SF's delay instead (same files); drift guard over all classes.
+- Live test of RS's range read (no fallback, <= 6 requests; passes today).
+- *Open:* D2 (duplicate fetches rw/rw_10min, sf/sf_2350) - waiting on the
+  decision whether `rw_10min` should stay. *Moved to step 9:* a shared
+  `tests/live_common.py` for the duplicated candidate walks.
 
 ## PR 9 — Tests
 
