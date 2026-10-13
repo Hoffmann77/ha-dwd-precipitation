@@ -395,7 +395,9 @@ async def async_setup_entry(
         )
     entities.append(
         TimespanWithoutPrecipitationSensor(
-            coordinators[options.dry_streak_coordinator_key]
+            coordinators[options.dry_streak_coordinator_key],
+            hourly=coordinators.get("rw"),
+            daily=coordinators.get("sf"),
         )
     )
 
@@ -743,7 +745,12 @@ class TimespanWithoutPrecipitationSensor(
     during downtime.
     """
 
-    def __init__(self, coordinator: BaseProductUpdateCoordinator) -> None:
+    def __init__(
+        self,
+        coordinator: BaseProductUpdateCoordinator,
+        hourly: BaseProductUpdateCoordinator | None = None,
+        daily: BaseProductUpdateCoordinator | None = None,
+    ) -> None:
         """Initialize the sensor, bound to the dry-streak source's coordinator.
 
         Availability follows the source's staleness deadline, like every other
@@ -751,6 +758,10 @@ class TimespanWithoutPrecipitationSensor(
         """
         super().__init__(coordinator, DRY_STREAK_SENSOR)
         self._dry_since: datetime | None = None
+        # The analyses that correct the anchor for rain during downtime:
+        # RW's last clock hour and SF's last 24 h, whatever the source.
+        self._hourly = hourly
+        self._daily = daily
 
     @property
     def _threshold(self) -> float:
@@ -814,9 +825,8 @@ class TimespanWithoutPrecipitationSensor(
             ).dry_since
 
         now = dt_util.utcnow()
-        siblings = self.coordinator.config_entry.runtime_data.coordinators
-        rw = scalar_reading(siblings.get("rw"))
-        sf = scalar_reading(siblings.get("sf"))
+        rw = scalar_reading(self._hourly)
+        sf = scalar_reading(self._daily)
 
         if self._dry_since is not None:
             # Clamp a stale restored anchor forward if RW/SF show recent rain.

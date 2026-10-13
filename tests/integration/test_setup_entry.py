@@ -725,3 +725,50 @@ async def test_the_entrys_products_share_one_download_cache(hass: HomeAssistant)
     assert "rw_10min" in coordinators
     caches = {id(c.download_cache) for c in coordinators.values()}
     assert len(caches) == 1 and None not in {c.download_cache for c in coordinators.values()}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("threshold", "moved"),
+    [
+        (2.0, True),    # RW's 3.2 mm in the last hour: it rained while HA was down
+        (30.0, False),  # neither RW (3.2) nor SF (12.5) reaches it
+    ],
+)
+async def test_restored_dry_streak_is_corrected_for_rain_during_downtime(
+    hass: HomeAssistant, freezer, threshold: float, moved: bool
+) -> None:
+    """The anchor restored from days ago moves forward if RW/SF saw rain since."""
+    from homeassistant.core import State
+    from pytest_homeassistant_custom_component.common import (
+        mock_restore_cache_with_extra_data,
+    )
+
+    now = datetime(2025, 6, 1, 12, 35, tzinfo=timezone.utc)
+    freezer.move_to(now)
+    restored = datetime(2025, 5, 28, 8, 0, tzinfo=timezone.utc)
+    mock_restore_cache_with_extra_data(
+        hass,
+        [
+            (
+                State("sensor.mock_title_timespan_without_precipitation", "4.2"),
+                {"dry_since": restored.isoformat()},
+            )
+        ],
+    )
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"name": "Home", "latitude": 51.05, "longitude": 13.73},
+        # RS counts (1.5 mm, below both thresholds), so only the correction
+        # can move the anchor.
+        options={CONF_DRY_STREAK_SOURCE: "rs", "precipitation_reset_threshold": threshold},
+        version=1,
+        minor_version=2,
+    )
+    entry.add_to_hass(hass)
+    with _patched_products():
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    anchor = _dry_streak_sensor(hass)._dry_since
+    assert anchor == (now if moved else restored)
