@@ -92,6 +92,7 @@ CONF_DRY_STREAK_SOURCE = "dry_streak_source"
 # "rs" = RS _000, radar only, a rolling hour refreshed every 5 minutes.
 DRY_STREAK_SOURCE_RW = "rw"
 DRY_STREAK_SOURCE_RS = "rs"
+DRY_STREAK_SOURCES = (DRY_STREAK_SOURCE_RW, DRY_STREAK_SOURCE_RS)
 DEFAULT_DRY_STREAK_SOURCE = DRY_STREAK_SOURCE_RW
 
 # Entries created before the option existed counted RS; the 1.2 migration pins

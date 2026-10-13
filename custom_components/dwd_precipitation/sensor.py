@@ -35,8 +35,7 @@ from .const import (
     CONF_DRY_STREAK_SOURCE,
     DEFAULT_DRY_STREAK_SOURCE,
     DRY_STREAK_SOURCE_RS,
-    DRY_STREAK_SOURCE_RW,
-    RW_SLIDING_KEY,
+    DRY_STREAK_SOURCES,
     CONF_START_END_MODE,
     DEFAULT_START_END_MODE,
     START_END_MODE_DURATION,
@@ -51,7 +50,7 @@ from .dry_streak import (
     scalar_reading,
 )
 from .entity import DwdCoordinatorEntity
-from .products import rain_events_enabled
+from .products import dry_streak_coordinator_key, rain_events_enabled
 from .rain_events import NO_EVENT, ONGOING, UPCOMING, VIEW_KEYS, overall_status
 from .precipitation_total import (
     PrecipitationTotalExtraData,
@@ -427,13 +426,17 @@ async def async_setup_entry(
     dry_streak_source = entry.options.get(
         CONF_DRY_STREAK_SOURCE, DEFAULT_DRY_STREAK_SOURCE
     )
+    if dry_streak_source not in DRY_STREAK_SOURCES:
+        _LOGGER.warning(
+            "Unknown dry streak source %r in the options of %s; counting %r "
+            "instead. Saving the options again fixes it",
+            dry_streak_source,
+            entry.title,
+            DEFAULT_DRY_STREAK_SOURCE,
+        )
     entities.append(
         TimespanWithoutPrecipitationSensor(
-            coordinators[
-                RW_SLIDING_KEY
-                if dry_streak_source == DRY_STREAK_SOURCE_RW
-                else dry_streak_source
-            ]
+            coordinators[dry_streak_coordinator_key(entry.options)]
         )
     )
 

@@ -54,6 +54,7 @@ from .const import (
     CONF_DRY_STREAK_SOURCE,
     DEFAULT_DRY_STREAK_SOURCE,
     DRY_STREAK_SOURCE_RW,
+    DRY_STREAK_SOURCES,
     RW_SLIDING_KEY,
     CONF_RAIN_EVENTS,
     DEFAULT_RAIN_EVENTS,
@@ -134,6 +135,20 @@ def _describe_fill_failure(err: Exception, step_end: datetime) -> str:
             "a bug in the integration; please report it if it keeps happening."
         )
     return f"{cause} The step stays unknown and is retried with the next releases"
+
+
+def dry_streak_coordinator_key(options) -> str:
+    """Return the key of the coordinator the dry streak counts.
+
+    The option's values are product keys, except that RW counts its 10-minute
+    runs. An unknown stored value counts as the default. RadolanRW10.is_needed
+    and the sensor setup both ask this, so the coordinator the sensor binds to
+    is always one that was built.
+    """
+    source = options.get(CONF_DRY_STREAK_SOURCE, DEFAULT_DRY_STREAK_SOURCE)
+    if source not in DRY_STREAK_SOURCES:
+        source = DEFAULT_DRY_STREAK_SOURCE
+    return RW_SLIDING_KEY if source == DRY_STREAK_SOURCE_RW else source
 
 
 def rain_events_enabled(options) -> bool:
@@ -1040,10 +1055,7 @@ class RadolanRW10(RadolanRW):
     @classmethod
     def is_needed(cls, options) -> bool:
         """Whether the dry streak counts RW, the only user of the sliding hour."""
-        return (
-            options.get(CONF_DRY_STREAK_SOURCE, DEFAULT_DRY_STREAK_SOURCE)
-            == DRY_STREAK_SOURCE_RW
-        )
+        return dry_streak_coordinator_key(options) == cls.PRODUCT_KEY
 
 class RadolanSF(RadolanProduct):
     """DWD RADOLAN SF: 24-hour precipitation analysis."""
