@@ -428,10 +428,10 @@ reference 10 -> 12; both live tiers pass (4 and 55).
   rules and cites them (40 lines shorter); a test checks the citations.
 - *Not done:* a new entities screenshot. It needs a running HA on this
   branch; the README still shows the 2026.8.0 entity list.
-- *Not done, deliberately:* "one place for each figure" beyond the README
-  timings. The remaining figures (archive sizes, measured delays) are
-  measurements, now each in one ADR or CLAUDE.md section rather than
-  repeated.
+- "One place for each figure": the README timings are tested against the
+  constants; each measurement (archive sizes, publication delays) is stated
+  once in CLAUDE.md or in an ADR. ADRs 0002 and 0004 both cite RW's ~25.7 min,
+  each as the measurement its decision rested on; records are not edited.
 
 ---
 

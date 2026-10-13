@@ -528,7 +528,7 @@ DWD runs RW every 10 minutes, each run the hour ending at that :x0.
 `RadolanRW` (`rw`) reads the run ending on the hour, so every value is a clock
 hour; `RadolanRW10` (`rw_10min`) is the same file family on a 10-minute grid
 (same URL pattern, same parsing, HDF5 edition). Both have a `RELEASE_DELAY` of
-28 min; every run minute is observed at ~25.7 min (288 runs, 2026-10-13).
+28 min, since every run minute is published alike (ADR 0002 has the measurement).
 
 - **Why :00.** Only a clock hour can be called "previous hour" and line up
   with HA's hourly statistics, and the :00 run is as complete, as timely and
