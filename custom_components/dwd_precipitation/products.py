@@ -655,14 +655,17 @@ class RadvorRV(RadvorProduct):
     async def _async_rain_state(self) -> RainEventsState:
         """Return the tracker state, loading it from the store on first use."""
         if self._rain_state is None:
-            raw = await self._rain_store.async_load()
             try:
+                raw = await self._rain_store.async_load()
                 self._rain_state = RainEventsState.from_dict(raw) if raw else RainEventsState()
-            except (KeyError, TypeError, ValueError) as err:
+            except Exception as err:  # noqa: BLE001 - any unreadable store
+                # Also a store written by another version: discarding it costs
+                # the event ids and up to an hour of measured history, where
+                # keeping it would fail every release until the option is off.
                 _LOGGER.warning(
                     "Discarding the saved rain_events state, which could not be "
                     "read (%s). Event ids start over; nothing else is affected",
-                    err,
+                    err or type(err).__name__,
                 )
                 self._rain_state = RainEventsState()
             self._rain_saved_ended = (self._rain_state.last_ended or {}).get("id")

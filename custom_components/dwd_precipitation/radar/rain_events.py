@@ -148,34 +148,115 @@ class RainEventsState:
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> RainEventsState:
-        """Rebuild the state saved by :meth:`as_dict`."""
+        """Rebuild the state saved by :meth:`as_dict`.
+
+        Raises ValueError (or TypeError) for anything update() could not work
+        with, so a damaged or foreign store is discarded as a whole when it is
+        loaded, rather than failing every release after it.
+        """
         measured: dict[datetime, float | None] = {}
         if (start := _parse(raw.get("measured_start"))) is not None:
             for i, value in enumerate(raw.get("measured") or []):
-                measured[start + i * STEP] = value
+                measured[start + i * STEP] = _amount(value)
         return cls(
             base=_parse(raw.get("base")),
-            wet_milli=raw.get("wet_milli"),
+            wet_milli=_optional(raw.get("wet_milli"), int, "wet_milli"),
             measured=measured,
             nodata={_parse(t) for t in raw.get("nodata") or []},
             events=[_event_from_json(e) for e in raw.get("events") or []],
-            last_ended=raw.get("last_ended"),
+            last_ended=_optional(raw.get("last_ended"), dict, "last_ended"),
             ended_spans=[
-                (_parse(a), _parse(b)) for a, b in raw.get("ended_spans") or []
+                (_required_time(a), _required_time(b))
+                for a, b in raw.get("ended_spans") or []
             ],
-            view=raw.get("view"),
+            view=_optional(raw.get("view"), dict, "view"),
         )
 
 
 _EVENT_TIMES = ("first_seen", "start", "end", "last_wet")
 
+# Every field of an event record (see _new_event). A stored record must have
+# them all: update() reads each one on every release.
+_EVENT_FIELDS = (
+    "id",
+    "first_seen",
+    "status",
+    "start",
+    "end",
+    "last_wet",
+    "absorbed",
+    "candidate",
+    "onset",
+    "onset_frozen",
+    "view",
+)
+
+# What a forecast snapshot (an event's candidate or onset) holds.
+_SNAPSHOT_FIELDS = ("base", "start", "end", "mm", "peak_1h", "peak_10min", "forecast")
+
+
+def _optional(value: Any, kind: type, name: str) -> Any:
+    """Return ``value`` if it is None or a ``kind``; raise otherwise."""
+    if value is not None and not isinstance(value, kind):
+        raise ValueError(f"{name} is {type(value).__name__}, not {kind.__name__}")
+    return value
+
+
+def _amount(value: Any) -> float | None:
+    """Return a stored step amount, which must be a number or None."""
+    if value is not None and (
+        isinstance(value, bool) or not isinstance(value, (int, float))
+    ):
+        raise ValueError(f"step amount {value!r}")
+    return value
+
+
+def _required_time(raw: Any) -> datetime:
+    """Parse a stored timestamp that must be there."""
+    if (ts := _parse(raw)) is None:
+        raise ValueError("missing timestamp")
+    return ts
+
+
+def _snapshot(raw: Any) -> dict[str, Any] | None:
+    """Check a stored forecast snapshot (candidate / onset)."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict) or not set(_SNAPSHOT_FIELDS) <= raw.keys():
+        raise ValueError("incomplete forecast snapshot")
+    _required_time(raw["base"])
+    if not isinstance(raw["forecast"], list):
+        raise ValueError("snapshot forecast is not a list")
+    return raw
+
 
 def _event_to_json(event: dict[str, Any]) -> dict[str, Any]:
-    return {k: _iso(v) if k in _EVENT_TIMES else v for k, v in event.items()}
+    return {k: _iso(event[k]) if k in _EVENT_TIMES else event[k] for k in _EVENT_FIELDS}
 
 
-def _event_from_json(raw: dict[str, Any]) -> dict[str, Any]:
-    return {k: _parse(v) if k in _EVENT_TIMES else v for k, v in raw.items()}
+def _event_from_json(raw: Any) -> dict[str, Any]:
+    """Rebuild a stored event record, checking everything update() relies on.
+
+    Fields of an older format that update() no longer reads are dropped.
+    """
+    if not isinstance(raw, dict) or not set(_EVENT_FIELDS) <= raw.keys():
+        raise ValueError("incomplete event record")
+    if raw["status"] not in (UPCOMING, ONGOING, UNSEEN):
+        raise ValueError(f"event status {raw['status']!r}")
+    if not isinstance(raw["id"], str) or not isinstance(raw["absorbed"], list):
+        raise ValueError("event id or absorbed ids")
+    if not isinstance(raw["view"], dict):
+        raise ValueError("event without a view")
+    event = {
+        k: _parse(raw[k]) if k in _EVENT_TIMES else raw[k] for k in _EVENT_FIELDS
+    }
+    for k in ("first_seen", "start", "end"):
+        if event[k] is None:
+            raise ValueError(f"event without {k}")
+    event["onset_frozen"] = bool(event["onset_frozen"])
+    event["candidate"] = _snapshot(event["candidate"])
+    event["onset"] = _snapshot(event["onset"])
+    return event
 
 
 # ---------------------------------------------------------------------------
@@ -527,11 +608,15 @@ def update(
         state.base is not None
         and base == state.base
         and state.view is not None
+        and state.view.get("schema") == SCHEMA
         and state.wet_milli == milli
     ):
-        # The same release again: nothing has changed. Not after a threshold
-        # change, though: an options change reloads the entry, whose first
-        # refresh is this very release.
+        # The same release again (a refresh, or a restart within one release):
+        # nothing has changed, and processing it twice is not harmless (an
+        # unmatched upcoming event would go unseen, then be dropped). Not
+        # after a threshold change, though: an options change reloads the
+        # entry, whose first refresh is this very release. The stored view is
+        # also why a restart can answer here at all.
         return state.view
     if state.base is not None and base < state.base:
         state.events = []  # the clock went backwards; ids could repeat

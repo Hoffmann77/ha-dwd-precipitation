@@ -1000,6 +1000,24 @@ async def test_rv_unreadable_store_starts_over(caplog) -> None:
 
 
 @pytest.mark.asyncio
+async def test_rv_store_that_cannot_be_loaded_starts_over(caplog) -> None:
+    """A store HA cannot load (another version, say) is discarded, not retried."""
+
+    class _Unloadable(_FakeStore):
+        async def async_load(self):
+            raise NotImplementedError("stored version 2, expected 1")
+
+    coord = _rv_tracked(_Unloadable())
+    data, _ = await _rv_release(coord, _RVWorld(lambda _t: 0.0), "14:00")
+    second, _ = await _rv_release(coord, _RVWorld(lambda _t: 0.0), "14:05")
+
+    assert data["rain_events"]["schema"] == 1
+    assert second["rain_events"]["schema"] == 1
+    discarded = [r for r in caplog.records if "Discarding the saved" in r.message]
+    assert len(discarded) == 1
+
+
+@pytest.mark.asyncio
 async def test_rv_tracker_failure_leaves_the_sensors_alone(caplog) -> None:
     coord = _rv_tracked()
     with patch.object(products, "update_rain_events", side_effect=RuntimeError("bug")):

@@ -467,6 +467,74 @@ def test_state_round_trips_through_json():
     assert RainEventsState.from_dict(raw).as_dict() == raw
 
 
+def test_restarting_after_every_release_changes_nothing():
+    """Every state the tracker writes restores losslessly (and passes the checks)."""
+    rain = combine(
+        steady(1.0, "13:10", "13:40"),
+        steady(0.3, "14:20", "15:10"),
+        steady(2.0, "15:50", "16:05"),
+    )
+    forecast = combine(steady(1.0, "13:20", "13:50"), steady(0.5, "14:10", "15:30"))
+    plain, restarted = Sim(), Sim()
+    t = at("12:00")
+    while t <= at("17:00"):
+        expected = plain.release(t, rain, forecast)
+        restarted.restart()
+        assert restarted.release(t, rain, forecast) == expected, t
+        # The same release again after a restart answers from the stored view.
+        restarted.restart()
+        assert restarted.release(t, rain, forecast) == expected, t
+        t += STEP
+
+
+def _stored_with_event(**changes) -> dict:
+    sim = Sim()
+    sim.run("13:00", "14:15", steady(1.0, "14:00", "15:00"))
+    raw = json.loads(json.dumps(sim.state.as_dict()))
+    raw["events"][0].update(changes)
+    return raw
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"status": "gone"},
+        {"start": None},
+        {"start": "yesterday"},
+        {"absorbed": "x"},
+        {"view": None},
+        {"candidate": {"base": "2026-10-12T14:00:00+00:00"}},
+    ],
+)
+def test_a_damaged_event_record_is_rejected(changes):
+    with pytest.raises((ValueError, TypeError)):
+        RainEventsState.from_dict(_stored_with_event(**changes))
+
+
+def test_an_event_record_missing_a_field_is_rejected():
+    raw = _stored_with_event()
+    del raw["events"][0]["onset_frozen"]
+    with pytest.raises(ValueError):
+        RainEventsState.from_dict(raw)
+
+
+def test_a_field_an_older_version_stored_is_dropped():
+    raw = _stored_with_event(unseen=0)  # written up to 2026.10.0's successors
+    state = RainEventsState.from_dict(raw)
+    assert "unseen" not in state.events[0]
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [("measured", ["wet"]), ("wet_milli", "8"), ("view", []), ("last_ended", 3)],
+)
+def test_damaged_state_fields_are_rejected(key, value):
+    raw = _stored_with_event()
+    raw[key] = value
+    with pytest.raises(ValueError):
+        RainEventsState.from_dict(raw)
+
+
 def test_nothing_at_stake_on_a_dry_day():
     sim = Sim()
     sim.run("12:00", "13:00", DRY)

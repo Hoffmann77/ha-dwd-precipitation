@@ -636,7 +636,13 @@ glue; `RainEventsSensor` in sensor.py the entity.
   wet or unknown step, a new `last_ended`); otherwise the delayed save is
   pushed back by every release and happens at shutdown, so a dry day costs no
   writes. Unload writes it at once (an options reload must read it back),
-  `async_remove_entry` deletes it, an unreadable store is discarded.
+  `async_remove_entry` deletes it. A store that cannot be loaded (damaged, or
+  another version's) or whose records `RainEventsState.from_dict` rejects
+  (every field `update()` reads is checked) is discarded once with a warning:
+  that costs the event ids and up to an hour of history, where keeping it
+  would fail every release. The views are stored too, and must be: an
+  `unseen` event is republished from its last view, and the stored view
+  answers the same release after a restart without processing it twice.
 - **Isolation.** A tracker failure is logged once and leaves the attribute
   out; it never fails the RV update the other sensors depend on.
 - **Threshold.** `rain_event_threshold` is independent of
