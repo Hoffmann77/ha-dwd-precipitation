@@ -93,7 +93,7 @@ uv run --group unit-test pytest tests
 - `live.yml` — daily; live download+parse; opens/updates an issue on failure.
 - `live-wradlib.yml` — daily; our parser vs. wradlib on live files; opens/updates
   an issue on failure.
-- `ha-compat.yml` — weekly; integration tier against pinned / latest / dev
+- `ha-compat.yml` — weekly; integration tier against the latest / dev
   `pytest-homeassistant-custom-component`; opens an issue on failure (dev is
   experimental / non-blocking).
 - `hassfest.yaml`, `validate.yaml` — daily HA manifest + HACS structural validation.
