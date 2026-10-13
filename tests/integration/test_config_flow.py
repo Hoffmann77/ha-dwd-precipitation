@@ -6,7 +6,6 @@ import pytest
 from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType, InvalidData
-from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.dwd_precipitation.const import (
     CONF_COORDS,
@@ -203,16 +202,11 @@ def _schema_default(result, key: str):
     ],
 )
 async def test_options_form_offers_the_dry_streak_source(
+    make_entry,
     hass: HomeAssistant, options: dict, expected: str
 ) -> None:
     """The form shows the entry's own source, defaulting to RW."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={"name": "Home", "latitude": 51.05, "longitude": 13.73},
-        options=options,
-        minor_version=2,
-    )
-    entry.add_to_hass(hass)
+    entry = make_entry(options, minor_version=2)
 
     result = await hass.config_entries.options.async_init(entry.entry_id)
 
@@ -220,15 +214,9 @@ async def test_options_form_offers_the_dry_streak_source(
     assert _schema_default(result, CONF_DRY_STREAK_SOURCE) == expected
 
 
-async def test_options_flow_saves_the_dry_streak_source(hass: HomeAssistant) -> None:
+async def test_options_flow_saves_the_dry_streak_source(make_entry, hass: HomeAssistant) -> None:
     """Saving rs round-trips into the entry options."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={"name": "Home", "latitude": 51.05, "longitude": 13.73},
-        options={CONF_DRY_STREAK_SOURCE: DRY_STREAK_SOURCE_RW},
-        minor_version=2,
-    )
-    entry.add_to_hass(hass)
+    entry = make_entry({CONF_DRY_STREAK_SOURCE: DRY_STREAK_SOURCE_RW}, minor_version=2)
 
     result = await hass.config_entries.options.async_init(entry.entry_id)
     result = await hass.config_entries.options.async_configure(
@@ -241,16 +229,11 @@ async def test_options_flow_saves_the_dry_streak_source(hass: HomeAssistant) -> 
 
 
 async def test_options_flow_rejects_an_unknown_dry_streak_source(
+    make_entry,
     hass: HomeAssistant,
 ) -> None:
     """Only the two product keys are accepted."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={"name": "Home", "latitude": 51.05, "longitude": 13.73},
-        options={},
-        minor_version=2,
-    )
-    entry.add_to_hass(hass)
+    entry = make_entry(minor_version=2)
 
     result = await hass.config_entries.options.async_init(entry.entry_id)
     with pytest.raises(InvalidData):
@@ -274,15 +257,9 @@ def _section(result):
     return result["data_schema"].schema[marker]
 
 
-async def test_advanced_options_are_a_collapsed_section(hass: HomeAssistant) -> None:
+async def test_advanced_options_are_a_collapsed_section(make_entry, hass: HomeAssistant) -> None:
     """The rarely needed options sit in a collapsed section with flat defaults."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={"name": "Home", "latitude": 51.05, "longitude": 13.73},
-        options={"full_rolling_series": True, "rain_event_threshold": 0.4},
-        minor_version=2,
-    )
-    entry.add_to_hass(hass)
+    entry = make_entry({"full_rolling_series": True, "rain_event_threshold": 0.4}, minor_version=2)
 
     result = await hass.config_entries.options.async_init(entry.entry_id)
     advanced = _section(result)
@@ -298,15 +275,9 @@ async def test_advanced_options_are_a_collapsed_section(hass: HomeAssistant) -> 
     assert main.isdisjoint(ADVANCED)
 
 
-async def test_advanced_options_are_stored_flat(hass: HomeAssistant) -> None:
+async def test_advanced_options_are_stored_flat(make_entry, hass: HomeAssistant) -> None:
     """Saving flattens the section, so every option keeps its key."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={"name": "Home", "latitude": 51.05, "longitude": 13.73},
-        options={CONF_DRY_STREAK_SOURCE: DRY_STREAK_SOURCE_RS},
-        minor_version=2,
-    )
-    entry.add_to_hass(hass)
+    entry = make_entry({CONF_DRY_STREAK_SOURCE: DRY_STREAK_SOURCE_RS}, minor_version=2)
 
     result = await hass.config_entries.options.async_init(entry.entry_id)
     result = await hass.config_entries.options.async_configure(

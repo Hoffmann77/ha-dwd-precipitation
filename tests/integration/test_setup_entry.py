@@ -20,7 +20,6 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import async_get_platforms
 from pytest import approx
-from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.dwd_precipitation import PRODUCT_CLASSES
 from custom_components.dwd_precipitation.const import CONF_DRY_STREAK_SOURCE, DOMAIN
@@ -81,6 +80,7 @@ NEW_SINCE_2026_10_0 = {
 @pytest.mark.asyncio
 @pytest.mark.parametrize("full_rolling_series", [False, True])
 async def test_entry_setup_creates_sensors_with_correct_values(
+    make_entry,
     hass: HomeAssistant, full_rolling_series: bool
 ) -> None:
     """Full entry setup with mocked _fetch_and_parse; verify coordinators + sensor states.
@@ -140,12 +140,7 @@ async def test_entry_setup_creates_sensors_with_correct_values(
     )
     hymec_meta = ProductMetadata(source_product="HymecNG_top_view", source_timestamp=ts)
 
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={"name": "Home", "latitude": 51.05, "longitude": 13.73},
-        options={"full_rolling_series": full_rolling_series},
-    )
-    entry.add_to_hass(hass)
+    entry = make_entry({"full_rolling_series": full_rolling_series})
 
     with (
         patch.object(
@@ -255,7 +250,7 @@ async def test_entry_setup_creates_sensors_with_correct_values(
     # No new id is one a released version gave another entity: on an old
     # install that entity still holds it, so recreating ids would collide.
     for key, entity_id in new_ids.items():
-        slug = entity_id.removeprefix("mock_title_")
+        slug = entity_id.removeprefix("home_")
         owner = next(
             (k for k, s in RELEASED_2026_10_0_IDS.items() if s == slug), key
         )
@@ -263,7 +258,7 @@ async def test_entry_setup_creates_sensors_with_correct_values(
 
     expected = {**RENAMED_SINCE_2026_10_0, **NEW_SINCE_2026_10_0}
     assert {key: new_ids[key] for key in expected} == {
-        key: f"mock_title_{slug}" for key, slug in expected.items()
+        key: f"home_{slug}" for key, slug in expected.items()
     }
 
     # The two 120-minute sensors: RS's two forecast hours added, RV's peak.
@@ -353,18 +348,6 @@ assert set(WORKING_PRODUCTS) == set(PRODUCT_CLASSES), (
 )
 
 
-def _entry(hass: HomeAssistant) -> MockConfigEntry:
-    """Return a config entry added to hass."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={"name": "Home", "latitude": 51.05, "longitude": 13.73},
-        options={},
-    )
-    entry.add_to_hass(hass)
-
-    return entry
-
-
 @contextmanager
 def _patched_products(**failures: Exception):
     """Patch every product's fetch, failing the ones named by PRODUCT_KEY."""
@@ -395,11 +378,12 @@ def _state_for(hass: HomeAssistant, unique_id_suffix: str, domain: str = "sensor
 @pytest.mark.parametrize("expected_lingering_timers", [True])
 @pytest.mark.asyncio
 async def test_one_failing_product_does_not_block_the_entry(
+    make_entry,
     hass: HomeAssistant,
     expected_lingering_timers: bool,
 ) -> None:
     """A dead product loses only its own entities; the rest of the entry loads."""
-    entry = _entry(hass)
+    entry = make_entry()
 
     with _patched_products(hymecng=OSError("DWD retired this product")):
         assert await hass.config_entries.async_setup(entry.entry_id)
@@ -418,11 +402,12 @@ async def test_one_failing_product_does_not_block_the_entry(
 @pytest.mark.parametrize("expected_lingering_timers", [True])
 @pytest.mark.asyncio
 async def test_every_product_failing_leaves_the_entry_not_ready(
+    make_entry,
     hass: HomeAssistant,
     expected_lingering_timers: bool,
 ) -> None:
     """A total outage still puts the entry into HA's own setup-retry loop."""
-    entry = _entry(hass)
+    entry = make_entry()
     outage = {cls.PRODUCT_KEY: OSError("DWD OpenData is down") for cls in PRODUCT_CLASSES}
 
     with _patched_products(**outage):
@@ -434,6 +419,7 @@ async def test_every_product_failing_leaves_the_entry_not_ready(
 
 @pytest.mark.asyncio
 async def test_local_time_product_is_scheduled_in_local_time(
+    make_entry,
     hass: HomeAssistant,
 ) -> None:
     """sf_2350's release grid is local wall-clock, so its tracker must be too.
@@ -441,7 +427,7 @@ async def test_local_time_product_is_scheduled_in_local_time(
     Registering it in UTC fetches it an offset's worth of hours late every day,
     which leaves the sensor past its staleness deadline in the meantime.
     """
-    entry = _entry(hass)
+    entry = make_entry()
 
     with (
         patch(
@@ -499,17 +485,11 @@ def _dry_streak_sensor(hass: HomeAssistant):
     ],
 )
 async def test_dry_streak_sensor_binds_to_the_configured_source(
+    make_entry,
     hass: HomeAssistant, minor_version: int, options: dict, bound_to: str
 ) -> None:
     """The dry streak follows dry_streak_source; old entries are pinned to RS."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={"name": "Home", "latitude": 51.05, "longitude": 13.73},
-        options=options,
-        version=1,
-        minor_version=minor_version,
-    )
-    entry.add_to_hass(hass)
+    entry = make_entry(options, version=1, minor_version=minor_version)
 
     with _patched_products():
         assert await hass.config_entries.async_setup(entry.entry_id)
@@ -537,16 +517,11 @@ async def test_dry_streak_sensor_binds_to_the_configured_source(
     ],
 )
 async def test_sliding_rw_is_built_only_when_used(
+    make_entry,
     hass: HomeAssistant, options: dict, built: bool
 ) -> None:
     """rw_10min exists only for the dry streak that uses it."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={"name": "Home", "latitude": 51.05, "longitude": 13.73},
-        options=options,
-        minor_version=2,
-    )
-    entry.add_to_hass(hass)
+    entry = make_entry(options, minor_version=2)
 
     with _patched_products():
         assert await hass.config_entries.async_setup(entry.entry_id)
@@ -567,17 +542,11 @@ async def test_sliding_rw_is_built_only_when_used(
 
 @pytest.mark.asyncio
 async def test_entry_from_a_newer_major_version_is_not_migrated(
+    make_entry,
     hass: HomeAssistant,
 ) -> None:
     """A downgrade must not touch an entry it does not understand."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={"name": "Home", "latitude": 51.05, "longitude": 13.73},
-        options={},
-        version=2,
-        minor_version=1,
-    )
-    entry.add_to_hass(hass)
+    entry = make_entry(version=2, minor_version=1)
 
     assert not await hass.config_entries.async_setup(entry.entry_id)
     assert entry.state is ConfigEntryState.MIGRATION_ERROR
@@ -585,13 +554,13 @@ async def test_entry_from_a_newer_major_version_is_not_migrated(
 
 
 @pytest.mark.asyncio
-async def test_renamed_sensor_keeps_an_existing_entity_id(hass: HomeAssistant) -> None:
+async def test_renamed_sensor_keeps_an_existing_entity_id(make_entry, hass: HomeAssistant) -> None:
     """The renames change names, never the entity ids users already have.
 
     Up to 2026.10.0 RS was "Precipitation now" and RW "Precipitation last 1h".
     New installs get new ids for both; an existing one keeps the old ones.
     """
-    entry = _entry(hass)
+    entry = make_entry()
     ent_reg = er.async_get(hass)
     for key, object_id in (
         ("radvor_rs_000", "home_precipitation_now"),
@@ -617,10 +586,11 @@ async def test_renamed_sensor_keeps_an_existing_entity_id(hass: HomeAssistant) -
 
 @pytest.mark.asyncio
 async def test_removing_the_entry_deletes_its_rain_events_store(
+    make_entry,
     hass: HomeAssistant, hass_storage
 ) -> None:
     """Nothing the entry stored outlives it."""
-    entry = _entry(hass)
+    entry = make_entry()
     key = f"dwd_precipitation.{entry.entry_id}.rain_events"
     hass_storage[key] = {"version": 1, "minor_version": 1, "key": key, "data": {}}
     with _patched_products():
@@ -635,17 +605,13 @@ async def test_removing_the_entry_deletes_its_rain_events_store(
 
 @pytest.mark.asyncio
 async def test_unloading_writes_the_rain_events_state(
+    make_entry,
     hass: HomeAssistant, hass_storage
 ) -> None:
     """An options change reloads the entry; the new tracker must read today's state."""
     from custom_components.dwd_precipitation.radar.rain_events import RainEventsState
 
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={"name": "Home", "latitude": 51.05, "longitude": 13.73},
-        options={"rain_events": True},
-    )
-    entry.add_to_hass(hass)
+    entry = make_entry({"rain_events": True})
     with _patched_products():
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
@@ -672,14 +638,9 @@ RAIN_VIEW = {
 
 
 @pytest.mark.asyncio
-async def test_rain_events_sensor_with_the_option(hass: HomeAssistant) -> None:
+async def test_rain_events_sensor_with_the_option(make_entry, hass: HomeAssistant) -> None:
     """With the option on, the view is its own sensor's attributes."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={"name": "Home", "latitude": 51.05, "longitude": 13.73},
-        options={"rain_events": True},
-    )
-    entry.add_to_hass(hass)
+    entry = make_entry({"rain_events": True})
 
     tracker = AsyncMock(return_value=RAIN_VIEW)
     with _patched_products(), patch.object(RainEventsTracker, "async_track", new=tracker):
@@ -687,7 +648,7 @@ async def test_rain_events_sensor_with_the_option(hass: HomeAssistant) -> None:
         await hass.async_block_till_done()
 
     state = _state_for(hass, "radvor_rv_rain_events")
-    assert state.entity_id == "sensor.mock_title_rain_events"
+    assert state.entity_id == "sensor.home_rain_events"
     assert state.state == "upcoming"
     assert state.attributes["schema"] == 1
     assert state.attributes["events"] == RAIN_VIEW["events"]
@@ -700,10 +661,11 @@ async def test_rain_events_sensor_with_the_option(hass: HomeAssistant) -> None:
 
 @pytest.mark.asyncio
 async def test_rain_events_off_runs_no_tracker_and_leaves_nothing(
+    make_entry,
     hass: HomeAssistant, hass_storage
 ) -> None:
     """Off (the default): no tracker, and what an earlier "on" left is removed."""
-    entry = _entry(hass)
+    entry = make_entry()
     unique_id = f"{entry.entry_id}_radvor_rv_rain_events"
     er.async_get(hass).async_get_or_create(
         "sensor", DOMAIN, unique_id, config_entry=entry
@@ -721,14 +683,9 @@ async def test_rain_events_off_runs_no_tracker_and_leaves_nothing(
 
 
 @pytest.mark.asyncio
-async def test_the_entrys_products_share_one_download_cache(hass: HomeAssistant) -> None:
+async def test_the_entrys_products_share_one_download_cache(make_entry, hass: HomeAssistant) -> None:
     """rw/rw_10min and sf/sf_2350 can only share downloads through one cache."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={"name": "Home", "latitude": 51.05, "longitude": 13.73},
-        options={CONF_DRY_STREAK_SOURCE: "rw"},
-    )
-    entry.add_to_hass(hass)
+    entry = make_entry({CONF_DRY_STREAK_SOURCE: "rw"})
     with _patched_products():
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
@@ -748,6 +705,7 @@ async def test_the_entrys_products_share_one_download_cache(hass: HomeAssistant)
     ],
 )
 async def test_restored_dry_streak_is_corrected_for_rain_during_downtime(
+    make_entry,
     hass: HomeAssistant, freezer, threshold: float, moved: bool
 ) -> None:
     """The anchor restored from days ago moves forward if RW/SF saw rain since."""
@@ -763,21 +721,18 @@ async def test_restored_dry_streak_is_corrected_for_rain_during_downtime(
         hass,
         [
             (
-                State("sensor.mock_title_timespan_without_precipitation", "4.2"),
+                State("sensor.home_timespan_without_precipitation", "4.2"),
                 {"dry_since": restored.isoformat()},
             )
         ],
     )
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={"name": "Home", "latitude": 51.05, "longitude": 13.73},
-        # RS counts (1.5 mm, below both thresholds), so only the correction
-        # can move the anchor.
-        options={CONF_DRY_STREAK_SOURCE: "rs", "precipitation_reset_threshold": threshold},
+    # RS counts (1.5 mm, below both thresholds), so only the correction
+    # can move the anchor.
+    entry = make_entry(
+        {CONF_DRY_STREAK_SOURCE: "rs", "precipitation_reset_threshold": threshold},
         version=1,
         minor_version=2,
     )
-    entry.add_to_hass(hass)
     with _patched_products():
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()

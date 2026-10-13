@@ -17,7 +17,6 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 from pytest import approx
 from pytest_homeassistant_custom_component.common import (
-    MockConfigEntry,
     mock_restore_cache_with_extra_data,
 )
 
@@ -430,7 +429,7 @@ def test_pending_too_old_to_fetch_is_given_up(caplog):
 
 
 @pytest.mark.asyncio
-async def test_restart_resumes_a_pending_backfill(hass: HomeAssistant, freezer) -> None:
+async def test_restart_resumes_a_pending_backfill(make_entry, hass: HomeAssistant, freezer) -> None:
     """A backfill a restart interrupted resumes at startup, with no new release."""
     freezer.move_to("2026-07-03 11:30:00+00:00")
     entity_id = "sensor.home_precipitation_total"
@@ -447,13 +446,7 @@ async def test_restart_resumes_a_pending_backfill(hass: HomeAssistant, freezer) 
             )
         ],
     )
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title="Home",
-        data={"name": "Home", "latitude": 51.05, "longitude": 13.73},
-        options={},
-    )
-    entry.add_to_hass(hass)
+    entry = make_entry()
 
     rw_value = WORKING_PRODUCTS[RadolanRW][0]["amount"]
     with _patched_products():
@@ -472,7 +465,7 @@ async def test_restart_resumes_a_pending_backfill(hass: HomeAssistant, freezer) 
 
 
 @pytest.mark.asyncio
-async def test_restore_without_a_total_starts_over(hass: HomeAssistant, freezer) -> None:
+async def test_restore_without_a_total_starts_over(make_entry, hass: HomeAssistant, freezer) -> None:
     """A payload with releases but no total counted nothing: start from 0."""
     freezer.move_to("2026-07-03 11:30:00+00:00")
     entity_id = "sensor.home_precipitation_total"
@@ -489,13 +482,7 @@ async def test_restore_without_a_total_starts_over(hass: HomeAssistant, freezer)
             )
         ],
     )
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title="Home",
-        data={"name": "Home", "latitude": 51.05, "longitude": 13.73},
-        options={},
-    )
-    entry.add_to_hass(hass)
+    entry = make_entry()
 
     with _patched_products():
         assert await hass.config_entries.async_setup(entry.entry_id)
@@ -524,6 +511,7 @@ async def test_restore_without_a_total_starts_over(hass: HomeAssistant, freezer)
     ids=["on_grid", "from_hh50_grid"],
 )
 async def test_restart_restores_total_and_backfills_the_gap(
+    make_entry,
     hass: HomeAssistant, freezer, restored_release, backfilled
 ) -> None:
     """The missed releases between the restored one and 11:00 are fetched."""
@@ -541,13 +529,7 @@ async def test_restart_restores_total_and_backfills_the_gap(
             )
         ],
     )
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title="Home",
-        data={"name": "Home", "latitude": 51.05, "longitude": 13.73},
-        options={},
-    )
-    entry.add_to_hass(hass)
+    entry = make_entry()
 
     rw_value = WORKING_PRODUCTS[RadolanRW][0]["amount"]
     with _patched_products():
@@ -575,16 +557,10 @@ async def test_restart_restores_total_and_backfills_the_gap(
 
 
 @pytest.mark.asyncio
-async def test_existing_daily_total_stays_enabled(hass: HomeAssistant, freezer) -> None:
+async def test_existing_daily_total_stays_enabled(make_entry, hass: HomeAssistant, freezer) -> None:
     """Disabled by default only applies when the entity is first registered."""
     freezer.move_to("2026-07-03 11:30:00+00:00")
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title="Home",
-        data={"name": "Home", "latitude": 51.05, "longitude": 13.73},
-        options={},
-    )
-    entry.add_to_hass(hass)
+    entry = make_entry()
     # As 2026.10.0 registered it.
     er.async_get(hass).async_get_or_create(
         "sensor",

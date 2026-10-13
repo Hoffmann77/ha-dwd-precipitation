@@ -15,7 +15,6 @@ from unittest.mock import AsyncMock, patch
 import numpy as np
 import pytest
 
-from types import SimpleNamespace
 
 from custom_components.dwd_precipitation import products, rain_events_tracker
 from custom_components.dwd_precipitation.coordinator import CoordinatorData
@@ -34,26 +33,11 @@ from tests.factories.odim import make_hymecng_h5
 from tests.factories.radvor import LEADS, RangeServer, make_radvor_tar
 
 
-class _FakeHass:
-    """Stands in for hass: runs executor jobs inline and counts them."""
-
-    def __init__(self) -> None:
-        self.executor_jobs = 0
-
-    async def async_add_executor_job(self, target, *args):
-        self.executor_jobs += 1
-        return target(*args)
-
-
-def _coord(cls, options: dict | None = None):
-    """Build a product coordinator without HA's constructor."""
-    coord = cls.__new__(cls)
-    coord.hass = _FakeHass()
-    coord.async_client = object()
-    coord.coords = (51.05, 13.73)
-    coord.config_entry = SimpleNamespace(options=options or {})
-    return coord
-
+def _executor_jobs(coord):
+    """Count the executor jobs the coordinator hands to hass."""
+    return patch.object(
+        coord.hass, "async_add_executor_job", wraps=coord.hass.async_add_executor_job
+    )
 
 
 def _rs_what(base: datetime, lead: int) -> dict:
@@ -67,7 +51,7 @@ def _rs_what(base: datetime, lead: int) -> dict:
     }
 
 
-async def _rs_fetch(ts: datetime, values: dict[int, float], full: bool = True):
+async def _rs_fetch(make_coordinator, ts: datetime, values: dict[int, float], full: bool = True):
     """Run RadvorRS._fetch_and_parse, serving each decoded lead from ``values``."""
     decoded: list[int] = []
 
@@ -76,7 +60,7 @@ async def _rs_fetch(ts: datetime, values: dict[int, float], full: bool = True):
         decoded.append(lead)
         return np.float32(values[lead]), _rs_what(ts, lead)
 
-    coord = _coord(RadvorRS, {"full_rolling_series": full})
+    coord = make_coordinator(RadvorRS, {"full_rolling_series": full})
 
     with (
         patch.object(
@@ -85,23 +69,24 @@ async def _rs_fetch(ts: datetime, values: dict[int, float], full: bool = True):
             new=AsyncMock(return_value=AsyncResponse(content=make_radvor_tar("rs", ts))),
         ),
         patch.object(products, "read_odim_composite_cell", side_effect=_read),
+        _executor_jobs(coord) as jobs,
     ):
         data, meta = await coord._fetch_and_parse(ts)
     # The decode runs off the loop; so does unpacking the archive this server
     # sends whole instead of a range (default mode only).
-    assert coord.hass.executor_jobs == (1 if full else 2)
+    assert jobs.call_count == (1 if full else 2)
     return data, meta, decoded
 
 
 @pytest.mark.asyncio
-async def test_rs_fetch_derives_base_source_timestamp_and_window() -> None:
+async def test_rs_fetch_derives_base_source_timestamp_and_window(make_coordinator) -> None:
     """RS: source_timestamp is the base run time (data_end - lead), identical for all leads.
 
     The ODIM enddate/endtime advances with the lead time, so the previous code
     (which used it directly) was only correct for the 0-min member.
     """
     ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
-    data, meta, _ = await _rs_fetch(ts, {lead: float(lead) for lead in LEADS})
+    data, meta, _ = await _rs_fetch(make_coordinator, ts, {lead: float(lead) for lead in LEADS})
 
     # The three non-overlapping hours come from leads 0 / 60 / 120.
     assert [data["last_60"], data["next_60"], data["next_60_120"]] == [0.0, 60.0, 120.0]
@@ -121,14 +106,14 @@ async def test_rs_fetch_derives_base_source_timestamp_and_window() -> None:
 
 
 @pytest.mark.asyncio
-async def test_rs_peak_hour_and_rolling_series() -> None:
+async def test_rs_peak_hour_and_rolling_series(make_coordinator) -> None:
     """RS: the wettest future rolling hour, its window, and the 25-point series."""
     ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
     # A storm straddling the fixed hours: its heaviest hour ends at T+90, which
     # neither "next 60 min" (lead 60) nor "next 60-120 min" (lead 120) sees in full.
     values = {lead: 0.0 for lead in LEADS}
     values.update({0: 30.0, 60: 4.0, 85: 9.0, 90: 18.0, 95: 18.0, 120: 5.0})
-    data, meta, _ = await _rs_fetch(ts, values)
+    data, meta, _ = await _rs_fetch(make_coordinator, ts, values)
 
     # Lead 0 (the past hour, 30 mm) is not a forecast and is excluded; the tie
     # between leads 90 and 95 goes to the earlier window.
@@ -153,10 +138,10 @@ async def test_rs_peak_hour_and_rolling_series() -> None:
 
 
 @pytest.mark.asyncio
-async def test_rs_dry_forecast_has_no_peak_window() -> None:
+async def test_rs_dry_forecast_has_no_peak_window(make_coordinator) -> None:
     """RS: a dry forecast peaks at 0 mm, but has no wettest hour to point at."""
     ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
-    data, meta, _ = await _rs_fetch(ts, {lead: 0.0 for lead in LEADS})
+    data, meta, _ = await _rs_fetch(make_coordinator, ts, {lead: 0.0 for lead in LEADS})
 
     assert data["peak_1h"] == 0.0
     assert meta["peak_1h"].data_start is None
@@ -166,11 +151,11 @@ async def test_rs_dry_forecast_has_no_peak_window() -> None:
 
 
 @pytest.mark.asyncio
-async def test_rs_without_option_decodes_only_the_three_hours() -> None:
+async def test_rs_without_option_decodes_only_the_three_hours(make_coordinator) -> None:
     """RS: with the option off only leads 0/60/120 are decoded; RV owns the peak."""
     ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
     values = {lead: float(lead) for lead in LEADS}
-    data, meta, decoded = await _rs_fetch(ts, values, full=False)
+    data, meta, decoded = await _rs_fetch(make_coordinator, ts, values, full=False)
 
     assert decoded == [0, 60, 120]
     assert data == {
@@ -182,7 +167,7 @@ async def test_rs_without_option_decodes_only_the_three_hours() -> None:
 
 
 @pytest.mark.asyncio
-async def test_rs_range_fallback_is_said_once_and_its_end_once(caplog) -> None:
+async def test_rs_range_fallback_is_said_once_and_its_end_once(make_coordinator, caplog) -> None:
     """Whole archives instead of ranges: one WARNING per run, one INFO after."""
     ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
     archive = make_radvor_tar("rs", ts)
@@ -193,7 +178,7 @@ async def test_rs_range_fallback_is_said_once_and_its_end_once(caplog) -> None:
         lead = int(fileobj.getvalue())
         return np.float32(lead), _rs_what(ts, lead)
 
-    coord = _coord(RadvorRS, {"full_rolling_series": False})
+    coord = make_coordinator(RadvorRS, {"full_rolling_series": False})
     with patch.object(products, "read_odim_composite_cell", side_effect=_read):
         for server in (ignores_ranges, ignores_ranges, ignores_ranges, serves_ranges):
             with patch.object(products, "async_get", side_effect=server):
@@ -207,7 +192,7 @@ async def test_rs_range_fallback_is_said_once_and_its_end_once(caplog) -> None:
 
 
 @pytest.mark.asyncio
-async def test_rs_without_option_reads_the_hours_by_range() -> None:
+async def test_rs_without_option_reads_the_hours_by_range(make_coordinator) -> None:
     """RS: the default mode asks for byte ranges instead of the whole archive."""
     ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
     server = RangeServer(make_radvor_tar("rs", ts))
@@ -216,10 +201,11 @@ async def test_rs_without_option_reads_the_hours_by_range() -> None:
         lead = int(fileobj.getvalue())
         return np.float32(lead), _rs_what(ts, lead)
 
-    coord = _coord(RadvorRS, {"full_rolling_series": False})
+    coord = make_coordinator(RadvorRS, {"full_rolling_series": False})
     with (
         patch.object(products, "async_get", side_effect=server.async_get),
         patch.object(products, "read_odim_composite_cell", side_effect=_read),
+        _executor_jobs(coord) as jobs,
     ):
         data, _ = await coord._fetch_and_parse(ts)
 
@@ -227,7 +213,7 @@ async def test_rs_without_option_reads_the_hours_by_range() -> None:
     # The test archive is tiny, so the first window already holds all three.
     assert len(server.requests) == 1
     assert server.requests[0]["Range"].startswith("bytes=0-")
-    assert coord.hass.executor_jobs == 1
+    assert jobs.call_count == 1
 
 def _rv_what(base: datetime, lead: int) -> dict:
     """ODIM /dataset/what for an RV member: 5-min window [T+lead-5, T+lead]."""
@@ -241,7 +227,7 @@ def _rv_what(base: datetime, lead: int) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_rv_fetch_derives_buckets_and_timing() -> None:
+async def test_rv_fetch_derives_buckets_and_timing(make_coordinator) -> None:
     """RV: peak intensity, start/end detection, and the raw 5-min series."""
     ts = datetime(2026, 7, 16, 20, 30, tzinfo=timezone.utc)
     # Scenario: dry now, rain at leads 30..60 (1.0 mm each), dry afterwards.
@@ -252,7 +238,7 @@ async def test_rv_fetch_derives_buckets_and_timing() -> None:
         for lead in leads
     ])
 
-    coord = _coord(RadvorRV)
+    coord = make_coordinator(RadvorRV)
 
     with (
         patch.object(
@@ -302,7 +288,7 @@ async def test_rv_fetch_derives_buckets_and_timing() -> None:
 
 
 @pytest.mark.asyncio
-async def test_rv_threshold_from_options_suppresses_light_rain() -> None:
+async def test_rv_threshold_from_options_suppresses_light_rain(make_coordinator) -> None:
     """RV: light rain below the configured mm/h threshold does not trigger start/end."""
     ts = datetime(2026, 7, 16, 20, 30, tzinfo=timezone.utc)
     leads = LEADS
@@ -312,9 +298,8 @@ async def test_rv_threshold_from_options_suppresses_light_rain() -> None:
         for lead in leads
     ])
 
-    coord = _coord(RadvorRV)
     # Threshold is now an intensity (mm/h); 2.4 mm/h < 3.0 mm/h → suppressed.
-    coord.config_entry = SimpleNamespace(options={"precipitation_threshold": 3.0})
+    coord = make_coordinator(RadvorRV, {"precipitation_threshold": 3.0})
 
     with (
         patch.object(
@@ -334,7 +319,7 @@ async def test_rv_threshold_from_options_suppresses_light_rain() -> None:
 
 
 @pytest.mark.asyncio
-async def test_rv_threshold_is_interpreted_as_mm_per_hour() -> None:
+async def test_rv_threshold_is_interpreted_as_mm_per_hour(make_coordinator) -> None:
     """RV: the mm/h threshold is divided by 12 before comparison to 5-min values."""
     ts = datetime(2026, 7, 16, 20, 30, tzinfo=timezone.utc)
     leads = LEADS
@@ -347,9 +332,8 @@ async def test_rv_threshold_is_interpreted_as_mm_per_hour() -> None:
         for lead in leads
     ])
 
-    coord = _coord(RadvorRV)
     # 6 mm/h → 0.5 mm/5min gate: 4.8 mm/h is dry, 7.2 mm/h counts.
-    coord.config_entry = SimpleNamespace(options={"precipitation_threshold": 6.0})
+    coord = make_coordinator(RadvorRV, {"precipitation_threshold": 6.0})
 
     with (
         patch.object(
@@ -367,7 +351,7 @@ async def test_rv_threshold_is_interpreted_as_mm_per_hour() -> None:
 
 
 @pytest.mark.asyncio
-async def test_rv_end_algorithm_option_selects_clearing() -> None:
+async def test_rv_end_algorithm_option_selects_clearing(make_coordinator) -> None:
     """RV: the clearing algorithm looks past a lull to the last forecast wave."""
     ts = datetime(2026, 7, 16, 20, 30, tzinfo=timezone.utc)
     leads = LEADS
@@ -380,10 +364,8 @@ async def test_rv_end_algorithm_option_selects_clearing() -> None:
             for lead in leads
         ])
 
-    coord = _coord(RadvorRV)
-
     # Default (episode): ends at the first lull after the lead-10 wave.
-    coord.config_entry = SimpleNamespace(options={})
+    coord = make_coordinator(RadvorRV)
     episode_reads = _make_reads()
     with (
         patch.object(
@@ -399,7 +381,7 @@ async def test_rv_end_algorithm_option_selects_clearing() -> None:
 
     # Clearing: waits out the lull to the boundary after the lead-60 wave. A
     # new coordinator, as an options change reloads the entry.
-    coord = _coord(RadvorRV, {"precipitation_end_algorithm": "clearing"})
+    coord = make_coordinator(RadvorRV, {"precipitation_end_algorithm": "clearing"})
     clearing_reads = _make_reads()
     with (
         patch.object(
@@ -428,12 +410,12 @@ def _hymecng_reader(class_value: int, nodata: int = 255, undetect: int = 254):
 
 
 @pytest.mark.asyncio
-async def test_hymecng_fetch_maps_class_index_to_label() -> None:
+async def test_hymecng_fetch_maps_class_index_to_label(make_coordinator) -> None:
     """HymecNG: end-to-end fetch + real reader maps the cell class to a label."""
     ts = datetime(2026, 7, 29, 17, 30, tzinfo=timezone.utc)
     hd5 = make_hymecng_h5(shape=RS_GRID_SHAPE, fill=7)  # SNOW everywhere
 
-    coord = _coord(HymecNG)
+    coord = make_coordinator(HymecNG)
 
     get_mock = AsyncMock(return_value=AsyncResponse(content=hd5.getvalue()))
     with patch.object(products, "async_get", new=get_mock):
@@ -464,10 +446,10 @@ async def test_hymecng_fetch_maps_class_index_to_label() -> None:
         (200, None),                # unexpected index → unavailable
     ],
 )
-async def test_hymecng_class_and_sentinel_mapping(class_value, expected) -> None:
+async def test_hymecng_class_and_sentinel_mapping(make_coordinator, class_value, expected) -> None:
     """HymecNG: class indices, undetect, and nodata map to the right sensor state."""
     ts = datetime(2026, 7, 29, 17, 30, tzinfo=timezone.utc)
-    coord = _coord(HymecNG)
+    coord = make_coordinator(HymecNG)
 
     with (
         patch.object(
@@ -498,10 +480,10 @@ def _radolan_what(product: str, end: datetime, hours: int) -> dict:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("cls", "product", "hours"), [(RadolanRW, "RW", 1), (RadolanSF, "SF", 24)])
-async def test_radolan_reads_the_hdf5_edition_and_its_window(cls, product, hours) -> None:
+async def test_radolan_reads_the_hdf5_edition_and_its_window(make_coordinator, cls, product, hours) -> None:
     """RADOLAN: the HDF5 URL, one DE1200 cell, and the window from ODIM what."""
     ts = datetime(2025, 6, 1, 12, 50, tzinfo=timezone.utc)
-    coord = _coord(cls)
+    coord = make_coordinator(cls)
     get = AsyncMock(return_value=AsyncResponse(content=b"hdf5"))
     read = patch.object(
         products,
@@ -525,10 +507,10 @@ async def test_radolan_reads_the_hdf5_edition_and_its_window(cls, product, hours
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("cell_value", "expected"), [(np.nan, None), (0.0, 0.0), (1.7, 1.7)])
-async def test_radolan_nodata_cell_reads_as_none(cell_value, expected) -> None:
+async def test_radolan_nodata_cell_reads_as_none(make_coordinator, cell_value, expected) -> None:
     """RADOLAN nodata (NaN from the ODIM reader) becomes None; dry stays 0."""
     ts = datetime(2025, 6, 1, 12, 50, tzinfo=timezone.utc)
-    coord = _coord(RadolanRW)
+    coord = make_coordinator(RadolanRW)
     with (
         patch.object(products, "async_get", new=AsyncMock(return_value=AsyncResponse(content=b"x"))),
         patch.object(
@@ -553,10 +535,10 @@ _FIXTURES = Path(__file__).parent.parent / "fixtures"
         ((51.05, 13.73), 0.0),      # Dresden, dry that hour
     ],
 )
-async def test_radolan_real_hdf5_file(coords, expected) -> None:
+async def test_radolan_real_hdf5_file(make_coordinator, coords, expected) -> None:
     """A real RW HDF5 file (2026-10-12 12:50) decodes through the production path."""
     content = (_FIXTURES / "radolan_rw_sample.hdf5").read_bytes()
-    coord = _coord(RadolanRW)
+    coord = make_coordinator(RadolanRW)
     coord.coords = coords
 
     with patch.object(
@@ -571,14 +553,14 @@ async def test_radolan_real_hdf5_file(coords, expected) -> None:
     assert meta.data_start == datetime(2026, 10, 12, 11, 50, tzinfo=timezone.utc)
 
 
-async def _rv_fetch(ts: datetime, values: dict[int, float | None]):
+async def _rv_fetch(make_coordinator, ts: datetime, values: dict[int, float | None]):
     """Run RadvorRV._fetch_and_parse, serving each lead from ``values`` (None = missing member)."""
     def _read(fileobj, _row, _col, **_kw):
         lead = int(fileobj.getvalue())  # make_radvor_tar's payload is the lead
         value = values[lead]
         return np.float32("nan" if value is None else value), _rv_what(ts, lead)
 
-    coord = _coord(RadvorRV)
+    coord = make_coordinator(RadvorRV)
     with (
         patch.object(
             products,
@@ -586,14 +568,15 @@ async def _rv_fetch(ts: datetime, values: dict[int, float | None]):
             new=AsyncMock(return_value=AsyncResponse(content=make_radvor_tar("rv", ts))),
         ),
         patch.object(products, "read_odim_composite_cell", side_effect=_read),
+        _executor_jobs(coord) as jobs,
     ):
         data, meta = await coord._fetch_and_parse(ts)
-    assert coord.hass.executor_jobs == 1
+    assert jobs.call_count == 1
     return data, meta
 
 
 @pytest.mark.asyncio
-async def test_rv_peak_hour_matches_rs_for_the_same_rain() -> None:
+async def test_rv_peak_hour_matches_rs_for_the_same_rain(make_coordinator) -> None:
     """RV-summed rolling hours give RS's peak, window and future series exactly.
 
     The two sources back one sensor, switched by an option, so the state must
@@ -612,8 +595,8 @@ async def test_rv_peak_hour_matches_rs_for_the_same_rain() -> None:
     }
     rs[0] = 12.0
 
-    rv_data, rv_meta = await _rv_fetch(ts, rv)
-    rs_data, rs_meta, _ = await _rs_fetch(ts, rs)
+    rv_data, rv_meta = await _rv_fetch(make_coordinator, ts, rv)
+    rs_data, rs_meta, _ = await _rs_fetch(make_coordinator, ts, rs)
 
     assert rv_data["peak_1h"] == pytest.approx(rs_data["peak_1h"])
     # Wettest hour ends at +95: steps +40..+95 catch the tail of the first
@@ -635,13 +618,13 @@ async def test_rv_peak_hour_matches_rs_for_the_same_rain() -> None:
 
 
 @pytest.mark.asyncio
-async def test_rv_intensity_now_is_the_analysis_step_as_a_rate() -> None:
+async def test_rv_intensity_now_is_the_analysis_step_as_a_rate(make_coordinator) -> None:
     """RV: lead 0 (the 5 minutes ending at T) becomes mm/h, with its window."""
     ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
     rv: dict[int, float | None] = {lead: 0.0 for lead in LEADS}
     # The float32 reading carries noise below the ODIM 0.001 mm resolution.
     rv.update({0: 0.123, 5: 2.0})
-    data, meta = await _rv_fetch(ts, rv)
+    data, meta = await _rv_fetch(make_coordinator, ts, rv)
 
     assert data["amount_000"] == 0.123
     assert data["intensity_000"] == 1.476  # exact at 0.001 mm resolution, not 1.47600001
@@ -652,24 +635,24 @@ async def test_rv_intensity_now_is_the_analysis_step_as_a_rate() -> None:
 
 
 @pytest.mark.asyncio
-async def test_rv_intensity_now_is_unknown_without_the_analysis() -> None:
+async def test_rv_intensity_now_is_unknown_without_the_analysis(make_coordinator) -> None:
     """RV: a missing lead-0 member leaves both values None rather than 0."""
     ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
     rv: dict[int, float | None] = {lead: 0.0 for lead in LEADS}
     rv[0] = None
-    data, _ = await _rv_fetch(ts, rv)
+    data, _ = await _rv_fetch(make_coordinator, ts, rv)
 
     assert data["intensity_000"] is None
     assert data["amount_000"] is None
 
 
 @pytest.mark.asyncio
-async def test_rv_peak_hour_treats_missing_step_as_dry() -> None:
+async def test_rv_peak_hour_treats_missing_step_as_dry(make_coordinator) -> None:
     """RV: a missing 5-minute member counts as 0, as RS does at the coverage edge."""
     ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
     rv: dict[int, float | None] = {lead: 0.0 for lead in LEADS}
     rv.update({5: None, 60: 1.0, 65: 2.0})
-    data, meta = await _rv_fetch(ts, rv)
+    data, meta = await _rv_fetch(make_coordinator, ts, rv)
 
     assert data["peak_1h"] == pytest.approx(3.0)
     # Lead 5 opens the T+0..T+60 window; its start falls back to end - 60 min.
@@ -746,13 +729,8 @@ class _RVWorld:
 DAY_RV = datetime(2026, 10, 12, tzinfo=timezone.utc)
 
 
-def _rv_tracked(store=None, options=None):
-    coord = _coord(RadvorRV, options)
-    coord.config_entry.async_create_background_task = (
-        lambda _hass, target, _name: asyncio.get_running_loop().create_task(target)
-    )
-    coord.config_entry.async_on_unload = lambda _func: None
-    coord.data = None
+def _rv_tracked(make_coordinator, store=None, options=None):
+    coord = make_coordinator(RadvorRV, options)
     coord.published: list[dict | None] = []
     coord.async_update_listeners = lambda: coord.published.append(
         coord.data.data["rain_events"]
@@ -803,9 +781,9 @@ def _rain_between(lo, hi, mm=1.0):
 
 
 @pytest.mark.asyncio
-async def test_rv_first_release_fills_the_hour_by_range_reads() -> None:
+async def test_rv_first_release_fills_the_hour_by_range_reads(make_coordinator) -> None:
     world = _RVWorld(_rain_between("13:30", "14:10"))
-    coord = _rv_tracked()
+    coord = _rv_tracked(make_coordinator)
 
     data, _ = await _rv_release(coord, world, "14:00")
 
@@ -820,9 +798,9 @@ async def test_rv_first_release_fills_the_hour_by_range_reads() -> None:
 
 
 @pytest.mark.asyncio
-async def test_rv_next_release_fills_nothing_and_keeps_the_id() -> None:
+async def test_rv_next_release_fills_nothing_and_keeps_the_id(make_coordinator) -> None:
     world = _RVWorld(_rain_between("13:30", "15:00"))
-    coord = _rv_tracked()
+    coord = _rv_tracked(make_coordinator)
     first, _ = await _rv_release(coord, world, "14:00")
     world.requests.clear()
 
@@ -833,11 +811,11 @@ async def test_rv_next_release_fills_nothing_and_keeps_the_id() -> None:
 
 
 @pytest.mark.asyncio
-async def test_rv_failed_fill_stops_the_round_and_warns_once(caplog) -> None:
+async def test_rv_failed_fill_stops_the_round_and_warns_once(make_coordinator, caplog) -> None:
     rain = _rain_between("13:30", "15:00")
     missing = {DAY_RV.replace(hour=13, minute=55)}
     world = _RVWorld(rain, missing=missing)
-    coord = _rv_tracked()
+    coord = _rv_tracked(make_coordinator)
 
     data, _ = await _rv_release(coord, world, "14:00")
     # Newest first: 13:55 fails, and the older steps wait for the next round.
@@ -852,13 +830,13 @@ async def test_rv_failed_fill_stops_the_round_and_warns_once(caplog) -> None:
 
 
 @pytest.mark.asyncio
-async def test_rv_unreadable_fill_asks_for_a_report(caplog) -> None:
+async def test_rv_unreadable_fill_asks_for_a_report(make_coordinator, caplog) -> None:
     """A file that arrived but does not hold the expected window is not DWD
     being late, so the warning must not say so."""
     world = _RVWorld(
         _rain_between("13:30", "15:00"), garbled={DAY_RV.replace(hour=13, minute=55)}
     )
-    await _rv_release(_rv_tracked(), world, "14:00")
+    await _rv_release(_rv_tracked(make_coordinator), world, "14:00")
 
     warnings = [r for r in caplog.records if "to fill the rain_events history" in r.message]
     assert len(warnings) == 1
@@ -868,9 +846,9 @@ async def test_rv_unreadable_fill_asks_for_a_report(caplog) -> None:
 
 
 @pytest.mark.asyncio
-async def test_rv_fill_budget_running_out_is_not_a_failure(caplog) -> None:
+async def test_rv_fill_budget_running_out_is_not_a_failure(make_coordinator, caplog) -> None:
     world = _RVWorld(_rain_between("13:30", "15:00"), delay=0.05)
-    coord = _rv_tracked()
+    coord = _rv_tracked(make_coordinator)
     with patch.object(rain_events_tracker, "RAIN_FILL_BUDGET", timedelta(seconds=0.12)):
         data, _ = await _rv_release(coord, world, "14:00")
 
@@ -881,16 +859,19 @@ async def test_rv_fill_budget_running_out_is_not_a_failure(caplog) -> None:
 
 
 @pytest.mark.asyncio
-async def test_rv_fill_runs_after_the_refresh() -> None:
+async def test_rv_fill_runs_after_the_refresh(make_coordinator) -> None:
     """Setup waits for the RV refresh; the fill must not hold it."""
     world = _RVWorld(_rain_between("13:30", "14:10"))
-    coord = _rv_tracked()
+    coord = _rv_tracked(make_coordinator)
 
     data, _ = await _rv_refresh(coord, world, "14:00")
 
     assert data["rain_events"] is None  # nothing shown yet in this run
     assert data["max_060"] == pytest.approx(12.0)
-    assert [h for _, h in world.requests] == [None]  # only the release itself
+    assert world.requests[0][1] is None  # the release itself came first
+    # HA starts the background task eagerly, so its first range read may
+    # already be out; but the refresh returned without waiting for it.
+    assert not coord._rain_tracker.fill_task.done()
 
     with _serving(world):
         await coord._rain_tracker.fill_task
@@ -899,9 +880,9 @@ async def test_rv_fill_runs_after_the_refresh() -> None:
 
 
 @pytest.mark.asyncio
-async def test_rv_missed_release_keeps_the_previous_view_until_filled() -> None:
+async def test_rv_missed_release_keeps_the_previous_view_until_filled(make_coordinator) -> None:
     world = _RVWorld(_rain_between("13:30", "15:00"))
-    coord = _rv_tracked()
+    coord = _rv_tracked(make_coordinator)
     await _rv_release(coord, world, "14:00")
     shown, _ = await _rv_release(coord, world, "14:05")
     assert coord._rain_tracker.fill_task.done()  # 14:05 needed no fill
@@ -917,10 +898,10 @@ async def test_rv_missed_release_keeps_the_previous_view_until_filled() -> None:
 
 
 @pytest.mark.asyncio
-async def test_rv_releases_queue_behind_a_running_fill() -> None:
+async def test_rv_releases_queue_behind_a_running_fill(make_coordinator) -> None:
     """A release must never reach the tracker before an older one."""
     world = _RVWorld(_rain_between("13:30", "15:00"))
-    coord = _rv_tracked()
+    coord = _rv_tracked(make_coordinator)
     await _rv_refresh(coord, world, "14:00")
     first = coord._rain_tracker.fill_task
     await _rv_refresh(coord, world, "14:05")
@@ -936,12 +917,12 @@ async def test_rv_releases_queue_behind_a_running_fill() -> None:
 
 
 @pytest.mark.asyncio
-async def test_rv_state_survives_a_restart_through_the_store() -> None:
+async def test_rv_state_survives_a_restart_through_the_store(make_coordinator) -> None:
     world = _RVWorld(_rain_between("13:30", "15:00"))
     store = _FakeStore()
-    first, _ = await _rv_release(_rv_tracked(store), world, "14:00")
+    first, _ = await _rv_release(_rv_tracked(make_coordinator, store), world, "14:00")
 
-    restarted = _rv_tracked(_FakeStore(store.data))
+    restarted = _rv_tracked(make_coordinator, _FakeStore(store.data))
     world.requests.clear()
     after, _ = await _rv_release(restarted, world, "14:20")
 
@@ -951,14 +932,14 @@ async def test_rv_state_survives_a_restart_through_the_store() -> None:
 
 
 @pytest.mark.asyncio
-async def test_rv_saves_promptly_only_while_something_is_at_stake() -> None:
+async def test_rv_saves_promptly_only_while_something_is_at_stake(make_coordinator) -> None:
     from custom_components.dwd_precipitation.rain_events_tracker import (
         RAIN_IDLE_SAVE_DELAY,
         RAIN_SAVE_DELAY,
     )
 
     store = _FakeStore()
-    coord = _rv_tracked(store)
+    coord = _rv_tracked(make_coordinator, store)
     await _rv_release(coord, _RVWorld(lambda _t: 0.0), "14:00")
     assert store.delays[-1] == RAIN_IDLE_SAVE_DELAY.total_seconds()
 
@@ -967,22 +948,22 @@ async def test_rv_saves_promptly_only_while_something_is_at_stake() -> None:
 
 
 @pytest.mark.asyncio
-async def test_rv_unreadable_store_starts_over(caplog) -> None:
-    coord = _rv_tracked(_FakeStore({"measured_start": "not a time", "measured": [1.0]}))
+async def test_rv_unreadable_store_starts_over(make_coordinator, caplog) -> None:
+    coord = _rv_tracked(make_coordinator, _FakeStore({"measured_start": "not a time", "measured": [1.0]}))
     data, _ = await _rv_release(coord, _RVWorld(lambda _t: 0.0), "14:00")
     assert data["rain_events"]["schema"] == 1
     assert any("Discarding the saved rain_events state" in r.message for r in caplog.records)
 
 
 @pytest.mark.asyncio
-async def test_rv_store_that_cannot_be_loaded_starts_over(caplog) -> None:
+async def test_rv_store_that_cannot_be_loaded_starts_over(make_coordinator, caplog) -> None:
     """A store HA cannot load (another version, say) is discarded, not retried."""
 
     class _Unloadable(_FakeStore):
         async def async_load(self):
             raise NotImplementedError("stored version 2, expected 1")
 
-    coord = _rv_tracked(_Unloadable())
+    coord = _rv_tracked(make_coordinator, _Unloadable())
     data, _ = await _rv_release(coord, _RVWorld(lambda _t: 0.0), "14:00")
     second, _ = await _rv_release(coord, _RVWorld(lambda _t: 0.0), "14:05")
 
@@ -993,8 +974,8 @@ async def test_rv_store_that_cannot_be_loaded_starts_over(caplog) -> None:
 
 
 @pytest.mark.asyncio
-async def test_rv_tracker_failure_leaves_the_sensors_alone(caplog) -> None:
-    coord = _rv_tracked()
+async def test_rv_tracker_failure_leaves_the_sensors_alone(make_coordinator, caplog) -> None:
+    coord = _rv_tracked(make_coordinator)
     with patch.object(rain_events_tracker, "update_rain_events", side_effect=RuntimeError("bug")):
         data, _ = await _rv_release(coord, _RVWorld(lambda _t: 0.0), "14:00")
     assert data["rain_events"] is None
@@ -1003,9 +984,9 @@ async def test_rv_tracker_failure_leaves_the_sensors_alone(caplog) -> None:
 
 
 @pytest.mark.asyncio
-async def test_rv_new_release_hook_does_not_raise(caplog) -> None:
+async def test_rv_new_release_hook_does_not_raise(make_coordinator, caplog) -> None:
     """Metadata without the series fails the tracker, not the RV update."""
-    coord = _rv_tracked()
+    coord = _rv_tracked(make_coordinator)
     data: dict = {}
     await coord._async_on_new_release(
         DAY_RV, data, {"rain_within_2h": products.ProductMetadata("RV", DAY_RV)}
@@ -1015,10 +996,10 @@ async def test_rv_new_release_hook_does_not_raise(caplog) -> None:
 
 
 @pytest.mark.asyncio
-async def test_rv_fetching_a_past_release_leaves_the_tracker_alone() -> None:
+async def test_rv_fetching_a_past_release_leaves_the_tracker_alone(make_coordinator) -> None:
     """async_fetch_release (the totals' backfill path) has no side effects."""
     world = _RVWorld(_rain_between("13:30", "15:00"))
-    coord = _rv_tracked()
+    coord = _rv_tracked(make_coordinator)
     with _serving(world):
         cdata = await coord.async_fetch_release(DAY_RV.replace(hour=14))
 
@@ -1029,8 +1010,8 @@ async def test_rv_fetching_a_past_release_leaves_the_tracker_alone() -> None:
 
 
 @pytest.mark.asyncio
-async def test_rv_threshold_option_sets_the_wet_step() -> None:
-    coord = _rv_tracked(options={"rain_event_threshold": 0.6})
+async def test_rv_threshold_option_sets_the_wet_step(make_coordinator) -> None:
+    coord = _rv_tracked(make_coordinator, options={"rain_event_threshold": 0.6})
     data, _ = await _rv_release(coord, _RVWorld(lambda _t: 0.0), "14:00")
     assert data["rain_events"]["wet_step_mm"] == 0.05
 
@@ -1059,10 +1040,10 @@ def test_rs_next_120_needs_both_forecast_hours() -> None:
         (products.RadolanSFLastYesterday, "https://opendata.dwd.de/weather/radar/radolan/sf/raa01-sf_10000-2610120740-dwd---bin.hdf5"),
     ],
 )
-def test_every_product_fetches_the_file_dwd_publishes(cls, url) -> None:
+async def test_every_product_fetches_the_file_dwd_publishes(make_coordinator, cls, url) -> None:
     """The URLs, spelled out: radar/urls.py must not move any of them."""
     ts = datetime(2026, 10, 12, 7, 40, tzinfo=timezone.utc)
-    assert cls.__new__(cls)._get_url(ts) == url
+    assert make_coordinator(cls)._get_url(ts) == url
 
 
 def test_every_product_class_has_a_url() -> None:
@@ -1073,7 +1054,7 @@ def test_every_product_class_has_a_url() -> None:
 
 
 @pytest.mark.asyncio
-async def test_products_reading_the_same_file_download_it_once() -> None:
+async def test_products_reading_the_same_file_download_it_once(make_coordinator) -> None:
     """RW's :00 run is one of RW-10min's; one download serves both."""
     from custom_components.dwd_precipitation.utils import DownloadCache
 
@@ -1087,7 +1068,7 @@ async def test_products_reading_the_same_file_download_it_once() -> None:
         return AsyncResponse(content=content)
 
     cache = DownloadCache(ttl=300)
-    rw, rw10, rs = _coord(RadolanRW), _coord(products.RadolanRW10), _coord(RadvorRS)
+    rw, rw10, rs = make_coordinator(RadolanRW), make_coordinator(products.RadolanRW10), make_coordinator(RadvorRS)
     for coord in (rw, rw10, rs):
         coord.download_cache = cache
     with patch.object(products, "async_get", side_effect=fake_get):
