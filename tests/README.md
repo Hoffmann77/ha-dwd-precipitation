@@ -25,8 +25,11 @@ tracking issue on failure instead of blocking merges.**
   and the HTTP helper).
 - **`integration/`** — the HA-facing layer (imports `homeassistant`):
   `test_config_flow.py`, `test_setup_entry.py` (entry → coordinators → sensor states),
-  `test_products.py` (fetch/parse metadata derivation), `test_coordinator_timing.py`,
-  `test_sensor.py`.
+  `test_product_<rs|rv|hymecng|radolan>.py` (each product's fetch and parse, helpers
+  in `product_helpers.py`), `test_product_rv_rain_events.py` (RV's tracker glue),
+  `test_products.py` (URLs and shared downloads), `test_coordinator_timing.py`,
+  `test_sensor.py`. `conftest.py` has the `make_entry` / `make_coordinator`
+  factories, which build through the real constructors.
 - **`reference/`** — golden comparison of our extracted parsers and grid lookups
   against pure `wradlib` (RS on the DE1200 grid), on the committed fixtures. Skips if
   `wradlib` or the fixture is missing. The wradlib side lives in
