@@ -98,12 +98,18 @@ async def test_rs_fetch_derives_base_source_timestamp_and_window() -> None:
     # The three non-overlapping hours come from leads 0 / 60 / 120.
     assert data[:3] == [0.0, 60.0, 120.0]
     base = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
-    assert [m.source_timestamp for m in meta] == [base, base, base, base]
+    assert [m.source_timestamp for m in meta] == [base] * 5
     assert [m.lead_time_minutes for m in meta[:3]] == [0, 60, 120]
     assert meta[0].data_start == datetime(2026, 5, 18, 15, 0, tzinfo=timezone.utc)
     assert meta[0].data_end == base
     assert meta[2].data_start == datetime(2026, 5, 18, 17, 0, tzinfo=timezone.utc)
     assert meta[2].data_end == datetime(2026, 5, 18, 18, 0, tzinfo=timezone.utc)
+
+    # The whole 120-minute forecast is the two forecast hours added.
+    assert data[4] == pytest.approx(180.0)
+    assert meta[4].lead_time_minutes == 120
+    assert meta[4].data_start == base
+    assert meta[4].data_end == datetime(2026, 5, 18, 18, 0, tzinfo=timezone.utc)
 
 
 @pytest.mark.asyncio
@@ -111,7 +117,7 @@ async def test_rs_peak_hour_and_rolling_series() -> None:
     """RS: the wettest future rolling hour, its window, and the 25-point series."""
     ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
     # A storm straddling the fixed hours: its heaviest hour ends at T+90, which
-    # neither "next 1h" (lead 60) nor "next 1-2h" (lead 120) sees in full.
+    # neither "next 60 min" (lead 60) nor "next 60-120 min" (lead 120) sees in full.
     values = {lead: 0.0 for lead in range(0, 121, 5)}
     values.update({0: 30.0, 60: 4.0, 85: 9.0, 90: 18.0, 95: 18.0, 120: 5.0})
     data, meta, _ = await _rs_fetch(ts, values)
@@ -159,7 +165,7 @@ async def test_rs_without_option_decodes_only_the_three_hours() -> None:
     data, meta, decoded = await _rs_fetch(ts, values, full=False)
 
     assert decoded == [0, 60, 120]
-    assert data == [0.0, 60.0, 120.0, None]
+    assert data == [0.0, 60.0, 120.0, None, 180.0]
     assert meta[3] is None
     assert [m.lead_time_minutes for m in meta[:3]] == [0, 60, 120]
 
@@ -237,6 +243,7 @@ async def test_rv_fetch_derives_buckets_and_timing() -> None:
     # Peak intensity: 1.0 mm/5min → 12 mm/h in hour 1; hour 2 is dry.
     assert data["max_060"] == pytest.approx(12.0)
     assert data["max_120"] == pytest.approx(0.0)
+    assert data["max_000_120"] == pytest.approx(12.0)
     # The two-hour sum sensors were removed; only max intensity remains.
     assert "rv_060" not in data
     assert "rv_120" not in data
@@ -255,6 +262,9 @@ async def test_rv_fetch_derives_buckets_and_timing() -> None:
     assert meta["max_060"].data_end == datetime(2026, 7, 16, 21, 30, tzinfo=timezone.utc)
     assert meta["max_060"].samples is None
     assert meta["max_120"].samples is None
+    assert meta["max_000_120"].lead_time_minutes == 120
+    assert meta["max_000_120"].data_start == datetime(2026, 7, 16, 20, 30, tzinfo=timezone.utc)
+    assert meta["max_000_120"].data_end == datetime(2026, 7, 16, 22, 30, tzinfo=timezone.utc)
 
     # The raw 5-min series (25 points, leads 0..120) rides on the rain flag.
     samples = meta["rain_within_2h"].samples
@@ -838,7 +848,7 @@ async def test_rv_tracker_failure_leaves_the_sensors_alone(caplog) -> None:
         data, _ = await _rv_release(coord, _RVWorld(lambda _t: 0.0), "14:00")
     assert data["rain_events"] is None
     assert data["max_060"] == 0.0
-    assert any("Could not update the rain_events attribute" in r.message for r in caplog.records)
+    assert any("Could not update the Rain events sensor" in r.message for r in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -846,3 +856,15 @@ async def test_rv_threshold_option_sets_the_wet_step() -> None:
     coord = _rv_tracked(options={"rain_event_threshold": 0.6})
     data, _ = await _rv_release(coord, _RVWorld(lambda _t: 0.0), "14:00")
     assert data["rain_events"]["wet_step_mm"] == 0.05
+
+
+def test_rs_next_120_needs_both_forecast_hours() -> None:
+    """Half a forecast is not a 120-minute total: a missing hour makes it None."""
+    ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
+    meta = products.ProductMetadata(source_product="RS", source_timestamp=ts)
+
+    assert products._next_120(0.1, 0.2, meta, meta)[0] == pytest.approx(0.3)
+    assert products._next_120(0.1, 0.2, meta, meta)[0] == 0.3  # rounded, not 0.30000000000000004
+    assert products._next_120(None, 0.2, meta, meta) == (None, None)
+    assert products._next_120(0.1, None, meta, meta) == (None, None)
+    assert products._next_120(0.0, 0.0, meta, meta)[0] == 0.0

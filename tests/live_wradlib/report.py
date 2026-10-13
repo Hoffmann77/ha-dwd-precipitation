@@ -56,13 +56,13 @@ SOURCES: dict[str, str] = {}
 
 COLUMNS = (
     ("cell", "DE1200 cell"),
-    ("rs_000", "RS last 1h (mm)"),
-    ("rs_060", "RS next 1h (mm)"),
-    ("rs_120", "RS next 1-2h (mm)"),
+    ("rs_000", "RS last 60 min (mm)"),
+    ("rs_060", "RS next 60 min (mm)"),
+    ("rs_120", "RS next 60-120 min (mm)"),
     ("rv_000", "RV now (mm/h)"),
-    ("rv_max", "RV peak next 2h (mm/h)"),
+    ("rv_max", "RV peak next 120 min (mm/h)"),
     ("hymecng", "Type"),
-    ("rw", "RW last 1h (mm)"),
+    ("rw", "RW previous hour (mm)"),
     ("sf", "SF last 24h (mm)"),
     ("match", "Matches wradlib"),
 )

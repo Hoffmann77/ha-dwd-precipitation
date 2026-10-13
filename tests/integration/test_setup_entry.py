@@ -36,6 +36,47 @@ from custom_components.dwd_precipitation.products import (
 )
 
 
+# Entity ids 2026.10.0 gave a new install, by key.
+RELEASED_2026_10_0_IDS = {
+    "radvor_rs_000": "precipitation_now",
+    "radvor_rs_060": "precipitation_next_1h",
+    "radvor_rs_120": "precipitation_next_1_2h",
+    "radvor_peak_1h_120": "peak_hourly_precipitation_next_2h",
+    "radvor_rv_max_intensity_060": "peak_intensity_next_1h",
+    "radvor_rv_max_intensity_120": "peak_intensity_next_1_2h",
+    "radvor_rv_precipitation_start": "precipitation_start",
+    "radvor_rv_precipitation_end": "precipitation_end",
+    "radvor_rv_precipitation_expected_120": "precipitation_expected",
+    "hymecng_precipitation_type": "precipitation_type",
+    "radolan_rw": "precipitation_last_1h",
+    "radolan_sf": "precipitation_last_24h",
+    "radolan_sf_yesterday": "precipitation_yesterday",
+    "radolan_rw_total": "precipitation_total_hourly",
+    "radolan_sf_yesterday_total": "precipitation_total_daily",
+    "timespan_without_precipitation": "timespan_without_precipitation",
+}
+
+# What a new install gets for the entities renamed since.
+RENAMED_SINCE_2026_10_0 = {
+    "radvor_rs_000": "precipitation_last_60_min",
+    "radvor_rs_060": "precipitation_next_60_min",
+    "radvor_rs_120": "precipitation_next_60_120_min",
+    "radvor_peak_1h_120": "peak_hourly_precipitation_next_120_min",
+    "radvor_rv_max_intensity_060": "peak_intensity_next_60_min",
+    "radvor_rv_max_intensity_120": "peak_intensity_next_60_120_min",
+    "radolan_rw": "precipitation_previous_hour",
+    "hymecng_precipitation_type": "precipitation_type_now",
+    "radolan_rw_total": "precipitation_total",
+}
+
+# Added since 2026.10.0.
+NEW_SINCE_2026_10_0 = {
+    "radvor_rv_intensity_000": "precipitation_intensity_now",
+    "radvor_rs_000_120": "precipitation_next_120_min",
+    "radvor_rv_max_intensity_000_120": "peak_intensity_next_120_min",
+}
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("full_rolling_series", [False, True])
 async def test_entry_setup_creates_sensors_with_correct_values(
@@ -48,7 +89,7 @@ async def test_entry_setup_creates_sensors_with_correct_values(
     peaks (in reality they agree).
     """
     ts = datetime(2025, 6, 1, 12, 0, tzinfo=timezone.utc)
-    rs_data = [1.5, 2.0, None, 6.5]
+    rs_data = [1.5, 2.0, 0.5, 6.5, 2.5]
     rs_meta = [
         {"product": "ACRR", "datetime": ts, "lead_time_minutes": 0},
         {"product": "ACRR", "datetime": ts, "lead_time_minutes": 60},
@@ -61,14 +102,16 @@ async def test_entry_setup_creates_sensors_with_correct_values(
             data_end=ts + timedelta(minutes=75),
             rolling_1h=[{"lead": 75, "start": None, "end": None, "value": 6.5}],
         ),
+        {},
     ]
-    rw_meta = {"producttype": "RW", "datetime": datetime(2025, 6, 1, 12, 50)}
+    rw_meta = {"producttype": "RW", "datetime": datetime(2025, 6, 1, 12, 0)}
     rv_timing = ProductMetadata(source_product="RV", source_timestamp=ts)
     rv_data = {
         "intensity_000": 2.4,
         "amount_000": 0.2,
         "max_060": 48.0,
         "max_120": 12.0,
+        "max_000_120": 48.0,
         "start_in": 0,
         "start_at": ts,
         "end_in": 30,
@@ -139,7 +182,7 @@ async def test_entry_setup_creates_sensors_with_correct_values(
     coordinators = entry.runtime_data.coordinators
     assert set(coordinators) == {"rs", "rv", "hymecng", "rw", "sf", "sf_2350"}
     assert coordinators["rw"].data.data == approx(3.2)
-    assert coordinators["rs"].data.data == [1.5, 2.0, None, 6.5]
+    assert coordinators["rs"].data.data == [1.5, 2.0, 0.5, 6.5, 2.5]
     assert coordinators["rv"].data.data["max_060"] == approx(48.0)
     assert coordinators["hymecng"].data.data == "snow"
 
@@ -197,25 +240,28 @@ async def test_entry_setup_creates_sensors_with_correct_values(
 
     # Entity ids follow the English names. Keys are unchanged, so existing
     # installs keep the ids they already have; these are what new ones get.
-    assert {
-        e.unique_id.removeprefix(f"{entry.entry_id}_"): e.entity_id
+    new_ids = {
+        e.unique_id.removeprefix(f"{entry.entry_id}_"): e.entity_id.split(".", 1)[1]
         for e in ent_reg.entities.values()
-        if e.domain == "sensor"
-        and e.unique_id.removeprefix(f"{entry.entry_id}_")
-        in {
-            "radvor_rs_000",
-            "radolan_rw",
-            "radolan_sf",
-            "radolan_sf_yesterday",
-            "radvor_rv_intensity_000",
-        }
-    } == {
-        "radvor_rs_000": "sensor.mock_title_precipitation_last_1h_radar",
-        "radolan_rw": "sensor.mock_title_precipitation_last_1h_gauge_adjusted",
-        "radolan_sf": "sensor.mock_title_precipitation_last_24h_gauge_adjusted",
-        "radolan_sf_yesterday": "sensor.mock_title_precipitation_yesterday_gauge_adjusted",
-        "radvor_rv_intensity_000": "sensor.mock_title_precipitation_intensity_now",
+        if e.config_entry_id == entry.entry_id
     }
+    # No new id is one a released version gave another entity: on an old
+    # install that entity still holds it, so recreating ids would collide.
+    for key, entity_id in new_ids.items():
+        slug = entity_id.removeprefix("mock_title_")
+        owner = next(
+            (k for k, s in RELEASED_2026_10_0_IDS.items() if s == slug), key
+        )
+        assert owner == key, f"{key} takes {slug}, which was {owner}'s"
+
+    expected = {**RENAMED_SINCE_2026_10_0, **NEW_SINCE_2026_10_0}
+    assert {key: new_ids[key] for key in expected} == {
+        key: f"mock_title_{slug}" for key, slug in expected.items()
+    }
+
+    # The two 120-minute sensors: RS's two forecast hours added, RV's peak.
+    assert float(_state_for(hass, "radvor_rs_000_120").state) == approx(2.5)
+    assert float(_state_for(hass, "radvor_rv_max_intensity_000_120").state) == approx(48.0)
 
     # The peak-intensity sensor reports the extrapolated mm/h rate.
     max_060_entry = next(
@@ -259,6 +305,7 @@ RV_DATA = {
     "amount_000": 0.0,
     "max_060": 48.0,
     "max_120": 12.0,
+    "max_000_120": 48.0,
     "start_in": 0,
     "start_at": RV_TS,
     "end_in": 30,
@@ -274,8 +321,8 @@ RV_META = {
 # What each product's _fetch_and_parse returns when it is meant to succeed.
 WORKING_PRODUCTS = {
     RadvorRS: (
-        [1.5, 2.0, None, 6.5],
-        [{}, {}, {}, ProductMetadata(source_product="RS", source_timestamp=RV_TS)],
+        [1.5, 2.0, None, 6.5, None],
+        [{}, {}, {}, ProductMetadata(source_product="RS", source_timestamp=RV_TS), None],
     ),
     RadvorRV: (RV_DATA, RV_META),
     HymecNG: ("snow", {}),
@@ -462,21 +509,21 @@ async def test_dry_streak_sensor_binds_to_the_configured_source(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("options", "built", "rw_sensor_on"),
+    ("options", "built"),
     [
         # Nothing uses the 10-minute runs: no coordinator, no requests.
-        ({CONF_DRY_STREAK_SOURCE: "rs"}, False, "rw"),
-        ({CONF_DRY_STREAK_SOURCE: "rs", "rw_last_hour_mode": "fixed"}, False, "rw"),
-        # The dry streak alone needs them; the sensor stays on fixed hours.
-        ({CONF_DRY_STREAK_SOURCE: "rw"}, True, "rw"),
-        # The sensor asks for the sliding hour.
-        ({CONF_DRY_STREAK_SOURCE: "rs", "rw_last_hour_mode": "sliding"}, True, "rw_10min"),
+        ({CONF_DRY_STREAK_SOURCE: "rs"}, False),
+        # The option that once showed them as the last hour is gone; a value a
+        # pre-release stored is ignored.
+        ({CONF_DRY_STREAK_SOURCE: "rs", "rw_last_hour_mode": "sliding"}, False),
+        # The dry streak needs them.
+        ({CONF_DRY_STREAK_SOURCE: "rw"}, True),
     ],
 )
 async def test_sliding_rw_is_built_only_when_used(
-    hass: HomeAssistant, options: dict, built: bool, rw_sensor_on: str
+    hass: HomeAssistant, options: dict, built: bool
 ) -> None:
-    """rw_10min exists only for the option or the dry streak that use it."""
+    """rw_10min exists only for the dry streak that uses it."""
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={"name": "Home", "latitude": 51.05, "longitude": 13.73},
@@ -491,7 +538,7 @@ async def test_sliding_rw_is_built_only_when_used(
 
     coordinators = entry.runtime_data.coordinators
     assert ("rw_10min" in coordinators) is built
-    # The hourly total always adds the fixed hours.
+    # The previous hour and the hourly total are always RW's clock hours.
     total = next(
         entity
         for platform in async_get_platforms(hass, DOMAIN)
@@ -499,8 +546,7 @@ async def test_sliding_rw_is_built_only_when_used(
         if entity.unique_id.endswith("_radolan_rw_total")
     )
     assert total.coordinator is coordinators["rw"]
-    expected = {"rw": 3.2, "rw_10min": 2.7}[rw_sensor_on]
-    assert float(_state_for(hass, "radolan_rw").state) == approx(expected)
+    assert float(_state_for(hass, "radolan_rw").state) == approx(3.2)
 
 
 @pytest.mark.asyncio
@@ -524,23 +570,33 @@ async def test_entry_from_a_newer_major_version_is_not_migrated(
 
 @pytest.mark.asyncio
 async def test_renamed_sensor_keeps_an_existing_entity_id(hass: HomeAssistant) -> None:
-    """The renames change names, never the entity ids users already have."""
+    """The renames change names, never the entity ids users already have.
+
+    Up to 2026.10.0 RS was "Precipitation now" and RW "Precipitation last 1h".
+    New installs get new ids for both; an existing one keeps the old ones.
+    """
     entry = _entry(hass)
-    er.async_get(hass).async_get_or_create(
-        "sensor",
-        DOMAIN,
-        f"{entry.entry_id}_radvor_rs_000",
-        config_entry=entry,
-        suggested_object_id="home_precipitation_now",
-    )
+    ent_reg = er.async_get(hass)
+    for key, object_id in (
+        ("radvor_rs_000", "home_precipitation_now"),
+        ("radolan_rw", "home_precipitation_last_1h"),
+    ):
+        ent_reg.async_get_or_create(
+            "sensor",
+            DOMAIN,
+            f"{entry.entry_id}_{key}",
+            config_entry=entry,
+            suggested_object_id=object_id,
+        )
 
     with _patched_products():
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
-    state = hass.states.get("sensor.home_precipitation_now")
-    assert state is not None
-    assert state.attributes["friendly_name"].endswith("Precipitation last 1h (radar)")
+    rs = hass.states.get("sensor.home_precipitation_now")
+    assert rs.attributes["friendly_name"].endswith("Precipitation last 60 min")
+    rw = hass.states.get("sensor.home_precipitation_last_1h")
+    assert rw.attributes["friendly_name"].endswith("Precipitation previous hour")
 
 
 @pytest.mark.asyncio
@@ -558,4 +614,65 @@ async def test_removing_the_entry_deletes_its_rain_events_store(
     await hass.config_entries.async_remove(entry.entry_id)
     await hass.async_block_till_done()
 
+    assert key not in hass_storage
+
+
+RAIN_VIEW = {
+    "schema": 1,
+    "base": "2025-06-01T12:00:00+00:00",
+    "wet_step_mm": 0.008,
+    "steps_start": "2025-06-01T11:00:00+00:00",
+    "steps": [0.0] * 36,
+    "history_complete": True,
+    "events": [{"id": "20250601t1200-0", "status": "upcoming"}],
+    "last_ended": None,
+}
+
+
+@pytest.mark.asyncio
+async def test_rain_events_sensor_with_the_option(hass: HomeAssistant) -> None:
+    """With the option on, the view is its own sensor's attributes."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"name": "Home", "latitude": 51.05, "longitude": 13.73},
+        options={"rain_events": True},
+    )
+    entry.add_to_hass(hass)
+
+    rv = AsyncMock(return_value=({**RV_DATA, "rain_events": RAIN_VIEW}, RV_META))
+    with _patched_products(), patch.object(RadvorRV, "_fetch_and_parse", new=rv):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    state = _state_for(hass, "radvor_rv_rain_events")
+    assert state.entity_id == "sensor.mock_title_rain_events"
+    assert state.state == "upcoming"
+    assert state.attributes["schema"] == 1
+    assert state.attributes["events"] == RAIN_VIEW["events"]
+    assert state.attributes["options"] == ["none", "upcoming", "ongoing"]
+    assert entry.runtime_data.coordinators["rv"]._rain_store is not None
+
+    flag = _state_for(hass, "radvor_rv_precipitation_expected_120", "binary_sensor")
+    assert "rain_events" not in flag.attributes
+
+
+@pytest.mark.asyncio
+async def test_rain_events_off_runs_no_tracker_and_leaves_nothing(
+    hass: HomeAssistant, hass_storage
+) -> None:
+    """Off (the default): no tracker, and what an earlier "on" left is removed."""
+    entry = _entry(hass)
+    unique_id = f"{entry.entry_id}_radvor_rv_rain_events"
+    er.async_get(hass).async_get_or_create(
+        "sensor", DOMAIN, unique_id, config_entry=entry
+    )
+    key = f"dwd_precipitation.{entry.entry_id}.rain_events"
+    hass_storage[key] = {"version": 1, "minor_version": 1, "key": key, "data": {}}
+
+    with _patched_products():
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    assert entry.runtime_data.coordinators["rv"]._rain_store is None
+    assert er.async_get(hass).async_get_entity_id("sensor", DOMAIN, unique_id) is None
     assert key not in hass_storage

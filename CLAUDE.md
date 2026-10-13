@@ -22,11 +22,12 @@ dry_streak.py         Pure "days without rain" logic: the persisted anchor
                       payload + threshold/downtime-correction helpers used by
                       the TimespanWithoutPrecipitationSensor in sensor.py.
 precipitation_total.py
-                      Pure running-total logic: the persisted total payload,
-                      the reading filter, and the missed-release walk used by
-                      the PrecipitationTotalSensor in sensor.py.
-rain_events.py        Pure rain-event tracker behind the rain_events attribute
-                      of Precipitation expected (see "Rain events"). HA-free,
+                      Pure running-total logic: the persisted total payload
+                      (with its pending backfill), the reading filter, and the
+                      missed-release walk used by the PrecipitationTotalSensor
+                      in sensor.py.
+rain_events.py        Pure rain-event tracker behind the Rain events sensor
+                      (see "Rain events"). HA-free,
                       no relative imports: the parser tier tests it.
 config_flow.py        UI config flow: collects name + lat/lon; options form
                       with a collapsed Advanced section, stored flat.
@@ -60,7 +61,8 @@ poll loop.
 4. The coordinator wraps those in a `CoordinatorData` — its `data`/`metadata`
    are a scalar for RADOLAN products (`None` for a nodata cell, which the ODIM
    reader returns as NaN), parallel lists for RS (`[_000, _060,
-   _120, peak]`, `peak` being `None` unless `full_rolling_series` is on),
+   _120, peak, next_120]`, `peak` being `None` unless `full_rolling_series`
+   is on, `next_120` = `_060 + _120`),
    parallel dicts for RV
 5. `PrecipitationSensorEntity.native_value` calls
    `description.value_fn(coordinator.data.data)`
@@ -169,11 +171,11 @@ viewers and Windows consoles mangle typographic punctuation.
 
 | Class | Key | Format | Update | Description |
 |-------|-----|--------|--------|-------------|
-| `RadvorRS` | `rs` | ODIM_H5 (tar) | 5 min | RADVOR nowcast, 25 rolling 60-min accumulations; exposes the 0/60/120 min leads, plus — only with the `full_rolling_series` option — the wettest future hour with the 25-point rolling-hour series (see "RS product specifics") |
-| `RadvorRV` | `rv` | ODIM_H5 (tar) | 5 min | RV nowcast, 25×5-min grids; derives the current intensity (lead 0 × 12, mm/h, with the raw 5-min amount), +1h/+2h peak intensity (mm/h), precip start/end timing (episode/clearing end algorithm, user-selectable), a rain-within-2h flag (whose metadata carries the raw 25-point forecast series, exposed by default), and by default the wettest future hour (see "Peak hourly precipitation") |
-| `HymecNG` | `hymecng` | ODIM_H5 (single .hd5) | 5 min | Precipitation-*type* composite (rain/snow/freezing rain/hail/…); one enum "Precipitation type" sensor |
-| `RadolanRW` | `rw` | ODIM_H5 (RADOLAN HDF5 edition) | 1 h | 1-hour precipitation analysis (gauge-adjusted; same window as RS `_000`) |
-| `RadolanRW10` | `rw_10min` | same as RW | 10 min | RW's 10-minute runs: the sliding hour ending at each :x0. Built only when used (see "RW 10-minute runs") |
+| `RadvorRS` | `rs` | ODIM_H5 (tar) | 5 min | RADVOR nowcast, 25 rolling 60-min accumulations; exposes the 0/60/120 min leads and the 120-min total (60 + 120), plus — only with the `full_rolling_series` option — the wettest future hour with the 25-point rolling-hour series (see "RS product specifics") |
+| `RadvorRV` | `rv` | ODIM_H5 (tar) | 5 min | RV nowcast, 25×5-min grids; derives the current intensity (lead 0 × 12, mm/h, with the raw 5-min amount), peak intensity (mm/h) over the first hour, the second and both, precip start/end timing (episode/clearing end algorithm, user-selectable), a rain-within-2h flag (whose metadata carries the raw 25-point forecast series, exposed by default), and by default the wettest future hour (see "Peak hourly precipitation") |
+| `HymecNG` | `hymecng` | ODIM_H5 (single .hd5) | 5 min | Precipitation-*type* composite (rain/snow/freezing rain/hail/…); one enum "Precipitation type now" sensor |
+| `RadolanRW` | `rw` | ODIM_H5 (RADOLAN HDF5 edition) | 1 h | 1-hour precipitation analysis (gauge-adjusted), the run ending on the hour: one clock hour per release (see "RW 10-minute runs") |
+| `RadolanRW10` | `rw_10min` | same as RW | 10 min | RW's 10-minute runs: the sliding hour ending at each :x0. Built only for a dry streak counting RW (see "RW 10-minute runs") |
 | `RadolanSF` | `sf` | ODIM_H5 (RADOLAN HDF5 edition) | 1 h | 24-hour precipitation analysis |
 | `RadolanSFLastYesterday` | `sf_2350` | same as SF | daily | Yesterday's 24 h total |
 
@@ -181,40 +183,58 @@ viewers and Windows consoles mangle typographic punctuation.
 
 Every entity name is set via `translation_key` + `translations/en.json` — never a
 hardcoded `name=` / `_attr_name`. HA derives the entity id by slugifying the
-English name, so the name is also the id: `Precipitation next 1–2h` →
-`sensor.<device>_precipitation_next_1_2h`. Keep names slug-friendly.
+English name, so the name is also the id: `Precipitation next 60–120 min` →
+`sensor.<device>_precipitation_next_60_120_min`. Keep names slug-friendly.
 
-A name states a window only when the window is part of the *value*. Two forms:
+A name states a window only when the window is part of the *value*. Three forms:
 
 | form | meaning | examples |
 |------|---------|----------|
-| `last <N>` | measured accumulation over a window ending now | `Precipitation last 1h`, `Precipitation last 24h` |
-| `next <N>` | forecast value over a future window | `Precipitation next 1h`, `Precipitation next 1–2h`, `Peak intensity next 1h` |
+| `last <N>` | measured accumulation over a sliding window ending at the latest release | `Precipitation last 60 min`, `Precipitation last 24h` |
+| `next <N>` | forecast value over a future window | `Precipitation next 60 min`, `Precipitation next 60–120 min`, `Peak intensity next 60 min` |
+| calendar period | the last complete clock hour / calendar day | `Precipitation previous hour`, `Precipitation yesterday` |
 
-`next 1–2h` is the 60–120 min window, *not* the coming two hours.
+**Units follow the product.** The RADVOR nowcast (RS/RV) states its windows in
+minutes, matching its 5-minute steps and the `minutes_until` attributes:
+`next 60–120 min` says what it covers, where the old `next 1–2h` needed a note
+that it is the second hour, not the coming two. RADOLAN keeps hours and days
+(`last 24h`, `previous hour`, `yesterday`); `last 1440 min` would be absurd,
+and none of them ever collided. `24h` keeps its released spelling (no space,
+unlike `60 min`) because a space would change its slug for nothing.
 
-RS `_000` and RW measure the *same* window, the 60 minutes ending now, so they
-share the name `Precipitation last 1h` and a parenthesised suffix names the
-source: `(radar)` for RS, `(gauge-adjusted)` for RW. The suffix keeps the head
-noun and the window first, like every other name, so the two sort next to each
-other in the entity list. The whole RADOLAN family carries `(gauge-adjusted)` —
-`Precipitation last 24h (gauge-adjusted)`, `Precipitation yesterday
-(gauge-adjusted)` — so the qualifier means "RADOLAN", not just "the one that
-collides". The running totals do not: nothing collides with them, and they
-already use the parenthesis for their cadence. German: `(Radar)` /
-`(angeeicht)`, DWD's own term for gauge adjustment.
+`Precipitation last 60 min` is RS `_000`: the rolling hour, every 5 minutes,
+from the same product as `next 60 min` / `next 60–120 min`. RW is a clock hour
+(the run ending on the hour, see "RW 10-minute runs"), so it is `Precipitation
+previous hour`. No two names share a window, so none needs a source qualifier:
+radar vs. gauge-adjusted is explained in the README, not carried in names.
+(The release branch after 2026.10.0 briefly carried `(radar)` /
+`(gauge-adjusted)` suffixes; they never shipped.)
 
-RS `_000` used to be `Precipitation now`, named for its role rather than
-its window. That hid the fact that it is mm accumulated over the past hour,
-**not** a rate, and left `now` unavailable for the one sensor that really is
-current. The keys (`radvor_rs_000`, `radolan_rw`, …) did not change, so
-existing installs keep their entity ids; only new installs get the new slugs.
-Never reuse an old slug for a different value — `precipitation_last_1h` was RW
-and is now nobody's, which is why RS did not simply take it.
+**Never reuse an old slug for a different value.** Keys did not change, so
+existing installs keep their entity ids and only see new names; new installs
+get the new slugs. Up to 2026.10.0 the names were: RS `_000` `Precipitation
+now` (`precipitation_now`, named for its role, which hid that it is mm over the
+past hour and not a rate), RW `Precipitation last 1h` (`precipitation_last_1h`),
+and the forecasts `next 1h`, `next 1–2h`, `Peak intensity next 1h` /
+`next 1–2h`, `Peak hourly precipitation next 2h`, and HymecNG's
+`Precipitation type`. None of the new slugs is one
+of those, so an id means one thing on every install, and HA's "recreate entity
+ids" on an old install cannot collide (giving RS `precipitation_last_1h` was
+considered and rejected for exactly that: RW still holds it there, so RS would
+land on `_2`). The README lists the old ids for older installs.
 
-`Precipitation intensity now` (RV lead 0 × 12, mm/h) is the only `now`: the
-latest 5-minute analysis, ending at the release time. The README states that
-"now" is the analysis window, which ended 4–10 minutes before the value appears.
+`now` means the latest 5-minute analysis, ending at the release time:
+`Precipitation intensity now` (RV lead 0 × 12, mm/h) and `Precipitation type
+now` (HymecNG). The README states that "now" is the analysis window, which
+ended 3–10 minutes before the value appears. A window total is never `now`
+(that was RS `_000`'s old name, see above).
+
+`Precipitation next 120 min` (RS `_060 + _120`) and `Peak intensity next 120
+min` (RV, the max over leads 5–120) cover the whole horizon, so no sum or max
+of two sensors is needed in a template. The total is RS's two forecast hours
+added, not RV's 24 steps summed, so it is exactly the sum of the two sensors
+shown next to it; it is `None` when either hour is, since half a forecast is
+not a 120-minute total.
 
 Everything else carries no window, and should keep it that way. The RV 2 h
 horizon in particular is a property of the *algorithm*, not of the value, so it
@@ -223,21 +243,43 @@ belongs in the docs rather than in four entity names:
 - `Precipitation start` / `Precipitation end` answer *when*; outside the horizon
   the state is simply `unknown`.
 - `Precipitation expected` is a flag; `off` already covers "not in the horizon".
-- `Precipitation type` is instantaneous too, but as a class rather than an
-  amount it cannot be mistaken for anything else, so it needs no qualifier.
 
-`Precipitation total (hourly)` / `(daily)` are the exception to the window rule: they hold
-no window at all (an ever-growing sum since setup), so the parenthesis names the
-*cadence* they grow at, which is what tells the two apart. They are
-`TOTAL_INCREASING` and keyed on the release timestamp, never on the value
+`Precipitation total` / `Precipitation total daily` are the exception to the
+window rule: they hold no window at all (an ever-growing sum since setup). They
+are `TOTAL_INCREASING` and keyed on the release timestamp, never on the value
 changing: two equally wet hours are two releases, and a release seen twice is
-counted once. RW backs the hourly one, `sf_2350` the daily one; they are
-separate entities rather than one with a source option, because switching the
-source would make a `TOTAL_INCREASING` sensor jump.
+counted once. RW backs `Precipitation total`, the one to use: it is up to date
+within the hour, and HA's statistics see each hour one hour late (11:00-12:00
+is added at ~12:28), so only the last hour of a day spills into the next.
+`sf_2350` backs the daily one, whose rain every day lands in the *next* day's
+statistics; it stays because 2026.10.0 shipped it (removing it would orphan
+users' entities), but `entity_registry_enabled_default=False`. That only
+applies when HA first registers the entity, so installs that had it keep it
+enabled, and new ones get it disabled; enabling it reloads the entry and it
+starts from 0, like any new total. The `sf_2350` coordinator runs either way,
+for `Precipitation yesterday`. They are separate entities rather
+than one with a source option, because switching the source would make a
+`TOTAL_INCREASING` sensor jump. Up to 2026.10.0 they were `(hourly)` /
+`(daily)`; the daily one keeps its slug (`precipitation_total_daily`), the
+hourly one gets the new `precipitation_total`.
 
-`Peak intensity next 1h` / `next 1–2h` drop the `Precipitation` head noun on
-purpose: they are mm/h rather than mm, and the shorter head stops them reading
-as near-duplicates of `Precipitation next 1h` / `next 1–2h` in the entity list.
+**Backfill.** Missed releases (`missed_releases`, at most `max_backfill`: 48
+for RW, 7 for `sf_2350`, what OpenData keeps) go on a `pending` list stored in
+the restore data with the total. `_async_backfill` fetches them oldest first
+and removes each only once it has been added (or turned out to hold no data
+for the cell), so a restart resumes the list (`_start_backfill` at startup)
+and a failed fetch is retried with the next counted release. A new release is
+the retry trigger, not every coordinator update: during a DWD outage the
+coordinator's own fast-poll retries would otherwise refetch the backlog each
+minute. `split_fetchable` gives up on entries older than `max_backfill`
+releases, walking the grid so DST days count as one release, and logs once
+per batch dropped. One round runs at a time; releases that join meanwhile are
+picked up by the running round.
+
+`Peak intensity next 60 min` / `next 60–120 min` drop the `Precipitation` head
+noun on purpose: they are mm/h rather than mm, and the shorter head stops them
+reading as near-duplicates of `Precipitation next 60 min` / `next 60–120 min`
+in the entity list.
 
 Entity `key`s are separate from names: they are the unique-id suffix, stay
 product-prefixed (`radvor_*` / `radolan_*` / `hymecng_*`), and must not change
@@ -373,7 +415,7 @@ Current runtime deps: `numpy`, `h5py`
   rate — `_000`'s `what/startdate..enddate` spans T−60 min to T (verified against
   `tests/fixtures/composite_rs_sample.hd5`: 06:50 → 07:50 for a 07:50 file). So
   `_000` is "precipitation over the past hour" — exposed as `Precipitation last
-  1h (radar)` (see "Entity naming") —
+  60 min` (see "Entity naming") —
   `_060` covers T→T+60, and `_120` covers T+60→T+120.
 - **Grid**: `xsize=1100`, `ysize=1200`, `xscale=yscale=1000.0 m`
 - **Projection**: `+proj=stere +lat_ts=60 +lat_0=90 +lon_0=10 +x_0=543196.835... +y_0=3622588.861...` (WGS84)
@@ -385,12 +427,12 @@ Current runtime deps: `numpy`, `h5py`
   `_000`/`_060`/`_120`, by range (see "Range reads"); with the
   `full_rolling_series` option it downloads the whole tar for all 25. Either
   way `_parse()` gets the members' bytes and decodes them off the loop. The
-  payload list is `[_000, _060, _120, peak]`, where `peak` is `None` unless
-  the option is on.
+  payload list is `[_000, _060, _120, peak, next_120]`, where `peak` is
+  `None` unless the option is on and `next_120` is `_060 + _120`.
 
 ## Peak hourly precipitation
 
-`Peak hourly precipitation next 2h` is the wettest rolling hour wholly in the
+`Peak hourly precipitation next 120 min` is the wettest rolling hour wholly in the
 future (windows ending at +60..+120, `FUTURE_HOUR_LEADS`; ties go to the earlier
 window), with the window as `data_start`/`data_end` (`None` on a dry forecast)
 and the rolling-hour series as `rolling_1h`. Two products can feed it, and
@@ -420,7 +462,7 @@ entity to `coordinators[source]` directly (options reload the entry, as for
 
 - `rw` — RW, gauge-adjusted, ~28 min late, counted from its **10-minute
   runs** (`rw_10min`, see "RW 10-minute runs"): the reset shows up to an hour
-  sooner than with the HH:50 run alone, at the same adjustment. Scalar
+  sooner than with the hourly run alone, at the same adjustment. Scalar
   payload; the reset time is `metadata.source_timestamp`, the end of that
   sliding hour.
 - `rs` — RS `_000`, radar only, a rolling hour every 5 min. List payload; the
@@ -439,11 +481,18 @@ entry. So every entry stores its source, and changing
 
 ## RW 10-minute runs
 
-DWD runs RW every 10 minutes, each run the hour ending at that :x0; the HH:50
-file the integration always used is just one of them. `RadolanRW10`
-(`rw_10min`) is the same file family on a 10-minute grid (same URL pattern,
-same parsing, HDF5 edition, `RELEASE_DELAY` 28 min, observed ~26 min).
+DWD runs RW every 10 minutes, each run the hour ending at that :x0.
+`RadolanRW` (`rw`) reads the run ending on the hour, so every value is a clock
+hour; `RadolanRW10` (`rw_10min`) is the same file family on a 10-minute grid
+(same URL pattern, same parsing, HDF5 edition). Both have a `RELEASE_DELAY` of
+28 min; every run minute is observed at ~25.7 min (288 runs, 2026-10-13).
 
+- **Why :00.** Up to 2026.10.0 `rw` read the HH:50 run. Nothing recorded why;
+  it is RADOLAN's traditional hour, and SF is still only published at :50
+  (OpenData has no other SF minute). But RW's :00 run is as complete, as
+  timely and as strongly adjusted (below), and only a clock hour can be called
+  "previous hour" and line up with HA's hourly statistics. The cost is that
+  `rw` and `sf` windows are now 10 minutes apart.
 - **Quality.** `scripts/compare_rw_runs.py` compares every RW run on OpenData
   (48 h) with radar-only RS `_000` for the same hour, cell for cell (RW's HDF5
   edition is on the DE1200 grid). If the sub-hourly runs used fewer gauges
@@ -451,17 +500,23 @@ same parsing, HDF5 edition, `RELEASE_DELAY` 28 min, observed ~26 min).
   every run minute departs from RS alike (mean |RW-RS| 0.53-0.58 mm, 58-62 %
   relative, 76-78 % of wet cells adjusted). Rerun it before relying on this
   for anything new.
-- **Built only when used** (`is_needed(options)`, checked in
-  `async_setup_entry`): when `rw_last_hour_mode` is `sliding`, or the dry
-  streak counts RW. Otherwise the entry makes no extra requests.
+- **`rw_10min` is built only when used** (`is_needed(options)`, checked in
+  `async_setup_entry`): when the dry streak counts RW. Otherwise the entry
+  makes no extra requests. No sensor shows the sliding RW hour: as a "last 60
+  min" it would be 28-38 min behind, where RS is 4-9 min, and gauge accuracy is
+  what `Precipitation previous hour` is for. A pre-release had a
+  `rw_last_hour_mode` option for it; it never shipped, and a stored value is
+  ignored.
 - **Never for the totals.** Consecutive runs overlap by 50 minutes, so summing
-  them counts each hour six times; `Precipitation total (hourly)` and its
-  missed-release walk stay on the HH:50 grid of `rw`. The startup downtime
+  them counts each hour six times; `Precipitation total` and its
+  missed-release walk stay on the hourly grid of `rw`. The startup downtime
   correction of the dry streak also keeps using `rw`.
-- `rw_last_hour_mode` (Advanced, default `fixed`) rebinds the
-  `radolan_rw` sensor (`_radolan_sensors()`); the key is unchanged, so the
-  entity and its history survive the switch. The dry streak does not follow
-  this option: it always takes the sliding runs when counting RW.
+- **The grid move.** A total stored by 2026.10.0 has a `last_release` at :50,
+  off the new grid. `first_uncounted_release()` notices that
+  (`_release_at_or_before` does not map it to itself) and resumes at the first
+  :00 release whose window starts after it: the 10 minutes in between are left
+  out once, rather than 50 counted twice. On-grid releases, including
+  `sf_2350`'s 23- and 25-hour DST days, are unaffected.
 
 ## Range reads
 
@@ -489,9 +544,26 @@ of the bytes (archives are 3.5-17.5 MB), an RV analysis 1-2 requests and 4-7 %.
 
 ## Rain events
 
-`rain_events` on `binary_sensor.<device>_precipitation_expected` (schema 1) is a
-contract with blueprints: field names and semantics in the README section "Rain
-events". `rain_events.py` holds the logic; `RadvorRV` the glue.
+The `Rain events` sensor (`sensor.<device>_rain_events`, key
+`radvor_rv_rain_events`) publishes the tracker's view (schema 1) as its
+attributes, a contract with blueprints: field names and semantics in the
+README section "Rain events". `rain_events.py` holds the logic; `RadvorRV` the
+glue; `RainEventsSensor` in sensor.py the entity.
+
+- **Opt-in.** The `rain_events` option (Advanced, default off) gates all of it:
+  `rain_events_enabled()` decides whether `RadvorRV` gets a `Store`, and with
+  none it skips the tracker, so an entry that does not use it makes no fill
+  requests and writes nothing. Turning it off removes the entity from the
+  registry (rather than leaving "no longer provided") and deletes the store,
+  so turning it on again starts clean. Nothing on 2026.10.0 had it, so it is
+  off for existing installs as well.
+- **Own entity.** It sat on `Precipitation expected` as a `rain_events`
+  attribute in pre-releases; a flag is the wrong home for a few KB that change
+  every release and that blueprints depend on. The state is
+  `overall_status()`: `ongoing` if any event is, else `upcoming`, else `none`
+  (an `unseen` event alone is `none`), so a blueprint can trigger on the state.
+  All `VIEW_KEYS` are unrecorded. A tracker failure leaves the view out, so
+  the state is `unknown`, not a guess.
 
 - **Steps.** The measured step ending at T is the RV analysis (lead 0) of
   release T, and no other release has it, so the integration keeps measured
@@ -533,7 +605,7 @@ events". `rain_events.py` holds the logic; `RadvorRV` the glue.
 ## Options form
 
 The options form nests rarely needed options in a collapsed `advanced_options`
-section (`data_entry_flow.section`): `rain_event_threshold`,
+section (`data_entry_flow.section`): `rain_events`, `rain_event_threshold`,
 `precipitation_end_algorithm`, `full_rolling_series`, `unavailable_when_stale`.
 Only the *form* is nested: `async_step_init` flattens the section before
 saving, so every key stays where `entry.options.get(...)` looks for it and no
@@ -551,4 +623,4 @@ real one and cannot serialize the form.
 - **Grid**: identical to RS/RV (1200×1100, same projection) → reuses `get_rs_grid_index` / `RS_GRID_SHAPE`
 - **Encoding**: `uint8` class index 0–10; `nodata=255` (outside coverage → sensor `unknown`), `undetect=254` (scanned, no echo → `no_precipitation`)
 - **Classes** (`PRECIP_TYPE_BY_INDEX` in `const.py`): 0 no_precipitation, 1 not_classified, 2 drizzle, 3 rain, 4 freezing_drizzle, 5 freezing_rain, 6 sleet, 7 snow, 8 graupel, 9 hail, 10 large_hail
-- **Sensor**: one `SensorDeviceClass.ENUM` "Precipitation type" sensor; state labels are translated via the `precipitation_type` entity translation key
+- **Sensor**: one `SensorDeviceClass.ENUM` "Precipitation type now" sensor (key `hymecng_precipitation_type`); state labels are translated via the `precipitation_type_now` entity translation key

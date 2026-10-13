@@ -52,11 +52,18 @@ DEFAULT_PRECIPITATION_END_ALGORITHM = DEFAULT_END_ALGO
 
 CONF_FULL_ROLLING_SERIES = "full_rolling_series"
 
-# Where "Peak hourly precipitation next 2h" comes from. Off: summed from the RV
+# Where "Peak hourly precipitation next 120 min" comes from. Off: summed from the RV
 # 5-minute steps that are decoded anyway, which only reaches the 13 rolling
 # hours wholly in the future. On: RS decodes all 25 of its members, adding the
 # 12 windows that straddle now. The peak itself is identical either way.
 DEFAULT_FULL_ROLLING_SERIES = False
+
+CONF_RAIN_EVENTS = "rain_events"
+
+# Whether the entry tracks rain events (the "Rain events" sensor). Off by
+# default: the tracker fetches missed analyses and keeps a store, which only
+# pays off for the blueprints that read it.
+DEFAULT_RAIN_EVENTS = False
 
 CONF_RAIN_EVENT_THRESHOLD = "rain_event_threshold"
 
@@ -66,19 +73,9 @@ CONF_RAIN_EVENT_THRESHOLD = "rain_event_threshold"
 # independent of CONF_PRECIPITATION_THRESHOLD.
 DEFAULT_RAIN_EVENT_THRESHOLD = 0.1
 
-CONF_RW_LAST_HOUR_MODE = "rw_last_hour_mode"
-
-# What "Precipitation last 1h (gauge-adjusted)" shows. DWD runs RW every 10
-# minutes, each run a sliding hour ending at that mark, gauge-adjusted as
-# strongly as the HH:50 run (scripts/compare_rw_runs.py). "fixed" keeps the
-# one clock hour per value the sensor always showed; "sliding" follows the
-# 10-minute runs. The hourly total always adds the fixed hours: summing
-# sliding ones would count every hour six times.
-RW_LAST_HOUR_FIXED = "fixed"
-RW_LAST_HOUR_SLIDING = "sliding"
-DEFAULT_RW_LAST_HOUR_MODE = RW_LAST_HOUR_FIXED
-
-# The coordinator for RW's 10-minute runs, created only when something uses it.
+# The coordinator for RW's 10-minute runs: each a sliding hour ending at that
+# mark, gauge-adjusted as strongly as the hourly run (scripts/compare_rw_runs.py).
+# Created only when the dry streak counts RW.
 RW_SLIDING_KEY = "rw_10min"
 
 CONF_PRECIPITATION_RESET_THRESHOLD = "precipitation_reset_threshold"
@@ -103,7 +100,7 @@ LEGACY_DRY_STREAK_SOURCE = DRY_STREAK_SOURCE_RS
 
 # HymecNG precipitation-type classes, indexed by the DWD class value (0..10) as
 # defined by the ODIM legend embedded in the composite. These are the possible
-# states of the "Precipitation type" enum sensor.
+# states of the "Precipitation type now" enum sensor.
 PRECIP_TYPE_BY_INDEX = (
     "no_precipitation",   # 0  NO_PRECIPITATION
     "not_classified",     # 1  NOT_CLASSIFIED

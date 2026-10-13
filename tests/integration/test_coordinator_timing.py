@@ -89,21 +89,34 @@ def test_rs_track_time_change_args():
 
 
 def test_rw_track_time_change_args():
-    """RW: hourly at :50 + 28m delay → all hours at minute 18, second 0."""
+    """RW: hourly at :00 + 28m delay → all hours at minute 28, second 0."""
     coord = RadolanRW.__new__(RadolanRW)
     args = coord.track_time_change_args
     assert len(args) == 1
     entry = args[0]
     assert entry["second"] == 0
-    assert entry["minute"] == [18]
+    assert entry["minute"] == [28]
     assert entry["hour"] == list(range(24))
 
 
 def test_rw_get_latest_release():
-    """13:00 − 28m delay = 12:32 → previous :50 release is 11:50."""
+    """13:00 − 28m delay = 12:32 → previous :00 release is 12:00."""
     coord = RadolanRW.__new__(RadolanRW)
     now = datetime(2025, 6, 1, 13, 0, tzinfo=UTC)
-    assert coord._get_latest_release(now) == datetime(2025, 6, 1, 11, 50, tzinfo=UTC)
+    assert coord._get_latest_release(now) == datetime(2025, 6, 1, 12, 0, tzinfo=UTC)
+    # 12:27 − 28m = 11:59 → still 11:00.
+    now = datetime(2025, 6, 1, 12, 27, tzinfo=UTC)
+    assert coord._get_latest_release(now) == datetime(2025, 6, 1, 11, 0, tzinfo=UTC)
+
+
+def test_release_at_or_before_maps_the_grid():
+    """A release maps to itself; anything off the grid to the release before it."""
+    coord = RadolanRW.__new__(RadolanRW)
+    release = datetime(2025, 6, 1, 12, 0, tzinfo=UTC)
+    assert coord._release_at_or_before(release) == release
+    # A timestamp from RW's old HH:50 grid is off it.
+    old = datetime(2025, 6, 1, 12, 50, tzinfo=UTC)
+    assert coord._release_at_or_before(old) == release
 
 
 def test_stale_deadline_runs_from_the_overdue_release():
@@ -114,12 +127,12 @@ def test_stale_deadline_runs_from_the_overdue_release():
     assert coord._stale_deadline() is None
     assert coord._data_is_stale(datetime(2025, 6, 1, 13, 0, tzinfo=UTC)) is True
 
-    # cached 11:50; the 12:50 release is due at 13:18, and we give it 6 more min
-    coord.curr_release = datetime(2025, 6, 1, 11, 50, tzinfo=UTC)
-    assert coord._stale_deadline() == datetime(2025, 6, 1, 13, 24, tzinfo=UTC)
-    assert coord._data_is_stale(datetime(2025, 6, 1, 13, 18, tzinfo=UTC)) is False
-    assert coord._data_is_stale(datetime(2025, 6, 1, 13, 24, tzinfo=UTC)) is False
-    assert coord._data_is_stale(datetime(2025, 6, 1, 13, 25, tzinfo=UTC)) is True
+    # cached 11:00; the 12:00 release is due at 12:28, and we give it 6 more min
+    coord.curr_release = datetime(2025, 6, 1, 11, 0, tzinfo=UTC)
+    assert coord._stale_deadline() == datetime(2025, 6, 1, 12, 34, tzinfo=UTC)
+    assert coord._data_is_stale(datetime(2025, 6, 1, 12, 28, tzinfo=UTC)) is False
+    assert coord._data_is_stale(datetime(2025, 6, 1, 12, 34, tzinfo=UTC)) is False
+    assert coord._data_is_stale(datetime(2025, 6, 1, 12, 35, tzinfo=UTC)) is True
 
 
 def test_rs_rides_out_one_late_release():
@@ -172,7 +185,7 @@ def test_stale_check_is_armed_on_success():
     entities look again when nothing else is happening.
     """
     coord = _make_coordinator(RadolanRW)
-    coord.curr_release = datetime(2025, 6, 1, 11, 50, tzinfo=UTC)
+    coord.curr_release = datetime(2025, 6, 1, 11, 0, tzinfo=UTC)
     fired_at = []
 
     def _fake_track(_hass, _action, point_in_time):
@@ -182,7 +195,7 @@ def test_stale_check_is_armed_on_success():
     with patch.object(coordinator_mod, "async_track_point_in_time", _fake_track):
         coord._schedule_stale_check()
 
-    assert fired_at == [datetime(2025, 6, 1, 13, 24, tzinfo=UTC)]
+    assert fired_at == [datetime(2025, 6, 1, 12, 34, tzinfo=UTC)]
 
     unsub = coord._stale_unsub
     coord._cancel_stale_check()
@@ -348,7 +361,7 @@ async def test_successful_update_stops_fast_polling():
         result = await coord._async_update_data()
 
     assert result.data == 3.2
-    assert coord.curr_release == datetime(2025, 6, 1, 11, 50, tzinfo=UTC)
+    assert coord.curr_release == datetime(2025, 6, 1, 12, 0, tzinfo=UTC)
     unsub.assert_called_once_with()
     assert coord._fast_poll_unsub is None
     assert coord._fast_poll_failures == 0

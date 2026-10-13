@@ -50,6 +50,23 @@ MAX_UNKNOWN_BRIDGE = 36
 WET, DRY, UNKNOWN = "wet", "dry", "unknown"
 UPCOMING, ONGOING, UNSEEN = "upcoming", "ongoing", "unseen"
 
+# The keys of the published view (see update), each a state attribute of the
+# "Rain events" sensor.
+VIEW_KEYS = (
+    "schema",
+    "base",
+    "wet_step_mm",
+    "steps_start",
+    "steps",
+    "history_complete",
+    "events",
+    "last_ended",
+)
+
+# The sensor's state when no event is upcoming or ongoing.
+NO_EVENT = "none"
+
+
 
 def wet_step_milli(threshold_mmh: float) -> int:
     """Return the wet-step threshold in thousandths of a mm per 5-minute step.
@@ -731,3 +748,18 @@ def at_stake(state: RainEventsState) -> bool:
         for t, value in state.measured.items()
         if t >= window_start(state.base)
     )
+
+
+def overall_status(view: dict[str, Any]) -> str:
+    """Return the sensor state for a published view.
+
+    ``ongoing`` if any event is, else ``upcoming`` if any is, else ``none``.
+    An ``unseen`` event is one the latest forecast does not show, so it does
+    not make rain upcoming on its own.
+    """
+    statuses = {event.get("status") for event in view.get("events") or ()}
+    for status in (ONGOING, UPCOMING):
+        if status in statuses:
+            return status
+
+    return NO_EVENT

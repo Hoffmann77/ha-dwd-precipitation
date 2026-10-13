@@ -332,6 +332,21 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
 
         return dt_util.as_utc(reference + self.RELEASE_INTERVAL)
 
+    def _release_at_or_before(self, moment: datetime) -> datetime:
+        """Return the newest scheduled release at or before the given moment.
+
+        In the product's own time reference, like _next_release_after. A
+        release maps to itself; a timestamp that does not is off the grid,
+        which only happens to one stored from an older grid (RW's HH:50).
+        """
+        reference = dt_util.as_local(moment) if self.USE_LOCAL_TIME else moment
+
+        return dt_util.as_utc(
+            get_previous_multiple(
+                reference, self.RELEASE_INTERVAL, self.RELEASE_OFFSET
+            )
+        )
+
     def _data_is_stale(self, now: datetime) -> bool:
         """Return True if the overdue release has gone unfetched for too long."""
         deadline = self._stale_deadline()

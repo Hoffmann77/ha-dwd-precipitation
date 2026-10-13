@@ -52,10 +52,9 @@ from .const import (
     CONF_DRY_STREAK_SOURCE,
     DEFAULT_DRY_STREAK_SOURCE,
     DRY_STREAK_SOURCE_RW,
-    CONF_RW_LAST_HOUR_MODE,
-    DEFAULT_RW_LAST_HOUR_MODE,
-    RW_LAST_HOUR_SLIDING,
     RW_SLIDING_KEY,
+    CONF_RAIN_EVENTS,
+    DEFAULT_RAIN_EVENTS,
     CONF_RAIN_EVENT_THRESHOLD,
     DEFAULT_RAIN_EVENT_THRESHOLD,
     CONF_FULL_ROLLING_SERIES,
@@ -110,6 +109,11 @@ RAIN_FILL_BUDGET = timedelta(seconds=30)
 # RadvorRV._schedule_rain_save).
 RAIN_SAVE_DELAY = timedelta(seconds=10)
 RAIN_IDLE_SAVE_DELAY = timedelta(hours=12)
+
+
+def rain_events_enabled(options) -> bool:
+    """Whether the entry tracks rain events (the "Rain events" sensor)."""
+    return bool(options.get(CONF_RAIN_EVENTS, DEFAULT_RAIN_EVENTS))
 
 
 def rain_events_store_key(entry_id: str) -> str:
@@ -207,7 +211,7 @@ def _peak_hour_payload(
     source_product: str | None,
     source_timestamp: datetime | None,
 ) -> tuple[float | None, ProductMetadata]:
-    """Build the "Peak hourly precipitation next 2h" value and metadata.
+    """Build the "Peak hourly precipitation next 120 min" value and metadata.
 
     ``sums`` (rolling 60-minute totals, mm) and ``windows`` are aligned to
     LEADS; ``series_leads`` picks the points exposed as ``rolling_1h``. RS and
@@ -239,6 +243,29 @@ def _peak_hour_payload(
     )
 
 
+def _next_120(
+    hour1: float | None,
+    hour2: float | None,
+    meta1: ProductMetadata | None,
+    meta2: ProductMetadata | None,
+) -> tuple[float | None, ProductMetadata | None]:
+    """Return RS's 120-minute forecast total: its two forecast hours added.
+
+    Half a forecast is not a 120-minute total, so a missing hour makes the
+    whole value None rather than counting as dry.
+    """
+    if hour1 is None or hour2 is None or meta1 is None or meta2 is None:
+        return None, None
+
+    return round(hour1 + hour2, MM_DECIMALS), ProductMetadata(
+        source_product=meta1.source_product,
+        source_timestamp=meta1.source_timestamp,
+        lead_time_minutes=120,
+        data_start=meta1.data_start,
+        data_end=meta2.data_end,
+    )
+
+
 class RadvorRS(BaseProductUpdateCoordinator):
     """DWD RS precipitation nowcast (RADVOR, ODIM_H5 format).
 
@@ -255,6 +282,8 @@ class RadvorRS(BaseProductUpdateCoordinator):
       filled with the ``full_rolling_series`` option on, since it needs all 25
       members decoded; otherwise ``None`` and RV provides the sensor (see
       RadvorRV).
+    * ``4`` — the whole 120-minute forecast: leads 60 + 120, so it is exactly
+      the sum of the two forecast sensors. ``None`` unless both are present.
     """
 
     PRODUCT_KEY = "rs"
@@ -341,9 +370,10 @@ class RadvorRS(BaseProductUpdateCoordinator):
 
         data = [cells[lead][0] if cells[lead] else None for lead in RS_HOURLY_LEADS]
         metadata = [per_lead[lead] for lead in RS_HOURLY_LEADS]
+        next_120 = _next_120(data[1], data[2], metadata[1], metadata[2])
 
         if not full:
-            return data + [None], metadata + [None]
+            return data + [None, next_120[0]], metadata + [None, next_120[1]]
 
         sums = [
             round(cells[lead][0], MM_DECIMALS)
@@ -363,7 +393,7 @@ class RadvorRS(BaseProductUpdateCoordinator):
             base.source_product if base else None,
             base.source_timestamp if base else None,
         )
-        return data + [peak], metadata + [peak_meta]
+        return data + [peak, next_120[0]], metadata + [peak_meta, next_120[1]]
 
 
 class RadvorRV(BaseProductUpdateCoordinator):
@@ -377,8 +407,8 @@ class RadvorRV(BaseProductUpdateCoordinator):
 
     * ``intensity_000`` / ``amount_000`` — the analysis (lead 0, the 5 minutes
       ending at T) as an hourly rate (mm/h) and as the raw amount (mm).
-    * ``max_060`` / ``max_120`` — peak intensity (mm/h) over [T, T+60] /
-      [T+60, T+120].
+    * ``max_060`` / ``max_120`` / ``max_000_120`` — peak intensity (mm/h) over
+      [T, T+60] / [T+60, T+120] / [T, T+120].
     * ``start_in`` / ``start_at`` / ``end_in`` / ``end_at`` — when precipitation
       begins / ends at the location (see radar.nowcast.detect_start_end).
     * ``rain_within_2h`` — whether any precipitation is forecast within the
@@ -406,8 +436,8 @@ class RadvorRV(BaseProductUpdateCoordinator):
     # across one whole missed release before dropping the entities.
     OVERDUE_GRACE = DEFAULT_OVERDUE_GRACE
 
-    # rain_events persistence; None leaves the tracker off (tests building the
-    # coordinator without HA).
+    # rain_events persistence; None leaves the tracker off: the option is off,
+    # or a test builds the coordinator without HA.
     _rain_store: Store | None = None
     _rain_state: RainEventsState | None = None
     _rain_saved_ended: str | None = None
@@ -415,11 +445,12 @@ class RadvorRV(BaseProductUpdateCoordinator):
     _rain_broken: bool = False
 
     def __init__(self, hass, entry, async_client, lat, lon) -> None:
-        """Initialize the coordinator and its rain_events store."""
+        """Initialize the coordinator and, if tracked, its rain_events store."""
         super().__init__(hass, entry, async_client, lat, lon)
-        self._rain_store = Store(
-            hass, RAIN_EVENTS_STORE_VERSION, rain_events_store_key(entry.entry_id)
-        )
+        if rain_events_enabled(entry.options):
+            self._rain_store = Store(
+                hass, RAIN_EVENTS_STORE_VERSION, rain_events_store_key(entry.entry_id)
+            )
 
     @cached_property
     def index(self) -> tuple[int, int]:
@@ -471,7 +502,7 @@ class RadvorRV(BaseProductUpdateCoordinator):
             if not self._rain_broken:
                 self._rain_broken = True
                 _LOGGER.exception(
-                    "Could not update the rain_events attribute; the other RV "
+                    "Could not update the Rain events sensor; the other RV "
                     "sensors are not affected"
                 )
             return None
@@ -651,6 +682,7 @@ class RadvorRV(BaseProductUpdateCoordinator):
         timing_meta = ProductMetadata(source_product="RV", source_timestamp=base_ts)
         hour1_meta = _bucket_meta(HOUR1_LEADS, 60)
         hour2_meta = _bucket_meta(HOUR2_LEADS, 120)
+        both_meta = _bucket_meta(HOUR1_LEADS + HOUR2_LEADS, 120)
         # The rain-expected flag owns the raw forecast curve: the full 25-point
         # 5-minute series is attached here so the binary sensor can surface it.
         rain_meta = ProductMetadata(
@@ -694,6 +726,7 @@ class RadvorRV(BaseProductUpdateCoordinator):
             "amount_000": now_mm,
             "max_060": bucket_max_intensity(values, HOUR1_LEADS),
             "max_120": bucket_max_intensity(values, HOUR2_LEADS),
+            "max_000_120": bucket_max_intensity(values, HOUR1_LEADS + HOUR2_LEADS),
             "start_in": start_in,
             "start_at": _at(start_in),
             "end_in": end_in,
@@ -706,6 +739,7 @@ class RadvorRV(BaseProductUpdateCoordinator):
             "amount_000": now_meta,
             "max_060": hour1_meta,
             "max_120": hour2_meta,
+            "max_000_120": both_meta,
             "start_in": timing_meta,
             "start_at": timing_meta,
             "end_in": timing_meta,
@@ -854,7 +888,15 @@ def _radolan_url(product: str, ts: datetime) -> str:
 
 
 class RadolanRW(RadolanProduct):
-    """DWD RADOLAN RW: 1-hour precipitation analysis."""
+    """DWD RADOLAN RW: 1-hour precipitation analysis, one clock hour per release.
+
+    DWD runs RW every 10 minutes (see RadolanRW10); this reads the run ending
+    on the hour, so each value is a clock hour (11:00-12:00), the one
+    "Precipitation previous hour" shows and the hourly total adds up. Up to
+    2026.10.0 it read the HH:50 run, the minute SF is still published at;
+    nothing ties RW to it, and the :00 run is gauge-adjusted as strongly and
+    published as quickly (~25.5 min after the hour, 48 runs, 2026-10-13).
+    """
 
     PRODUCT_KEY = "rw"
 
@@ -864,7 +906,7 @@ class RadolanRW(RadolanProduct):
 
     RELEASE_DELAY = timedelta(minutes=28)
 
-    RELEASE_OFFSET = timedelta(minutes=50)
+    RELEASE_OFFSET = timedelta()
 
     # An hourly total that is an hour behind is misreported rather than merely
     # old, so give the missing file only the default few minutes.
@@ -879,12 +921,10 @@ class RadolanRW(RadolanProduct):
 class RadolanRW10(RadolanRW):
     """DWD RADOLAN RW's 10-minute runs: a sliding hour ending at each :x0.
 
-    Same file family as RW (DWD publishes the HH:50 run among them), so it
-    reuses RW's URL and parsing; only the grid is every 10 minutes. Gauge-
-    adjusted as strongly as the HH:50 run, measured against radar-only RS
-    over 285 runs (scripts/compare_rw_runs.py). Only built when the sliding
-    hour is wanted: by the "Precipitation last 1h (gauge-adjusted)" option, or
-    by a dry streak counting RW.
+    Same file family as RW (its hourly runs are among them), so it reuses RW's
+    URL and parsing; only the grid is every 10 minutes. Gauge-adjusted as
+    strongly as the HH:50 run, measured against radar-only RS over 285 runs
+    (scripts/compare_rw_runs.py). Only built for a dry streak counting RW.
     """
 
     PRODUCT_KEY = RW_SLIDING_KEY
@@ -893,7 +933,8 @@ class RadolanRW10(RadolanRW):
 
     RELEASE_INTERVAL = timedelta(minutes=10)
 
-    # Observed ~26 min after each run's end, like the HH:50 run it includes.
+    # Observed ~25.7 min after each run's end, every run minute alike (288
+    # runs, 2026-10-13), like the hourly runs it includes.
     RELEASE_DELAY = timedelta(minutes=28)
 
     RELEASE_OFFSET = timedelta()
@@ -902,11 +943,9 @@ class RadolanRW10(RadolanRW):
 
     @classmethod
     def is_needed(cls, options) -> bool:
-        """Whether the last-1h sensor or the dry streak follows the sliding hour."""
+        """Whether the dry streak counts RW, the only user of the sliding hour."""
         return (
-            options.get(CONF_RW_LAST_HOUR_MODE, DEFAULT_RW_LAST_HOUR_MODE)
-            == RW_LAST_HOUR_SLIDING
-            or options.get(CONF_DRY_STREAK_SOURCE, DEFAULT_DRY_STREAK_SOURCE)
+            options.get(CONF_DRY_STREAK_SOURCE, DEFAULT_DRY_STREAK_SOURCE)
             == DRY_STREAK_SOURCE_RW
         )
 

@@ -36,24 +36,24 @@
           "precipitation_threshold": "How much forecast rain counts as precipitation for the “Precipitation start”, “Precipitation end” and “Precipitation expected” sensors. 0 means any amount DWD detects; raise it to around 0.5 to ignore drizzle.",
           "start_end_mode": "Whether those two sensors show a clock time (“14:25”) or the minutes until the event (“20”). Whichever you do not pick stays available as an attribute on the same sensor.",
           "precipitation_reset_threshold": "How much rain resets “Timespan without precipitation” to zero. It is compared against the past-hour total of the selected product, in millimetres accumulated over that hour — so 1 mm means 1 mm fell within the hour, not a rate.",
-          "dry_streak_source": "Which past-hour total “Timespan without precipitation” compares against the reset threshold. “Precipitation last 1h (gauge-adjusted)” (RW) is corrected with rain-gauge data and more accurate; the counter follows DWD's 10-minute runs of it, so a reset shows about 30 to 40 minutes after the rain. “Precipitation last 1h (radar)” (RS) is radar only and updated every 5 minutes: faster, but noisier, and its rolling hour keeps resetting the counter for up to an hour after the rain stops."
+          "dry_streak_source": "Which past-hour total “Timespan without precipitation” compares against the reset threshold. “Gauge-adjusted hour” (RW) is corrected with rain-gauge data and more accurate: DWD's analysis of the latest 60 minutes, rerun every 10 minutes, so a reset shows about 30 to 40 minutes after the rain. “Precipitation last 60 min” (RS) is radar only and updated every 5 minutes: faster, but noisier, and its rolling hour keeps resetting the counter for up to an hour after the rain stops."
         },
         "sections": {
           "advanced_options": {
             "name": "Advanced options",
             "description": "Settings most installations never need to change.",
             "data": {
+              "rain_events": "Track rain events",
               "rain_event_threshold": "Rain event threshold (mm per hour)",
-              "rw_last_hour_mode": "How “Precipitation last 1h (gauge-adjusted)” updates",
               "precipitation_end_algorithm": "When “Precipitation end” counts rain as over",
               "full_rolling_series": "Include the past hour in the hourly forecast series",
               "unavailable_when_stale": "Show sensors as unavailable when the data is out of date"
             },
             "data_description": {
-              "rain_event_threshold": "How much rain a 5-minute step needs to count towards a rain event in the “rain_events” attribute of “Precipitation expected”. 0 means any trace forms an event. Independent of the rain detection threshold, so the events and “Precipitation start” can disagree when the two differ.",
-              "rw_last_hour_mode": "“Fixed hour” shows one clock hour per value (the hour ending at :50), about 30 minutes after it ends. “Sliding hour” follows DWD's 10-minute runs: the 60 minutes ending at the latest 10-minute mark, equally gauge-adjusted, about 30 minutes behind, so a downpour shows up to an hour sooner; consecutive values overlap by 50 minutes. “Precipitation total (hourly)” always adds the fixed hours.",
+              "rain_events": "Adds the “Rain events” sensor, which follows each burst of rain from the first forecast that shows it until it has fallen, for blueprints that warn about or report rain. Off by default: when on, the integration also fetches the radar analyses it missed and keeps a small record of recent rain on disk.",
+              "rain_event_threshold": "How much rain a 5-minute step needs to count towards a rain event in the “Rain events” sensor. 0 means any trace forms an event. Independent of the rain detection threshold, so the events and “Precipitation start” can disagree when the two differ. Only used with “Track rain events” on.",
               "precipitation_end_algorithm": "“First dry gap” reports the end of the current burst, so it moves around during showers. “Precipitation clears within 2 h” waits until no further rain is forecast, which is steadier but stays unknown longer. DWD forecasts only two hours ahead, so beyond that the sensor is “unknown” either way.",
-              "full_rolling_series": "Makes the “forecast_rolling_1h” attribute of “Peak hourly precipitation next 2h” start one hour earlier. Each entry is the rain in the hour starting at that time, so the first entries also include rain that has already fallen, and a chart shows the past hour and the forecast as one curve. The sensor's value is the same either way, as it only looks at the hours ahead. Turning this on roughly doubles the processing time per update, which can matter on small devices.",
+              "full_rolling_series": "Makes the “forecast_rolling_1h” attribute of “Peak hourly precipitation next 120 min” start one hour earlier. Each entry is the rain in the hour starting at that time, so the first entries also include rain that has already fallen, and a chart shows the past hour and the forecast as one curve. The sensor's value is the same either way, as it only looks at the hours ahead. Turning this on roughly doubles the processing time per update, which can matter on small devices.",
               "unavailable_when_stale": "If DWD does not publish a new file in time, the affected sensors report “unavailable” instead of keeping the last value. Turn this off to always keep the most recent reading, accepting that it may be hours old. Either way the missing file keeps being retried in the background."
             }
           }
@@ -76,54 +76,54 @@
     },
     "dry_streak_source": {
       "options": {
-        "rw": "Precipitation last 1h (gauge-adjusted, RW)",
-        "rs": "Precipitation last 1h (radar, RS)"
-      }
-    },
-    "rw_last_hour_mode": {
-      "options": {
-        "fixed": "Fixed hour, updated hourly",
-        "sliding": "Sliding hour, updated every 10 minutes"
+        "rw": "Gauge-adjusted hour (RW, every 10 minutes)",
+        "rs": "Precipitation last 60 min (radar, RS)"
       }
     }
   },
   "entity": {
     "sensor": {
-      "precipitation_last_1h_radar": {
-        "name": "Precipitation last 1h (radar)"
+      "precipitation_last_60_min": {
+        "name": "Precipitation last 60 min"
       },
-      "precipitation_last_1h_gauge_adjusted": {
-        "name": "Precipitation last 1h (gauge-adjusted)"
+      "precipitation_previous_hour": {
+        "name": "Precipitation previous hour"
       },
-      "precipitation_last_24h_gauge_adjusted": {
-        "name": "Precipitation last 24h (gauge-adjusted)"
+      "precipitation_last_24h": {
+        "name": "Precipitation last 24h"
       },
-      "precipitation_yesterday_gauge_adjusted": {
-        "name": "Precipitation yesterday (gauge-adjusted)"
+      "precipitation_yesterday": {
+        "name": "Precipitation yesterday"
       },
-      "precipitation_total_hourly": {
-        "name": "Precipitation total (hourly)"
+      "precipitation_total": {
+        "name": "Precipitation total"
       },
       "precipitation_total_daily": {
-        "name": "Precipitation total (daily)"
+        "name": "Precipitation total daily"
       },
-      "precipitation_next_1h": {
-        "name": "Precipitation next 1h"
+      "precipitation_next_60_min": {
+        "name": "Precipitation next 60 min"
       },
-      "precipitation_next_1_2h": {
-        "name": "Precipitation next 1–2h"
+      "precipitation_next_60_120_min": {
+        "name": "Precipitation next 60–120 min"
       },
-      "peak_hourly_precipitation_next_2h": {
-        "name": "Peak hourly precipitation next 2h"
+      "precipitation_next_120_min": {
+        "name": "Precipitation next 120 min"
+      },
+      "peak_hourly_precipitation_next_120_min": {
+        "name": "Peak hourly precipitation next 120 min"
       },
       "precipitation_intensity_now": {
         "name": "Precipitation intensity now"
       },
-      "peak_intensity_next_1h": {
-        "name": "Peak intensity next 1h"
+      "peak_intensity_next_60_min": {
+        "name": "Peak intensity next 60 min"
       },
-      "peak_intensity_next_1_2h": {
-        "name": "Peak intensity next 1–2h"
+      "peak_intensity_next_60_120_min": {
+        "name": "Peak intensity next 60–120 min"
+      },
+      "peak_intensity_next_120_min": {
+        "name": "Peak intensity next 120 min"
       },
       "precipitation_start": {
         "name": "Precipitation start"
@@ -134,8 +134,8 @@
       "timespan_without_precipitation": {
         "name": "Timespan without precipitation"
       },
-      "precipitation_type": {
-        "name": "Precipitation type",
+      "precipitation_type_now": {
+        "name": "Precipitation type now",
         "state": {
           "no_precipitation": "No precipitation",
           "not_classified": "Not classified",
@@ -148,6 +148,14 @@
           "graupel": "Graupel",
           "hail": "Hail",
           "large_hail": "Large hail"
+        }
+      },
+      "rain_events": {
+        "name": "Rain events",
+        "state": {
+          "none": "None",
+          "upcoming": "Upcoming",
+          "ongoing": "Ongoing"
         }
       }
     },
