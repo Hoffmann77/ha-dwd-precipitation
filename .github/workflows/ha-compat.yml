@@ -16,6 +16,7 @@ jobs:
   ha-compat:
     name: Integration @ ${{ matrix.name }}
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     continue-on-error: ${{ matrix.experimental }}
     strategy:
       fail-fast: false
@@ -37,7 +38,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
       - name: Install HA test dependencies
-        run: uv sync --only-group ha-test
+        run: uv sync --locked --only-group ha-test
       - name: Override HA test library version
         run: |
           if [ -n "${{ matrix.phacc }}" ]; then

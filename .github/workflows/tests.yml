@@ -2,26 +2,39 @@ name: Tests
 
 on:
   pull_request:
+  # main too: a direct push, or a merge whose base moved, is tested as well.
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   lint:
     name: Lint (ruff)
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
       - name: Run ruff
-        run: uv run --only-group lint ruff check --output-format github .
+        run: uv run --locked --only-group lint ruff check --output-format github .
 
   # Pure parser unit tests — no HA, no wradlib, no network.
   parser-tests:
     name: Parser unit tests
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
       - name: Install unit-test dependencies
-        run: uv sync --only-group unit-test
+        run: uv sync --locked --only-group unit-test
       - name: Run parser unit tests
         run: uv run pytest tests/parser -v
 
@@ -29,11 +42,12 @@ jobs:
   integration-tests:
     name: Integration tests (HA environment)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
       - name: Install HA test dependencies
-        run: uv sync --only-group ha-test
+        run: uv sync --locked --only-group ha-test
       - name: Run integration tests
         run: uv run pytest tests/integration -v
 
@@ -41,10 +55,11 @@ jobs:
   reference-tests:
     name: wradlib reference comparison
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
       - name: Install wradlib dependencies
-        run: uv sync --only-group wradlib-comparison
+        run: uv sync --locked --only-group wradlib-comparison
       - name: Run reference comparison tests
         run: uv run pytest tests/reference -v
