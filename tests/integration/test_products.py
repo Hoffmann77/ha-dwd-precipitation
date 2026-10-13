@@ -178,6 +178,41 @@ async def test_rs_without_option_decodes_only_the_three_hours() -> None:
 
 
 @pytest.mark.asyncio
+async def test_rs_range_fallback_is_said_once_and_its_end_once(caplog) -> None:
+    """Whole archives instead of ranges: one WARNING per run, one INFO after."""
+    ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
+    archive = make_rs_tar(ts)
+
+    async def ignores_ranges(url, _client, headers=None, **_kw):
+        return AsyncResponse(content=archive)  # 200: the whole file
+
+    async def serves_ranges(url, _client, headers=None, **_kw):
+        start, end = (int(x) for x in headers["Range"][6:].split("-"))
+        end = min(end, len(archive) - 1)
+        return AsyncResponse(
+            content=archive[start:end + 1],
+            status=206,
+            headers={"Content-Range": f"bytes {start}-{end}/{len(archive)}"},
+        )
+
+    def _read(fileobj, _row, _col, **_kw):
+        lead = int(fileobj.getvalue())
+        return np.float32(lead), _rs_what(ts, lead)
+
+    coord = _coord(RadvorRS, {"full_rolling_series": False})
+    with patch.object(products, "read_odim_composite_cell", side_effect=_read):
+        for server in (ignores_ranges, ignores_ranges, ignores_ranges, serves_ranges):
+            with patch.object(products, "async_get", side_effect=server):
+                data, _ = await coord._fetch_and_parse(ts)
+            assert data[:3] == [0.0, 60.0, 120.0]  # values are unaffected
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "Reading whole DWD RS precipitation nowcast archives" in warnings[0].message
+    assert any("work again" in r.message and r.levelno == logging.INFO for r in caplog.records)
+
+
+@pytest.mark.asyncio
 async def test_rs_without_option_reads_the_hours_by_range() -> None:
     """RS: the default mode asks for byte ranges instead of the whole archive."""
     ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
@@ -867,7 +902,7 @@ async def test_rv_fill_budget_running_out_is_not_a_failure(caplog) -> None:
     steps = data["rain_events"]["steps"][:11]
     assert 0 < steps.count(None) < 11  # filled some, newest first, then stopped
     assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
-    assert coord._rain_fill_failing is False
+    assert not coord._rain_fill_latch.failing
 
 
 @pytest.mark.asyncio

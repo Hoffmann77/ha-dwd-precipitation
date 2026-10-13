@@ -550,7 +550,7 @@ hour; `RadolanRW10` (`rw_10min`) is the same file family on a 10-minute grid
 
 RS/RV tars are plain ustar archives, 25 members in lead order, served as static
 files with range support. `radar/tar_range.py` (`fetch_tar_members`) reads the
-members a caller needs; `products.async_read_tar_members` wraps it with
+members a caller needs; `RadvorProduct._async_read_members` wraps it with
 `async_get`. Used by RS in its default mode (3 members) and the RV backfill (the
 analysis only). Measured on 12 live archives: RS takes 4 requests and 19-20 %
 of the bytes (archives are 3.5-17.5 MB), an RV analysis 1-2 requests and 4-7 %.
@@ -565,7 +565,9 @@ of the bytes (archives are 3.5-17.5 MB), an RV analysis 1-2 requests and 4-7 %.
 - DWD promises neither the layout nor range support. Anything unexpected — a
   200, an unexpected first member, a header not found within `MAX_REQUESTS`,
   a 206 that does not match the request, a file replaced between requests
-  (`If-Range` turns that into a 200) — falls back to the whole archive. A
+  (`If-Range` turns that into a 200) — falls back to the whole archive,
+  with one WARNING per run of fallbacks and an INFO once range reads work
+  again (values are unaffected, the data volume is not). A
   failed fetch (404, network) is not a fallback case and raises as usual.
 - Not worth it elsewhere: RV needs all 25 members every release, HymecNG is one
   gzip chunk, RADOLAN files are a single small HDF5 (RW ~30 KB).

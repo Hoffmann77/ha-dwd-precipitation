@@ -54,6 +54,31 @@ def parse_utc(raw: Any) -> datetime | None:
     return ts if ts.tzinfo is not None else ts.replace(tzinfo=UTC)
 
 
+class FailureLatch:
+    """Whether a run of failures is going on, so it is reported once.
+
+    ``fail()`` is True only for the first failure of a run and ``ok()`` only
+    for the first success after one: log on those, and the failures in
+    between stay quiet.
+    """
+
+    def __init__(self) -> None:
+        """Start with nothing failing."""
+        self.failing = False
+
+    def fail(self) -> bool:
+        """Record a failure; return whether it starts a run."""
+        first = not self.failing
+        self.failing = True
+        return first
+
+    def ok(self) -> bool:
+        """Record a success; return whether it ends a run."""
+        ended = self.failing
+        self.failing = False
+        return ended
+
+
 @dataclass
 class AsyncResponse:
     """Minimal HTTP response wrapper returned by async_get."""

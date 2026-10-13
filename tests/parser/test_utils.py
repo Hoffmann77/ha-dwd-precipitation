@@ -8,6 +8,7 @@ import pytest
 from utils import (
     AsyncResponse,
     DEFAULT_MAX_BYTES,
+    FailureLatch,
     async_get,
     iso,
     parse_utc,
@@ -173,3 +174,16 @@ def test_parse_utc_reads_naive_as_utc():
 @pytest.mark.parametrize("raw", [None, "", "not a time", 17, ["2026-10-13"]])
 def test_parse_utc_rejects_what_is_not_a_timestamp(raw):
     assert parse_utc(raw) is None
+
+
+# ===========================================================================
+# FailureLatch
+# ===========================================================================
+
+def test_failure_latch_reports_a_run_once_and_its_end_once():
+    latch = FailureLatch()
+    assert latch.ok() is False  # nothing to recover from
+    assert [latch.fail() for _ in range(3)] == [True, False, False]
+    assert latch.failing
+    assert [latch.ok() for _ in range(2)] == [True, False]
+    assert latch.fail() is True  # a new run

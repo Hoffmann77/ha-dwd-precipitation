@@ -6,6 +6,7 @@ import asyncio
 import logging
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
+from functools import cached_property
 from typing import Any
 from io import BytesIO
 
@@ -18,7 +19,7 @@ from .coordinator import (
     BaseProductUpdateCoordinator,
     ProductMetadata,
 )
-from .utils import async_get, iso
+from .utils import FailureLatch, async_get, iso
 from .radar.tar_range import fetch_tar_members, member_names, members_from_archive
 from .radar import (
     read_odim_composite_cell,
@@ -204,36 +205,6 @@ def _decode_cells(
     return out
 
 
-async def async_read_tar_members(
-    hass, client, url: str, prefix: str, leads
-) -> dict[str, bytes]:
-    """Fetch only the requested members of a RADVOR tar, by range reads.
-
-    Falls back to the whole archive on anything unexpected (see
-    radar.tar_range), unpacked in the executor; a missing release still
-    raises, like any fetch.
-    """
-    async def fetch(target: str, headers):
-        return await async_get(
-            target, client, headers=headers, partial_max_bytes=RANGE_MAX_BYTES
-        )
-
-    async def extract(content: bytes, wanted) -> dict[str, bytes]:
-        return await hass.async_add_executor_job(members_from_archive, content, wanted)
-
-    result = await fetch_tar_members(
-        fetch, url, member_names(prefix, LEADS), member_names(prefix, leads), extract
-    )
-    _LOGGER.debug(
-        "Read %s member(s) of %s in %s request(s), %s bytes%s",
-        len(result.members),
-        url,
-        result.requests,
-        result.bytes_read,
-        " (whole archive)" if result.whole else "",
-    )
-    return result.members
-
 
 def _odim_window(what: dict) -> tuple[datetime | None, datetime | None]:
     """Return the (start, end) validity window of an ODIM /dataset/what."""
@@ -358,6 +329,60 @@ class RadvorProduct(WholeFileProduct, ABC):
         """Return the URL for the tar archive."""
         return f"{DWD_COMPOSITE_URL}/{self.PRODUCT_KEY}/{self._prefix(ts)}.tar"
 
+    @cached_property
+    def _range_latch(self) -> FailureLatch:
+        """Whether range reads of this product are falling back right now."""
+        return FailureLatch()
+
+    async def _async_read_members(self, ts: datetime, leads) -> dict[str, bytes]:
+        """Fetch only the requested members of release ``ts``, by range reads.
+
+        Falls back to the whole archive on anything unexpected (see
+        radar.tar_range), unpacked in the executor; a missing release still
+        raises, like any fetch. A fallback is said once per run of them:
+        values are unaffected, but every update then downloads several times
+        the data, so a lasting change on DWD's side should not go unnoticed.
+        """
+        url, prefix = self._get_url(ts), self._prefix(ts)
+
+        async def fetch(target: str, headers):
+            return await async_get(
+                target, self.async_client, headers=headers,
+                partial_max_bytes=RANGE_MAX_BYTES,
+            )
+
+        async def extract(content: bytes, wanted) -> dict[str, bytes]:
+            return await self.hass.async_add_executor_job(
+                members_from_archive, content, wanted
+            )
+
+        result = await fetch_tar_members(
+            fetch, url, member_names(prefix, LEADS), member_names(prefix, leads), extract
+        )
+        _LOGGER.debug(
+            "Read %s member(s) of %s in %s request(s), %s bytes%s",
+            len(result.members),
+            url,
+            result.requests,
+            result.bytes_read,
+            " (whole archive)" if result.whole else "",
+        )
+        if result.whole and self._range_latch.fail():
+            _LOGGER.warning(
+                "Reading whole DWD %s archives: partial (range) downloads of "
+                "%s did not work. Values are not affected, but each update "
+                "now downloads several times the data; this is said again "
+                "only when range downloads work again",
+                self.PRODUCT_LABEL,
+                url,
+            )
+        elif not result.whole and self._range_latch.ok():
+            _LOGGER.info(
+                "Partial (range) downloads of DWD %s archives work again",
+                self.PRODUCT_LABEL,
+            )
+        return result.members
+
 
 class RadvorRS(RadvorProduct):
     """DWD RS precipitation nowcast (RADVOR, ODIM_H5 format).
@@ -409,10 +434,7 @@ class RadvorRS(RadvorProduct):
         """
         if self.full_rolling_series:
             return await super()._fetch_and_parse(ts)
-        members = await async_read_tar_members(
-            self.hass, self.async_client, self._get_url(ts), self._prefix(ts),
-            RS_HOURLY_LEADS,
-        )
+        members = await self._async_read_members(ts, RS_HOURLY_LEADS)
         return await self.hass.async_add_executor_job(self._parse_members, members, ts)
 
     def _parse(self, content: bytes, ts: datetime) -> tuple[list, list]:
@@ -499,8 +521,6 @@ class RadvorRV(RadvorProduct):
     _rain_store: Store | None = None
     _rain_state: RainEventsState | None = None
     _rain_saved_ended: str | None = None
-    _rain_fill_failing: bool = False
-    _rain_broken: bool = False
     # The background fill-and-track round, if one was started; and the last
     # view this run published, shown while a round is still running.
     _rain_fill_task: asyncio.Task | None = None
@@ -511,6 +531,16 @@ class RadvorRV(RadvorProduct):
         super().__init__(hass, entry, async_client, lat, lon)
         if rain_events_enabled(entry.options):
             self._rain_store = rain_events_store(hass, entry.entry_id)
+
+    @cached_property
+    def _rain_fill_latch(self) -> FailureLatch:
+        """Whether filling missed analyses is failing right now."""
+        return FailureLatch()
+
+    @cached_property
+    def _rain_latch(self) -> FailureLatch:
+        """Whether the rain_events tracker is failing right now."""
+        return FailureLatch()
 
     async def _async_on_new_release(
         self, release: datetime, data: dict, metadata: dict
@@ -582,15 +612,14 @@ class RadvorRV(RadvorProduct):
         except Exception:
             self._rain_failed()
             return None
-        self._rain_broken = False
+        self._rain_latch.ok()
         self._schedule_rain_save(state)
         self._rain_view = view
         return view
 
     def _rain_failed(self) -> None:
         """Log a tracker failure once per run of failures."""
-        if not self._rain_broken:
-            self._rain_broken = True
+        if self._rain_latch.fail():
             _LOGGER.exception(
                 "Could not update the Rain events sensor; the other RV "
                 "sensors are not affected"
@@ -668,22 +697,18 @@ class RadvorRV(RadvorProduct):
                     )
                     return
                 _LOGGER.debug("Could not fill the RV analysis of %s: %s", step_end, err)
-                if not self._rain_fill_failing:
-                    self._rain_fill_failing = True
+                if self._rain_fill_latch.fail():
                     _LOGGER.warning(_describe_fill_failure(err, step_end))
                 return
             _LOGGER.debug("Filled the RV analysis of %s: %s", step_end, value)
             record_measured(state, step_end, value)
-        self._rain_fill_failing = False
+        self._rain_fill_latch.ok()
 
     async def _async_fetch_analysis(self, step_end: datetime) -> float | None:
         """Return the analysis (lead 0) of release ``step_end``; None for nodata."""
-        prefix = self._prefix(step_end)
-        members = await async_read_tar_members(
-            self.hass, self.async_client, self._get_url(step_end), prefix, [0]
-        )
+        members = await self._async_read_members(step_end, [0])
         return await self.hass.async_add_executor_job(
-            self._parse_analysis, members, prefix, step_end
+            self._parse_analysis, members, self._prefix(step_end), step_end
         )
 
     def _parse_analysis(
