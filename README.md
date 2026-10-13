@@ -287,6 +287,6 @@ All data is derived from the **DWD (Deutscher Wetterdienst)**:
 
 ## License
 
-This integration is only possible thanks to the great work done by the contributors of the **[wradlib](https://github.com/wradlib/wradlib)** package.
+This integration is licensed under the [Apache License 2.0](LICENSE).
 
-All files in `custom_components/dwd_precipitation/radar/` are licensed under the [wradlib license](custom_components/dwd_precipitation/radar/LICENSE.txt) (MIT).
+It owes a lot to the contributors of the **[wradlib](https://github.com/wradlib/wradlib)** package: early versions embedded parts of it, and the test suite still checks every parser and grid lookup against it.
