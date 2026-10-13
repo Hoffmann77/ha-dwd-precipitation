@@ -36,22 +36,6 @@ blueprint:
           max: 60
           step: 5
           unit_of_measurement: min
-    min_intensity:
-      name: Mindestintensität (mm/h)
-      description: >-
-        Benachrichtigungen und Durchsagen kommen erst, wenn die erwartete
-        Spitzenintensität des Niederschlags diesen Wert erreicht. 0 meldet jeden
-        Niederschlag, 1 lässt Nieselregen und sehr schwachen Regen weg, 2,5 meldet
-        erst ab mäßigem Niederschlag. Wird der Wert erst später erreicht, kommt
-        die Meldung dann.
-      default: 0
-      selector:
-        number:
-          min: 0
-          max: 20
-          step: 0.1
-          mode: box
-          unit_of_measurement: mm/h
 
     push_section:
       name: Benachrichtigung
@@ -81,6 +65,21 @@ blueprint:
           default: "00:00:00"
           selector:
             time: {}
+        push_min_intensity:
+          name: Mindestintensität (mm/h)
+          description: >-
+            Benachrichtigungen kommen erst, wenn die erwartete Spitzenintensität des Niederschlags
+            diesen Wert erreicht. 0 meldet jeden Niederschlag, 1 lässt Nieselregen
+            und sehr schwachen Regen weg, 2,5 meldet erst ab mäßigem Niederschlag.
+            Wird der Wert erst später erreicht, kommt die Meldung dann.
+          default: 0
+          selector:
+            number:
+              min: 0
+              max: 20
+              step: 0.1
+              mode: box
+              unit_of_measurement: mm/h
 
     announce_section:
       name: Durchsage
@@ -112,6 +111,21 @@ blueprint:
           default: "21:30:00"
           selector:
             time: {}
+        announce_min_intensity:
+          name: Mindestintensität (mm/h)
+          description: >-
+            Durchsagen kommen erst, wenn die erwartete Spitzenintensität des Niederschlags
+            diesen Wert erreicht. 0 meldet jeden Niederschlag, 1 lässt Nieselregen
+            und sehr schwachen Regen weg, 2,5 meldet erst ab mäßigem Niederschlag.
+            Wird der Wert erst später erreicht, kommt die Meldung dann.
+          default: 0
+          selector:
+            number:
+              min: 0
+              max: 20
+              step: 0.1
+              mode: box
+              unit_of_measurement: mm/h
 
     text_section:
       name: Meldungstexte
@@ -173,7 +187,9 @@ blueprint:
 variables:
   warning_sensor: !input warning_sensor
   rain_sensor: !input rain_sensor
-  min_intensity: !input min_intensity
+  dry_minutes: !input dry_minutes
+  push_min_intensity: !input push_min_intensity
+  announce_min_intensity: !input announce_min_intensity
 
 triggers:
   - trigger: state
@@ -185,89 +201,113 @@ conditions:
   - condition: template
     value_template: "{{ states(warning_sensor) in ['soon', 'rain'] }}"
 actions:
-  # Unter der Mindestintensität (z. B. Niesel) noch nicht melden, sondern warten,
-  # bis der Niederschlag stärker wird. Wird es vorher trocken, endet der Lauf
-  # ohne Meldung.
-  - wait_template: >-
-      {{ states(warning_sensor) == 'dry'
-         or state_attr(warning_sensor, 'next_peak_intensity') | float(0) >= min_intensity | float(0) }}
-  - condition: template
-    value_template: "{{ states(warning_sensor) in ['soon', 'rain'] }}"
-  # Bausteine für die Meldungstexte. Die Reihenfolge zählt: spätere Variablen
-  # (auch die Texte aus den Eingaben) können frühere verwenden.
-  - variables:
-      sensor_state: "{{ states(warning_sensor) }}"
-      starts_in: "{{ state_attr(warning_sensor, 'rain_starts_in_min') | int(0) }}"
-      next_length: "{{ state_attr(warning_sensor, 'next_length') | int(0) }}"
-      next_open_end: "{{ state_attr(warning_sensor, 'next_open_end') | bool(false) }}"
-      current_open_end: "{{ state_attr(warning_sensor, 'current_open_end') | bool(false) }}"
-      current_remaining: "{{ state_attr(warning_sensor, 'current_remaining_min') | int(0) }}"
-      horizon: "{{ state_attr(warning_sensor, 'forecast_remaining_horizon_min') | int(60) }}"
-      peak: "{{ state_attr(warning_sensor, 'next_peak_intensity') | float(0) }}"
-      amount: "{{ state_attr(warning_sensor, 'next_amount_mm') | float(0) }}"
-      art: "{{ state_attr(warning_sensor, 'precipitation_type') | default('', true) }}"
-      stufe: "{{ state_attr(warning_sensor, 'next_intensity_level') | default('leicht', true) }}"
-      wort: >-
-        {{ {'rain': 'Regen', 'drizzle': 'Nieselregen', 'freezing_drizzle': 'gefrierender Nieselregen',
-            'freezing_rain': 'gefrierender Regen', 'sleet': 'Schneeregen', 'snow': 'Schneefall',
-            'graupel': 'Graupel', 'hail': 'Hagel', 'large_hail': 'Hagel mit großen Körnern',
-            'thunderstorm': 'Gewitterregen'}.get(art, 'Niederschlag') }}
-      # Hagel ohne Stärkeangabe, sonst z. B. "mäßiger Schneefall" (alle Nomen sind maskulin)
-      phrase: "{{ wort if art in ['hail', 'large_hail'] else stufe ~ 'er ' ~ wort }}"
-      wann: "{{ 'In wenigen Minuten' if starts_in <= 2 else 'In ' ~ starts_in ~ ' Minuten' }}"
-      laeuft: >-
-        {{ {'rain': 'Es regnet bereits', 'drizzle': 'Es nieselt bereits',
-            'freezing_drizzle': 'Es fällt bereits gefrierender Nieselregen',
-            'freezing_rain': 'Es fällt bereits gefrierender Regen', 'sleet': 'Es fällt bereits Schneeregen',
-            'snow': 'Es schneit bereits', 'graupel': 'Es graupelt bereits', 'hail': 'Es hagelt bereits',
-            'large_hail': 'Es hagelt bereits mit großen Körnern',
-            'thunderstorm': 'Es gewittert bereits'}.get(art, 'Es fällt bereits Niederschlag') }}
-      beginnt: >-
-        {{ {'rain': 'zu regnen', 'drizzle': 'zu nieseln', 'snow': 'zu schneien', 'graupel': 'zu graupeln',
-            'hail': 'zu hageln', 'large_hail': 'zu hageln', 'thunderstorm': 'zu gewittern'}.get(art, phrase) }}
-      # Regensensor vor Ort (optional): trocken = "off"/"dry". Ohne Sensor oder
-      # wenn er nicht erreichbar ist, bleibt es bei "Niederschlag läuft".
-      regensensor_trocken: >-
-        {{ rain_sensor not in [none, ''] and states(rain_sensor) in ['off', 'dry'] }}
-      t_soon: !input text_soon
-      t_soon_open: !input text_soon_open
-      t_rain: !input text_rain
-      t_rain_open: !input text_rain_open
-      t_sensor_dry: !input text_sensor_dry
-      t_freezing: !input text_freezing
-  - variables:
-      message_text: >-
-        {%- if sensor_state == 'rain' and regensensor_trocken -%}{{ t_sensor_dry }}
-        {%- elif sensor_state == 'rain' -%}{{ t_rain_open if current_open_end else t_rain }}
-        {%- elif next_open_end -%}{{ t_soon_open }}
-        {%- elif next_length > 0 -%}{{ t_soon }}
-        {%- else -%}{{ wann }} ist {{ wort }} möglich.
-        {%- endif -%}
-        {%- if art in ['freezing_drizzle', 'freezing_rain'] and t_freezing %} {{ t_freezing }}{%- endif -%}
-  # Benachrichtigungen und Durchsagen nur im jeweiligen Zeitfenster. Als "if"
-  # statt als Bedingung, damit das Warten auf "trocken" auch nachts läuft und
-  # nicht mehrfach meldet.
-  - if:
-      - condition: time
-        after: !input push_after
-        before: !input push_before
-    then:
-      - choose: []
-        default: !input push_actions
-  - if:
-      - condition: time
-        after: !input announce_after
-        before: !input announce_before
-    then:
-      - choose: []
-        default: !input announce_actions
+  # Benachrichtigung und Durchsage laufen nebeneinander, jede mit ihrer eigenen
+  # Mindestintensität: Unter der Schwelle (z. B. Niesel) wird noch nicht
+  # gemeldet, sondern gewartet, bis der Niederschlag stärker wird. Wird es vorher
+  # trocken, entfällt die Meldung. Das Zeitfenster gilt zum Zeitpunkt der Meldung.
+  # Die Meldungstexte werden erst dann gebaut, damit sie zum aktuellen Stand passen;
+  # die Durchsage verwendet dieselben Bausteine (YAML-Anker).
+  - parallel:
+      - sequence:
+          - wait_template: >-
+              {{ states(warning_sensor) == 'dry'
+                 or state_attr(warning_sensor, 'next_peak_intensity') | float(0) >= push_min_intensity | float(0) }}
+          - if:
+              - condition: template
+                value_template: "{{ states(warning_sensor) in ['soon', 'rain'] }}"
+              - condition: time
+                after: !input push_after
+                before: !input push_before
+            then:
+              # Bausteine für die Meldungstexte. Die Reihenfolge zählt: spätere Variablen
+              # (auch die Texte aus den Eingaben) können frühere verwenden.
+              - &bausteine
+                variables:
+                  sensor_state: "{{ states(warning_sensor) }}"
+                  starts_in: "{{ state_attr(warning_sensor, 'rain_starts_in_min') | int(0) }}"
+                  next_length: "{{ state_attr(warning_sensor, 'next_length') | int(0) }}"
+                  next_open_end: "{{ state_attr(warning_sensor, 'next_open_end') | bool(false) }}"
+                  current_open_end: "{{ state_attr(warning_sensor, 'current_open_end') | bool(false) }}"
+                  current_remaining: "{{ state_attr(warning_sensor, 'current_remaining_min') | int(0) }}"
+                  horizon: "{{ state_attr(warning_sensor, 'forecast_remaining_horizon_min') | int(60) }}"
+                  peak: "{{ state_attr(warning_sensor, 'next_peak_intensity') | float(0) }}"
+                  amount: "{{ state_attr(warning_sensor, 'next_amount_mm') | float(0) }}"
+                  art: "{{ state_attr(warning_sensor, 'precipitation_type') | default('', true) }}"
+                  stufe: "{{ state_attr(warning_sensor, 'next_intensity_level') | default('leicht', true) }}"
+                  wort: >-
+                    {{ {'rain': 'Regen', 'drizzle': 'Nieselregen', 'freezing_drizzle': 'gefrierender Nieselregen',
+                        'freezing_rain': 'gefrierender Regen', 'sleet': 'Schneeregen', 'snow': 'Schneefall',
+                        'graupel': 'Graupel', 'hail': 'Hagel', 'large_hail': 'Hagel mit großen Körnern',
+                        'thunderstorm': 'Gewitterregen'}.get(art, 'Niederschlag') }}
+                  # Hagel ohne Stärkeangabe, sonst z. B. "mäßiger Schneefall" (alle Nomen sind maskulin)
+                  phrase: "{{ wort if art in ['hail', 'large_hail'] else stufe ~ 'er ' ~ wort }}"
+                  wann: "{{ 'In wenigen Minuten' if starts_in <= 2 else 'In ' ~ starts_in ~ ' Minuten' }}"
+                  laeuft: >-
+                    {{ {'rain': 'Es regnet bereits', 'drizzle': 'Es nieselt bereits',
+                        'freezing_drizzle': 'Es fällt bereits gefrierender Nieselregen',
+                        'freezing_rain': 'Es fällt bereits gefrierender Regen', 'sleet': 'Es fällt bereits Schneeregen',
+                        'snow': 'Es schneit bereits', 'graupel': 'Es graupelt bereits', 'hail': 'Es hagelt bereits',
+                        'large_hail': 'Es hagelt bereits mit großen Körnern',
+                        'thunderstorm': 'Es gewittert bereits'}.get(art, 'Es fällt bereits Niederschlag') }}
+                  beginnt: >-
+                    {{ {'rain': 'zu regnen', 'drizzle': 'zu nieseln', 'snow': 'zu schneien', 'graupel': 'zu graupeln',
+                        'hail': 'zu hageln', 'large_hail': 'zu hageln', 'thunderstorm': 'zu gewittern'}.get(art, phrase) }}
+                  # Regensensor vor Ort (optional): trocken = "off"/"dry". Ohne Sensor oder
+                  # wenn er nicht erreichbar ist, bleibt es bei "Niederschlag läuft".
+                  regensensor_trocken: >-
+                    {{ rain_sensor not in [none, ''] and states(rain_sensor) in ['off', 'dry'] }}
+                  t_soon: !input text_soon
+                  t_soon_open: !input text_soon_open
+                  t_rain: !input text_rain
+                  t_rain_open: !input text_rain_open
+                  t_sensor_dry: !input text_sensor_dry
+                  t_freezing: !input text_freezing
+              - &meldungstext
+                variables:
+                  message_text: >-
+                    {%- if sensor_state == 'rain' and regensensor_trocken -%}{{ t_sensor_dry }}
+                    {%- elif sensor_state == 'rain' -%}{{ t_rain_open if current_open_end else t_rain }}
+                    {%- elif next_open_end -%}{{ t_soon_open }}
+                    {%- elif next_length > 0 -%}{{ t_soon }}
+                    {%- else -%}{{ wann }} ist {{ wort }} möglich.
+                    {%- endif -%}
+                    {%- if art in ['freezing_drizzle', 'freezing_rain'] and t_freezing %} {{ t_freezing }}{%- endif -%}
+              - choose: []
+                default: !input push_actions
+      - sequence:
+          - wait_template: >-
+              {{ states(warning_sensor) == 'dry'
+                 or state_attr(warning_sensor, 'next_peak_intensity') | float(0) >= announce_min_intensity | float(0) }}
+          - if:
+              - condition: template
+                value_template: "{{ states(warning_sensor) in ['soon', 'rain'] }}"
+              - condition: time
+                after: !input announce_after
+                before: !input announce_before
+            then:
+              - *bausteine
+              - *meldungstext
+              - choose: []
+                default: !input announce_actions
   # Ereignis gilt erst als beendet, wenn es die eingestellte Zeit trocken bleibt.
-  # So erzeugt eine kurze Lücke im Radarbild keine zweite Meldung.
-  - wait_for_trigger:
-      - trigger: state
-        entity_id: !input warning_sensor
-        to: dry
-        for:
-          minutes: !input dry_minutes
+  # So erzeugt eine kurze Lücke im Radarbild keine zweite Meldung. Die Warnung
+  # kann hier schon "trocken" sein (eine Meldung lag unter der Schwelle), deshalb
+  # zählt die Trockenzeit ab dem letzten Zustandswechsel.
+  - repeat:
+      sequence:
+        - wait_template: "{{ is_state(warning_sensor, 'dry') }}"
+        - wait_for_trigger:
+            - trigger: state
+              entity_id: !input warning_sensor
+              from: dry
+          timeout:
+            minutes: !input dry_minutes
+          continue_on_timeout: true
+      until:
+        - condition: template
+          value_template: >-
+            {{ is_state(warning_sensor, 'dry')
+               and (now() - (expand(warning_sensor) | first).last_changed).total_seconds()
+                   >= dry_minutes | int(15) * 60 - 5 }}
 mode: single
 max_exceeded: silent
