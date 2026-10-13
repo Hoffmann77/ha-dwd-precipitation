@@ -21,11 +21,9 @@ from homeassistant.const import (
     UnitOfVolumetricFlux,
 )
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from .const import (
@@ -746,8 +744,19 @@ class PrecipitationTotalSensor(DwdCoordinatorEntity, RestoreEntity, SensorEntity
             )
 
 
+DRY_STREAK_SENSOR = SensorEntityDescription(
+    key="timespan_without_precipitation",
+    translation_key="timespan_without_precipitation",
+    icon="mdi:weather-sunny",
+    device_class=SensorDeviceClass.DURATION,
+    native_unit_of_measurement=UnitOfTime.DAYS,
+    state_class=SensorStateClass.MEASUREMENT,
+    suggested_display_precision=2,
+)
+
+
 class TimespanWithoutPrecipitationSensor(
-    CoordinatorEntity[BaseProductUpdateCoordinator], RestoreEntity, SensorEntity
+    DwdCoordinatorEntity, RestoreEntity, SensorEntity
 ):
     """Number of days since precipitation last reached the reset threshold.
 
@@ -760,24 +769,13 @@ class TimespanWithoutPrecipitationSensor(
     during downtime.
     """
 
-    _attr_has_entity_name = True
-    _attr_translation_key = "timespan_without_precipitation"
-    _attr_icon = "mdi:weather-sunny"
-    _attr_device_class = SensorDeviceClass.DURATION
-    _attr_native_unit_of_measurement = UnitOfTime.DAYS
-    _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_suggested_display_precision = 2
-
     def __init__(self, coordinator: BaseProductUpdateCoordinator) -> None:
-        """Initialize the sensor, bound to the dry-streak source's coordinator."""
-        super().__init__(coordinator)
-        entry = coordinator.config_entry
-        self._attr_unique_id = f"{entry.entry_id}_timespan_without_precipitation"
-        self._attr_device_info = DeviceInfo(
-            entry_type=DeviceEntryType.SERVICE,
-            identifiers={(DOMAIN, entry.entry_id)},
-            name=entry.title or "DWD Precipitation",
-        )
+        """Initialize the sensor, bound to the dry-streak source's coordinator.
+
+        Availability follows the source's staleness deadline, like every other
+        entity (DwdCoordinatorEntity.available).
+        """
+        super().__init__(coordinator, DRY_STREAK_SENSOR)
         self._dry_since: datetime | None = None
 
     @property

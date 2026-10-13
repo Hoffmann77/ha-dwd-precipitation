@@ -156,6 +156,15 @@ def test_days_value_and_hours(monkeypatch):
     assert attrs["dry_since"] == anchor.isoformat()
 
 
+@pytest.mark.parametrize("reportable", [True, False])
+def test_days_availability_follows_the_staleness_deadline(reportable):
+    """One rule for every entity: the coordinator's data_is_reportable."""
+    sensor = _make_days_sensor(dry_since=datetime(2026, 7, 1, tzinfo=UTC))
+    sensor.coordinator.data_is_reportable = reportable
+    sensor.coordinator.last_update_success = True
+    assert sensor.available is reportable
+
+
 def test_days_none_anchor_is_unknown():
     sensor = _make_days_sensor(dry_since=None)
     assert sensor.native_value is None
