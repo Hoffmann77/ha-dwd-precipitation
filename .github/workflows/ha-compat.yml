@@ -1,7 +1,8 @@
 name: HA version compatibility
 
-# Version-drift monitor: runs the integration tier against the pinned, latest,
-# and dev pytest-homeassistant-custom-component (which tracks HA releases).
+# Version-drift monitor: runs the integration tier against the latest and dev
+# pytest-homeassistant-custom-component (which tracks HA releases). The version
+# pyproject pins is what tests.yml runs on every PR and push to main.
 # Scheduled (never gates PRs); opens/updates a tracking issue on failure.
 on:
   schedule:
@@ -22,16 +23,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: pinned
-            phacc: "==0.13.336"
-            ha_dev: false
-            experimental: false
           - name: latest
-            phacc: ""
             ha_dev: false
             experimental: false
           - name: dev
-            phacc: ""
             ha_dev: true
             experimental: true
     steps:
@@ -39,13 +34,9 @@ jobs:
       - uses: astral-sh/setup-uv@v7
       - name: Install HA test dependencies
         run: uv sync --locked --only-group ha-test
-      - name: Override HA test library version
+      - name: Upgrade the HA test library
         run: |
-          if [ -n "${{ matrix.phacc }}" ]; then
-            uv pip install "pytest-homeassistant-custom-component${{ matrix.phacc }}"
-          else
-            uv pip install -U pytest-homeassistant-custom-component
-          fi
+          uv pip install -U pytest-homeassistant-custom-component
           if [ "${{ matrix.ha_dev }}" = "true" ]; then
             uv pip install -U "homeassistant @ git+https://github.com/home-assistant/core@dev" || true
           fi
