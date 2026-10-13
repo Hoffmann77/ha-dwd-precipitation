@@ -234,7 +234,7 @@ class RainEventsState:
             base=_parse(raw.get("base")),
             wet_milli=_optional(raw.get("wet_milli"), int, "wet_milli"),
             measured=measured,
-            nodata={_parse(t) for t in raw.get("nodata") or []},
+            nodata={_required_time(t) for t in raw.get("nodata") or []},
             events=[_event_from_json(e) for e in raw.get("events") or []],
             last_ended=_optional(raw.get("last_ended"), dict, "last_ended"),
             ended_spans=[
