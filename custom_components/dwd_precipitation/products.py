@@ -18,7 +18,7 @@ from .coordinator import (
     BaseProductUpdateCoordinator,
     ProductMetadata,
 )
-from .utils import async_get
+from .utils import async_get, iso
 from .radar.tar_range import fetch_tar_members, member_names, members_from_archive
 from .radar import (
     read_odim_composite_cell,
@@ -266,14 +266,11 @@ def _peak_hour_payload(
     ``base`` names the product and release. RS and RV both land here, so the
     two sources cannot drift apart in shape.
     """
-    def _iso(dt: datetime | None) -> str | None:
-        return dt.isoformat() if dt is not None else None
-
     rolling_1h = [
         {
             "lead": lead,
-            "start": _iso(windows[lead // LEAD_STEP][0]),
-            "end": _iso(windows[lead // LEAD_STEP][1]),
+            "start": iso(windows[lead // LEAD_STEP][0]),
+            "end": iso(windows[lead // LEAD_STEP][1]),
             "value": sums[lead // LEAD_STEP],
         }
         for lead in series_leads
@@ -749,8 +746,8 @@ class RadvorRV(BaseProductUpdateCoordinator):
                 value = values[i]
                 out.append({
                     "lead": lead,
-                    "start": starts[i].isoformat() if starts[i] else None,
-                    "end": ends[i].isoformat() if ends[i] else None,
+                    "start": iso(starts[i]),
+                    "end": iso(ends[i]),
                     "value": value,
                     # 5-minute accumulation extrapolated to an hourly rate.
                     "intensity": (

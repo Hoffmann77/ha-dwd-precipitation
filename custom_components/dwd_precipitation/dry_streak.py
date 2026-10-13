@@ -12,7 +12,8 @@ from datetime import datetime
 from typing import Any
 
 from homeassistant.helpers.restore_state import ExtraStoredData
-from homeassistant.util import dt as dt_util
+
+from .utils import iso, parse_utc
 
 
 @dataclass
@@ -23,19 +24,12 @@ class DryStreakExtraData(ExtraStoredData):
 
     def as_dict(self) -> dict[str, Any]:
         """Serialize the anchor for restore_state."""
-        return {
-            "dry_since": self.dry_since.isoformat() if self.dry_since else None
-        }
+        return {"dry_since": iso(self.dry_since)}
 
     @classmethod
     def from_dict(cls, restored: dict[str, Any]) -> "DryStreakExtraData":
         """Rebuild the anchor from a restored dict, forcing UTC-awareness."""
-        raw = restored.get("dry_since")
-        ts = dt_util.parse_datetime(raw) if raw else None
-        if ts is not None and ts.tzinfo is None:
-            ts = dt_util.as_utc(ts)
-
-        return cls(dry_since=ts)
+        return cls(dry_since=parse_utc(restored.get("dry_since")))
 
 
 def scalar_reading(

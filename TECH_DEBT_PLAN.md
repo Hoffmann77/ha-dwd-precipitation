@@ -217,6 +217,9 @@ The base the next three PRs stand on. *(TD 1, 3, 6, 10, 18; S-altitude 2, 6, 9, 
   window peaks (O(n)); optionally run it in the executor.
 - Move `rain_events.py` into `radar/` (HA-free, parser tier unchanged) so it
   imports `STEP`, `STEPS_PER_HOUR`, `MM_DECIMALS` from `nowcast` instead of copying.
+  *Carried over from step 3:* it still has its own `_iso`/`_parse` (the
+  latter not forcing UTC), because it cannot import a sibling module yet;
+  move `utils.iso`/`utils.parse_utc` into `radar/` alongside it and use them.
 
 ## PR 7 — One payload shape
 
