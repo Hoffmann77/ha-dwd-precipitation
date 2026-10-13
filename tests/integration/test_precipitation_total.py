@@ -55,6 +55,7 @@ class _Grid:
         self.RELEASE_INTERVAL = product.RELEASE_INTERVAL
         self.RELEASE_OFFSET = product.RELEASE_OFFSET
 
+    grid = RadolanRW.grid
     _next_release_after = RadolanRW._next_release_after
     _release_at_or_before = RadolanRW._release_at_or_before
 

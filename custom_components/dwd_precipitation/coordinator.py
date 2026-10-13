@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from functools import cached_property
 from http import HTTPStatus
 from itertools import product as cartesian_product
@@ -30,7 +30,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from homeassistant.util import dt as dt_util
 
 from .const import CONF_UNAVAILABLE_WHEN_STALE, DEFAULT_UNAVAILABLE_WHEN_STALE
-from .utils import get_previous_multiple
+from .release_grid import ReleaseGrid
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -276,15 +276,23 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
         """
         return dt_util.now() if self.USE_LOCAL_TIME else dt_util.utcnow()
 
-    def _get_latest_release(self, now: datetime) -> datetime:
-        """Return the most recent valid release timestamp."""
-        prev = get_previous_multiple(
-            now - self.release_delay,
+    @property
+    def grid(self) -> ReleaseGrid:
+        """Return this product's release grid, in its own time reference.
+
+        A USE_LOCAL_TIME product's grid is on Home Assistant's local clock, so
+        its releases are 23 or 25 hours apart on DST changeover days (see
+        ReleaseGrid). Built on each use, so a change of HA's time zone applies.
+        """
+        return ReleaseGrid(
             self.RELEASE_INTERVAL,
             self.RELEASE_OFFSET,
+            dt_util.get_default_time_zone() if self.USE_LOCAL_TIME else UTC,
         )
 
-        return dt_util.as_utc(prev)
+    def _get_latest_release(self, now: datetime) -> datetime:
+        """Return the newest release that is ours to fetch by ``now``."""
+        return self.grid.at_or_before(now - self.release_delay)
 
     def _stale_deadline(self) -> datetime | None:
         """Return when the cached value is written off, or None if it is fresh.
@@ -316,31 +324,14 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
     def _next_release_after(self, release: datetime) -> datetime:
         """Return the first scheduled release after the given one.
 
-        Done in the product's own time reference rather than by adding
-        RELEASE_INTERVAL to a UTC timestamp: for USE_LOCAL_TIME products the
-        release grid is a local wall-clock one, so consecutive releases are 23
-        or 25 hours apart on the two DST changeover days. Adding 24 h there
-        would put the deadline an hour off — on the autumn one, before the file
-        it is waiting for could even exist.
+        On the product's own clock (see grid): adding 24 h to a UTC timestamp
+        would put the autumn deadline before the file it waits for can exist.
         """
-        reference = dt_util.as_local(release) if self.USE_LOCAL_TIME else release
-
-        return dt_util.as_utc(reference + self.RELEASE_INTERVAL)
+        return self.grid.next_after(release)
 
     def _release_at_or_before(self, moment: datetime) -> datetime:
-        """Return the newest scheduled release at or before the given moment.
-
-        In the product's own time reference, like _next_release_after. A
-        release maps to itself; a timestamp that does not is off the grid,
-        which only happens to one stored from an older grid (RW's HH:50).
-        """
-        reference = dt_util.as_local(moment) if self.USE_LOCAL_TIME else moment
-
-        return dt_util.as_utc(
-            get_previous_multiple(
-                reference, self.RELEASE_INTERVAL, self.RELEASE_OFFSET
-            )
-        )
+        """Return the newest scheduled release at or before the given moment."""
+        return self.grid.at_or_before(moment)
 
     def _data_is_stale(self, now: datetime) -> bool:
         """Return True if the overdue release has gone unfetched for too long."""

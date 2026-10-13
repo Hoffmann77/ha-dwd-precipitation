@@ -33,8 +33,11 @@ config_flow.py        UI config flow: collects name + lat/lon; options form
                       with a collapsed Advanced section, stored flat.
 const.py              DWD OpenData base URLs and HA constants.
 utils.py              async_get() HTTP helper (headers, status, separate 206
-                      cap); get_previous_multiple() for computing the most
-                      recent release timestamp.
+                      cap, stall timeout); iso()/parse_utc() for restore
+                      payloads. HA-free.
+release_grid.py       ReleaseGrid: a product's release times on its own
+                      clock (see "Release timing"). HA-free, no relative
+                      imports: scripts/check_release_delay.py uses it too.
 radar/                Embedded parsers (no heavy external deps).
   odim.py             ODIM_H5 (HDF5) reader for every product (RS, RV,
                       HymecNG, RW/SF in their HDF5 edition) and the DE1200
@@ -302,13 +305,20 @@ once released, since renaming one orphans the user's entity.
 
 ## Release timing
 
-`_get_latest_release()` in `BaseProductUpdateCoordinator` computes the
-most-recent valid release:
+Every release computation goes through the coordinator's `grid`, a
+`ReleaseGrid(RELEASE_INTERVAL, RELEASE_OFFSET, tz)` on the product's own clock
+(HA's local zone for `USE_LOCAL_TIME`, else UTC): `at_or_before`,
+`next_after`, `previous`, `back`, `walk`. `_get_latest_release()` is the
+most-recent release that is ours to fetch:
 ```
-latest = floor((now - RELEASE_DELAY) / RELEASE_INTERVAL) * RELEASE_INTERVAL + RELEASE_OFFSET
+latest = grid.at_or_before(now - release_delay)
+       = floor((now - RELEASE_DELAY - jitter - RELEASE_OFFSET) / RELEASE_INTERVAL)
+         * RELEASE_INTERVAL + RELEASE_OFFSET      (on the grid's wall clock)
 ```
 `RELEASE_DELAY` = how long after the nominal product time it's available on OpenData.
 `RELEASE_OFFSET` = minute/second alignment of nominal product times within the interval.
+A wall time that occurs twice (the autumn hour) means its first occurrence;
+no product sits in that hour.
 
 `scripts/check_release_delay.py` (run by `.github/workflows/release-delay.yml`,
 scheduled) averages the *observed* availability delay across a rolling window of

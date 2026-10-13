@@ -59,6 +59,7 @@ import argparse
 import ast
 import os
 import statistics
+import sys
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -69,6 +70,11 @@ UTC = timezone.utc
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _INTEGRATION = _REPO_ROOT / "custom_components" / "dwd_precipitation"
+
+# release_grid is HA-free and has no relative imports, so the integration's
+# own grid arithmetic is importable here without Home Assistant.
+sys.path.insert(0, str(_INTEGRATION))
+from release_grid import ReleaseGrid  # noqa: E402
 
 _OPENDATA = "https://opendata.dwd.de/weather/radar"
 
@@ -189,17 +195,12 @@ def extract_timing(
 # ---------------------------------------------------------------------------
 
 def previous_release(now: datetime, interval: timedelta, offset: timedelta) -> datetime:
-    """Most recent scheduled release timestamp at or before ``now``.
+    """Most recent scheduled release timestamp at or before ``now`` (UTC grid).
 
-    Anchored to the Unix epoch. Safe for the probeable products (rs/rw/sf) whose
-    intervals divide a day, which is exactly when epoch- and civil-anchoring
-    agree — matching the integration's ``get_previous_multiple``.
+    The integration's own arithmetic (release_grid.ReleaseGrid), so the probe
+    and the coordinator cannot disagree about which files exist.
     """
-    interval_s = interval.total_seconds()
-    base = offset.total_seconds() % interval_s
-    t = now.timestamp()
-    k = (t - base) // interval_s
-    return datetime.fromtimestamp(k * interval_s + base, tz=UTC)
+    return ReleaseGrid(interval, offset).at_or_before(now)
 
 
 # ---------------------------------------------------------------------------
