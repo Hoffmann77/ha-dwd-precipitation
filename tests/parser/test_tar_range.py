@@ -3,11 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-import io
 import random
-import re
 import tarfile
-from dataclasses import dataclass, field
 
 import pytest
 
@@ -18,74 +15,20 @@ from radar.tar_range import (
     fetch_tar_members,
     member_names,
 )
+from tests.factories.radvor import LEADS, HTTPError, RangeServer, radvor_archive
 
-LEADS = list(range(0, 121, 5))
 PREFIX = "composite_rv_20261012_0740"
 NAMES = member_names(PREFIX, LEADS)
 
 
 def _archive(sizes: list[int], seed: int = 1, names=NAMES) -> tuple[bytes, dict[str, bytes]]:
-    """Build a ustar archive like DWD's: members in order, random payloads."""
+    """Build an archive like DWD's with random payloads of the given sizes."""
     rng = random.Random(seed)
-    payloads = {}
-    buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode="w", format=tarfile.USTAR_FORMAT) as tf:
-        for name, size in zip(names, sizes):
-            data = rng.randbytes(size)
-            payloads[name] = data
-            info = tarfile.TarInfo(name)
-            info.size = size
-            tf.addfile(info, io.BytesIO(data))
-    return buf.getvalue(), payloads
+    payloads = {name: rng.randbytes(size) for name, size in zip(names, sizes)}
+    return radvor_archive(payloads), payloads
 
 
-@dataclass
-class _Response:
-    status: int
-    content: bytes
-    headers: dict = field(default_factory=dict)
-
-
-class _HTTPError(Exception):
-    def __init__(self, status: int) -> None:
-        super().__init__(f"HTTP {status}")
-        self.status = status
-
-
-class _Server:
-    """Serves one file with byte ranges, ETag and If-Range, like nginx."""
-
-    def __init__(self, content: bytes, *, ranges: bool = True, etag: str = '"v1"'):
-        self.content = content
-        self.ranges = ranges
-        self.etag = etag
-        self.requests: list[dict] = []
-        self.whole_downloads = 0
-        self.replace_after: tuple[int, bytes, str] | None = None
-
-    async def fetch(self, url, headers):
-        self.requests.append(dict(headers))
-        if "Range" not in headers:
-            self.whole_downloads += 1
-        if self.replace_after and len(self.requests) > self.replace_after[0]:
-            _, self.content, self.etag = self.replace_after
-        if not self.ranges or "Range" not in headers:
-            return _Response(200, self.content, {"ETag": self.etag})
-        if (if_range := headers.get("If-Range")) and if_range != self.etag:
-            return _Response(200, self.content, {"ETag": self.etag})
-        start, end = (int(x) for x in re.fullmatch(r"bytes=(\d+)-(\d+)", headers["Range"]).groups())
-        total = len(self.content)
-        if start >= total:
-            raise _HTTPError(416)
-        end = min(end, total - 1)
-        return _Response(
-            206,
-            self.content[start:end + 1],
-            {"Content-Range": f"bytes {start}-{end}/{total}", "ETag": self.etag},
-        )
-
-
-def _read(server: _Server, wanted):
+def _read(server: RangeServer, wanted):
     return asyncio.run(
         fetch_tar_members(server.fetch, "https://x/f.tar", NAMES, wanted)
     )
@@ -106,7 +49,7 @@ def _sizes(seed: int, low: int, high: int) -> list[int]:
 )
 def test_reads_the_three_rs_members_with_few_requests(sizes):
     content, payloads = _archive(sizes)
-    server = _Server(content)
+    server = RangeServer(content)
     wanted = [NAMES[0], NAMES[12], NAMES[24]]
 
     result = _read(server, wanted)
@@ -121,7 +64,7 @@ def test_reads_the_three_rs_members_with_few_requests(sizes):
 
 def test_analysis_only_is_one_request_when_it_fits_the_head():
     content, payloads = _archive(_sizes(4, 50_000, 300_000))
-    server = _Server(content)
+    server = RangeServer(content)
     result = _read(server, [NAMES[0]])
 
     assert result.members == {NAMES[0]: payloads[NAMES[0]]}
@@ -132,7 +75,7 @@ def test_analysis_only_is_one_request_when_it_fits_the_head():
 
 def test_analysis_larger_than_the_head_takes_a_second_request_with_if_range():
     content, payloads = _archive([HEAD_BYTES + 50_000] + _sizes(5, 50_000, 90_000)[1:])
-    server = _Server(content)
+    server = RangeServer(content)
     result = _read(server, [NAMES[0]])
 
     assert result.members[NAMES[0]] == payloads[NAMES[0]]
@@ -142,7 +85,7 @@ def test_analysis_larger_than_the_head_takes_a_second_request_with_if_range():
 
 def test_server_ignoring_ranges_is_read_as_a_whole_archive():
     content, payloads = _archive(_sizes(6, 50_000, 90_000))
-    server = _Server(content, ranges=False)
+    server = RangeServer(content, ranges=False)
     result = _read(server, [NAMES[0], NAMES[12]])
 
     assert result.whole
@@ -154,7 +97,7 @@ def test_server_ignoring_ranges_is_read_as_a_whole_archive():
 def test_unexpected_first_member_downloads_the_whole_archive():
     names = list(reversed(NAMES))
     content, payloads = _archive(_sizes(7, 50_000, 90_000), names=names)
-    server = _Server(content)
+    server = RangeServer(content)
     result = _read(server, [NAMES[0]])
 
     assert result.whole
@@ -165,7 +108,7 @@ def test_unexpected_first_member_downloads_the_whole_archive():
 def test_file_replaced_between_requests_is_not_stitched_together():
     old, _ = _archive(_sizes(8, 150_000, 350_000), seed=8)
     new, new_payloads = _archive(_sizes(9, 150_000, 350_000), seed=9)
-    server = _Server(old)
+    server = RangeServer(old)
     server.replace_after = (1, new, '"v2"')
     wanted = [NAMES[0], NAMES[24]]
 
@@ -191,7 +134,7 @@ def test_header_lookalike_inside_member_data_is_ignored():
     block[148:156] = b"0000000\0"  # break the checksum
     lookalike = offset + BLOCK * 2
     blob[lookalike:lookalike + BLOCK] = block
-    server = _Server(bytes(blob))
+    server = RangeServer(bytes(blob))
 
     result = _read(server, [NAMES[12]])
 
@@ -201,7 +144,7 @@ def test_header_lookalike_inside_member_data_is_ignored():
 def test_missing_member_is_absent_after_the_fallback():
     names = NAMES[:24]  # no _120 member
     content, _ = _archive(_sizes(11, 50_000, 90_000)[:24], names=names)
-    server = _Server(content)
+    server = RangeServer(content)
     result = _read(server, [NAMES[24]])
 
     assert result.members == {}
@@ -213,9 +156,9 @@ def test_not_found_propagates():
 
     async def fetch(_url, headers):
         requests.append(headers)
-        raise _HTTPError(404)
+        raise HTTPError(404)
 
-    with pytest.raises(_HTTPError):
+    with pytest.raises(HTTPError):
         asyncio.run(fetch_tar_members(fetch, "https://x/f.tar", NAMES, [NAMES[0]]))
     # A missing release is not a fallback case: no whole-archive download.
     assert len(requests) == 1

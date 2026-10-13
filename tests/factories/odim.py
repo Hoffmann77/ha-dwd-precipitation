@@ -1,10 +1,8 @@
-"""Synthetic ODIM_H5 / RS-tar builders shared across the test suite."""
+"""Synthetic ODIM_H5 builders shared across the test suite."""
 
 from __future__ import annotations
 
 import io
-import tarfile
-from datetime import datetime
 
 import h5py
 import numpy as np
@@ -191,39 +189,3 @@ def make_odim_virtual_dataset(shape=(5, 5)):
         f.create_virtual_dataset("dataset1/data1/data", layout)
     buf.seek(0)
     return buf
-
-
-def make_rs_tar(ts: datetime) -> bytes:
-    """Build an in-memory RS tar with all 25 lead-time members (dummy payloads).
-
-    Members are named like the real archive (``_000-hd5`` .. ``_120-hd5``);
-    contents are placeholders because callers patch read_odim_composite to
-    inject the parsed values/metadata per lead.
-    """
-    prefix = f"composite_rs_{ts.strftime('%Y%m%d_%H%M')}"
-    buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode="w") as tf:
-        for lead in range(0, 121, 5):
-            payload = f"{lead:03d}".encode()
-            info = tarfile.TarInfo(name=f"{prefix}_{lead:03d}-hd5")
-            info.size = len(payload)
-            tf.addfile(info, io.BytesIO(payload))
-    return buf.getvalue()
-
-
-def make_rv_tar(ts: datetime) -> bytes:
-    """Build an in-memory RV tar with all 25 lead-time members (dummy payloads).
-
-    Members are named like the real archive (``_000-hd5`` .. ``_120-hd5``);
-    contents are placeholders because callers patch read_odim_composite to
-    inject the parsed values/metadata per lead.
-    """
-    prefix = f"composite_rv_{ts.strftime('%Y%m%d_%H%M')}"
-    buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode="w") as tf:
-        for lead in range(0, 121, 5):
-            payload = f"{lead:03d}".encode()
-            info = tarfile.TarInfo(name=f"{prefix}_{lead:03d}-hd5")
-            info.size = len(payload)
-            tf.addfile(info, io.BytesIO(payload))
-    return buf.getvalue()

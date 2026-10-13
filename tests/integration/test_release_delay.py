@@ -48,13 +48,12 @@ def test_every_utc_product_is_probed():
     assert probed == utc
 
 
-def test_sf_2350_waits_like_the_sf_it_reads():
+async def test_sf_2350_waits_like_the_sf_it_reads(make_coordinator):
     """sf_2350 is not probed on its own: it reads SF's files, so SF's lag is its."""
     assert RadolanSFLastYesterday.RELEASE_DELAY == RadolanSF.RELEASE_DELAY
-    for ts in (datetime(2026, 7, 3, 21, 50, tzinfo=UTC),):
-        assert PRODUCTS["sf"].url_for(ts) == RadolanSFLastYesterday.__new__(
-            RadolanSFLastYesterday
-        )._get_url(ts)
+    ts = datetime(2026, 7, 3, 21, 50, tzinfo=UTC)
+    sf_2350 = make_coordinator(RadolanSFLastYesterday)
+    assert PRODUCTS["sf"].url_for(ts) == sf_2350._get_url(ts)
 
 
 def test_extract_timing_resolves_inheritance():

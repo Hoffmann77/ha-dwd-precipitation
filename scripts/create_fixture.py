@@ -11,10 +11,16 @@ pyproj, so the reference tests can check our lookup returns that cell.
 Run once from the repo root (needs wradlib + pyproj + requests installed):
 
     uv run --group wradlib-comparison python scripts/create_fixture.py
+    uv run --group wradlib-comparison python scripts/create_fixture.py --product rv
+    uv run --group wradlib-comparison python scripts/create_fixture.py --product hymecng
 
 Writes:
     tests/fixtures/composite_rs_sample.hd5       (RS / ODIM_H5)
     tests/fixtures/fixture_metadata.json         (RS expected values)
+    tests/fixtures/composite_rv_sample.hd5       (--product rv: an RV analysis)
+    tests/fixtures/composite_hymecng_sample.hd5  (--product hymecng)
+    and a composite_<product>_sample.json with the cells each one pins down.
+    Neither of the last two has a synthetic fallback: they need real rain.
 
 The RADOLAN HDF5 fixture (tests/fixtures/radolan_rw_sample.hdf5) is a plain
 download of one RW file and needs no script.
@@ -190,6 +196,103 @@ def make_synthetic_hdf5() -> bytes:
     return buf.getvalue()
 
 
+def raw_grid(hdf5_bytes: bytes) -> tuple[np.ndarray, dict]:
+    """Return the unscaled grid and its /dataset1/data1/what attributes."""
+    with h5py.File(io.BytesIO(hdf5_bytes), "r") as f:
+        return f["dataset1/data1/data"][:], dict(f["dataset1/data1/what"].attrs)
+
+
+def download_member(product: str, ts: datetime) -> bytes | None:
+    """Return the analysis (lead 0) of an RV release, or the HymecNG file."""
+    url = product_url(product, ts)
+    print(f"  Trying {url} …", flush=True)
+    try:
+        resp = requests.get(url, timeout=60)
+        resp.raise_for_status()
+    except Exception as exc:
+        print(f"    → failed: {exc}", flush=True)
+        return None
+    if product == "hymecng":
+        return resp.content
+    with tarfile.open(fileobj=io.BytesIO(resp.content)) as tf:
+        return tf.extractfile(f"{radvor_prefix(product, ts)}_000-hd5").read()
+
+
+def pick_cells(product: str, hdf5_bytes: bytes) -> list[dict] | None:
+    """Return the cells a fixture records, or None if it has no rain.
+
+    RV: the wettest cell and a nodata cell (outside coverage), as the
+    production reader reports them (mm, None). HymecNG: a precipitating
+    cell, an undetect cell (scanned, dry) and a nodata cell, as raw class
+    indices.
+    """
+    raw, what = raw_grid(hdf5_bytes)
+    nodata, undetect = int(what["nodata"]), int(what["undetect"])
+    cells: list[tuple[str, int, int]] = []
+    if product == "rv":
+        values = raw.astype(np.float64) * float(what["gain"]) + float(what["offset"])
+        values[raw == nodata] = np.nan
+        if not np.nanmax(values) >= MIN_MM / 12:
+            return None
+        row, col = np.unravel_index(np.nanargmax(values), values.shape)
+        cells.append(("wet", int(row), int(col)))
+    else:
+        wet = np.argwhere((raw != nodata) & (raw != undetect) & (raw >= 2))
+        if not len(wet):
+            return None
+        cells.append(("wet", int(wet[len(wet) // 2][0]), int(wet[len(wet) // 2][1])))
+        dry = np.argwhere(raw == undetect)
+        cells.append(("undetect", int(dry[len(dry) // 2][0]), int(dry[len(dry) // 2][1])))
+    out = np.argwhere(raw == nodata)
+    cells.append(("nodata", int(out[0][0]), int(out[0][1])))
+
+    picked = []
+    for kind, row, col in cells:
+        lat, lon = cell_to_lonlat(hdf5_bytes, row, col)
+        cell = int(raw[row, col])
+        if product == "rv":
+            value = None if cell == nodata else round(
+                cell * float(what["gain"]) + float(what["offset"]), 3
+            )
+        else:
+            value = cell
+        picked.append(
+            {"kind": kind, "row": row, "col": col, "lat": lat, "lon": lon, "value": value}
+        )
+    return picked
+
+
+def create_member_fixture(product: str) -> None:
+    """Save the newest wet RV analysis or HymecNG file, and its cells."""
+    ts = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    ts -= timedelta(minutes=ts.minute % 5 + 10)
+    for _ in range(48):
+        if (content := download_member(product, ts)) is not None:
+            if (cells := pick_cells(product, content)) is not None:
+                break
+            print("    → no precipitation, trying earlier …", flush=True)
+        ts -= timedelta(minutes=5)
+    else:
+        print(f"ERROR: no {product} release with precipitation in the last 4 h")
+        sys.exit(1)
+
+    stem = f"composite_{product}_sample"
+    (FIXTURES / f"{stem}.hd5").write_bytes(content)
+    meta = {
+        "product": product,
+        "source_ts": ts.strftime("%Y-%m-%dT%H:%M:00Z"),
+        "member": "_000 (the analysis)" if product == "rv" else "the whole file",
+        "cells": cells,
+        "note": (
+            "lat/lon is the centre of (row, col); value is what the production "
+            "reader returns there (mm, None for nodata) for RV, the raw class "
+            "index for HymecNG."
+        ),
+    }
+    (FIXTURES / f"{stem}.json").write_text(json.dumps(meta, indent=2) + "\n")
+    print(f"Saved {stem}.hd5 ({len(content):,} bytes) and {stem}.json: {cells}")
+
+
 def main() -> None:
     FIXTURES.mkdir(parents=True, exist_ok=True)
 
@@ -198,6 +301,10 @@ def main() -> None:
     except ImportError:
         print("ERROR: pyproj not found. Install: uv sync --group wradlib-comparison")
         sys.exit(1)
+
+    if len(sys.argv) > 2 and sys.argv[1] == "--product" and sys.argv[2] != "rs":
+        create_member_fixture(sys.argv[2])
+        return
 
     print("Attempting to download real RS file from DWD OpenData …")
     hdf5_bytes, ts = try_download_real_file()

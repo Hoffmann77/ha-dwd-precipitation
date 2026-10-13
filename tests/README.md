@@ -25,8 +25,11 @@ tracking issue on failure instead of blocking merges.**
   and the HTTP helper).
 - **`integration/`** — the HA-facing layer (imports `homeassistant`):
   `test_config_flow.py`, `test_setup_entry.py` (entry → coordinators → sensor states),
-  `test_products.py` (fetch/parse metadata derivation), `test_coordinator_timing.py`,
-  `test_sensor.py`.
+  `test_product_<rs|rv|hymecng|radolan>.py` (each product's fetch and parse, helpers
+  in `product_helpers.py`), `test_product_rv_rain_events.py` (RV's tracker glue),
+  `test_products.py` (URLs and shared downloads), `test_coordinator_timing.py`,
+  `test_sensor.py`. `conftest.py` has the `make_entry` / `make_coordinator`
+  factories, which build through the real constructors.
 - **`reference/`** — golden comparison of our extracted parsers and grid lookups
   against pure `wradlib` (RS on the DE1200 grid), on the committed fixtures. Skips if
   `wradlib` or the fixture is missing. The wradlib side lives in
@@ -86,7 +89,11 @@ uv run --group unit-test pytest tests
   ```sh
   uv run --group wradlib-comparison python scripts/create_fixture.py
   ```
-- `factories/` holds shared synthetic builders (e.g. `make_odim_h5`, `make_rs_tar`),
+- The real RV analysis and HymecNG file (`composite_<product>_sample.hd5`, with
+  a `.json` naming the cells each pins down) come from `--product rv` /
+  `--product hymecng`, which wait for a release with rain. All three tiers read
+  them through `tests/factories/real.py`.
+- `factories/` holds shared synthetic builders (e.g. `make_odim_h5`, `make_radvor_tar`, `RangeServer`),
   imported as `from tests.factories.odim import make_odim_h5`.
 
 ## CI workflows

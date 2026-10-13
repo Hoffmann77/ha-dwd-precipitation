@@ -1,0 +1,32 @@
+{
+  "product": "hymecng",
+  "source_ts": "2026-10-13T18:45:00Z",
+  "member": "the whole file",
+  "cells": [
+    {
+      "kind": "wet",
+      "row": 627,
+      "col": 405,
+      "lat": 50.75101295874043,
+      "lon": 8.137394896995717,
+      "value": 2
+    },
+    {
+      "kind": "undetect",
+      "row": 587,
+      "col": 577,
+      "lat": 51.11140242971006,
+      "lon": 10.46007748322314,
+      "value": 254
+    },
+    {
+      "kind": "nodata",
+      "row": 0,
+      "col": 0,
+      "lat": 55.858389752371465,
+      "lon": 1.4721964849605338,
+      "value": 255
+    }
+  ],
+  "note": "lat/lon is the centre of (row, col); value is what the production reader returns there (mm, None for nodata) for RV, the raw class index for HymecNG."
+}
