@@ -12,7 +12,8 @@ from custom_components.dwd_precipitation import products
 from custom_components.dwd_precipitation.products import RadvorRV
 from custom_components.dwd_precipitation.utils import AsyncResponse
 
-from tests.factories.radvor import LEADS, make_radvor_tar
+from tests.factories.radvor import LEADS, RangeServer, make_radvor_tar
+from tests.factories.real import real_cells, real_member, real_release
 from tests.integration.product_helpers import (
     rs_fetch,
     rv_fetch,
@@ -279,3 +280,27 @@ async def test_rv_peak_hour_treats_missing_step_as_dry(make_coordinator) -> None
         "end": "2026-05-18T17:00:00+00:00",
         "value": pytest.approx(1.0),
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["wet", "nodata"])
+async def test_rv_real_analysis_through_the_fill_path(make_coordinator, kind) -> None:
+    """A real RV analysis, read by range as a missed step is filled."""
+    content, _ = real_member("rv")
+    cell = real_cells("rv")[kind]
+    release = real_release("rv")
+    coord = make_coordinator(RadvorRV)
+    coord.coords = (cell["lat"], cell["lon"])
+    # The real analysis first, as DWD orders them; the forecast members are
+    # placeholders, and the range read must not need them.
+    archive = make_radvor_tar("rv", release, lambda lead: content if lead == 0 else b"x")
+    server = RangeServer(archive)
+
+    with patch.object(products, "async_get", side_effect=server.async_get):
+        value = await coord._async_fetch_analysis(release)
+
+    if cell["value"] is None:
+        assert value is None
+    else:
+        assert value == pytest.approx(cell["value"], abs=5e-4)
+    assert server.whole_downloads == 0

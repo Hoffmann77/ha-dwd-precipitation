@@ -8,11 +8,13 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from custom_components.dwd_precipitation import products
+from custom_components.dwd_precipitation.const import PRECIP_TYPE_BY_INDEX
 from custom_components.dwd_precipitation.products import HymecNG
 from custom_components.dwd_precipitation.radar import RS_GRID_SHAPE
 from custom_components.dwd_precipitation.utils import AsyncResponse
 
 from tests.factories.odim import make_hymecng_h5
+from tests.factories.real import real_cells, real_member, real_release
 
 
 def _hymecng_reader(class_value: int, nodata: int = 255, undetect: int = 254):
@@ -84,3 +86,27 @@ async def test_hymecng_class_and_sentinel_mapping(make_coordinator, class_value,
         data, _meta = await coord._fetch_and_parse(ts)
 
     assert data == {"precipitation_type": expected}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["wet", "undetect", "nodata"])
+async def test_hymecng_real_file(make_coordinator, kind) -> None:
+    """A real HymecNG file through the production path, at three kinds of cell."""
+    content, _ = real_member("hymecng")
+    cell = real_cells("hymecng")[kind]
+    coord = make_coordinator(HymecNG)
+    coord.coords = (cell["lat"], cell["lon"])
+
+    with patch.object(
+        products, "async_get", new=AsyncMock(return_value=AsyncResponse(content=content))
+    ):
+        data, meta = await coord._fetch_and_parse(real_release("hymecng"))
+
+    if kind == "undetect":
+        expected = "no_precipitation"  # scanned, no echo
+    elif kind == "nodata":
+        expected = None  # outside coverage: unknown
+    else:
+        expected = PRECIP_TYPE_BY_INDEX[cell["value"]]
+    assert data == {"precipitation_type": expected}
+    assert meta["precipitation_type"].source_timestamp == real_release("hymecng")

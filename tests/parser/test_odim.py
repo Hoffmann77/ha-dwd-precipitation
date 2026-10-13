@@ -23,6 +23,7 @@ from tests.factories.odim import (
     make_odim_soft_link,
     make_odim_virtual_dataset,
 )
+from tests.factories.real import real_cells, real_member, real_release
 
 _PROJDEF = RS_WHERE["projdef"]
 _X_0 = 543196.83521776402
@@ -322,3 +323,43 @@ def test_cell_reader_keeps_untrusted_input_checks():
         read_odim_composite_cell(make_odim_external_link(), 0, 0)
     with pytest.raises(ValueError, match="shape"):
         read_odim_composite_cell(make_odim_h5(shape=(5, 5)), 0, 0, expected_shape=(6, 6))
+
+
+# --- real files (scripts/create_fixture.py --product rv|hymecng) ------------------
+
+
+@pytest.mark.parametrize("kind", ["wet", "nodata"])
+def test_real_rv_analysis_cell(kind):
+    """A real RV analysis: the cell at a location, and its value in mm."""
+    import io
+
+    content, _ = real_member("rv")
+    cell = real_cells("rv")[kind]
+    assert get_rs_grid_index(cell["lat"], cell["lon"]) == (cell["row"], cell["col"])
+
+    value, what = read_odim_composite_cell(
+        io.BytesIO(content), cell["row"], cell["col"], expected_shape=RS_GRID_SHAPE
+    )
+    if cell["value"] is None:
+        assert np.isnan(value)
+    else:
+        assert float(value) == pytest.approx(cell["value"], abs=5e-4)
+    # The analysis is the 5 minutes ending at the release.
+    release = real_release("rv")
+    assert (what["enddate"], what["endtime"]) == (f"{release:%Y%m%d}", f"{release:%H%M%S}")
+
+
+@pytest.mark.parametrize("kind", ["wet", "undetect", "nodata"])
+def test_real_hymecng_cell(kind):
+    """A real HymecNG file: the raw class, undetect and nodata as stored."""
+    import io
+
+    content, _ = real_member("hymecng")
+    cell = real_cells("hymecng")[kind]
+    assert get_rs_grid_index(cell["lat"], cell["lon"]) == (cell["row"], cell["col"])
+
+    value, _, moment_what = read_odim_classification_cell(
+        io.BytesIO(content), cell["row"], cell["col"], expected_shape=RS_GRID_SHAPE
+    )
+    assert value == cell["value"]
+    assert (int(moment_what["undetect"]), int(moment_what["nodata"])) == (254, 255)

@@ -17,7 +17,14 @@ import pytest
 
 pytest.importorskip("wradlib")
 
-from radar.odim import RS_WHERE, get_rs_grid_index, read_odim_composite, rs_grid_contains  # noqa: E402
+from radar.odim import (  # noqa: E402
+    RS_WHERE,
+    get_rs_grid_index,
+    read_odim_classification,
+    read_odim_composite,
+    rs_grid_contains,
+)
+from tests.factories.real import real_member  # noqa: E402
 from tests.wradlib_ref import (  # noqa: E402
     de1200_cell,
     de1200_cells,
@@ -166,3 +173,28 @@ def test_full_array_matches_wradlib():
     np.testing.assert_array_equal(np.isnan(data_ours), np.isnan(data_wrl))
     mask = ~np.isnan(data_ours)
     np.testing.assert_array_equal(data_ours[mask], data_wrl[mask])
+
+
+@pytest.mark.wradlib
+def test_real_rv_analysis_matches_wradlib():
+    """A real RV analysis decodes like wradlib's reader, cell for cell."""
+    content, _ = real_member("rv")
+    data_ours, _ = read_odim_composite(io.BytesIO(content))
+    data_wrl = scale_odim(*read_odim(content))
+
+    np.testing.assert_array_equal(np.isnan(data_ours), np.isnan(data_wrl))
+    mask = ~np.isnan(data_ours)
+    np.testing.assert_array_equal(data_ours[mask], data_wrl[mask])
+    assert np.nanmax(data_ours) > 0, "the fixture was picked for its rain"
+
+
+@pytest.mark.wradlib
+def test_real_hymecng_matches_wradlib():
+    """A real HymecNG file: our class grid is wradlib's raw grid."""
+    content, _ = real_member("hymecng")
+    raw_ours, _, moment_what = read_odim_classification(io.BytesIO(content))
+    raw_wrl, what_wrl = read_odim(content)
+
+    np.testing.assert_array_equal(raw_ours, raw_wrl)
+    assert int(moment_what["nodata"]) == int(what_wrl["nodata"])
+    assert int(moment_what["undetect"]) == int(what_wrl["undetect"])

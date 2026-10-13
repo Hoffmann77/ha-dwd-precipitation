@@ -89,6 +89,10 @@ uv run --group unit-test pytest tests
   ```sh
   uv run --group wradlib-comparison python scripts/create_fixture.py
   ```
+- The real RV analysis and HymecNG file (`composite_<product>_sample.hd5`, with
+  a `.json` naming the cells each pins down) come from `--product rv` /
+  `--product hymecng`, which wait for a release with rain. All three tiers read
+  them through `tests/factories/real.py`.
 - `factories/` holds shared synthetic builders (e.g. `make_odim_h5`, `make_radvor_tar`, `RangeServer`),
   imported as `from tests.factories.odim import make_odim_h5`.
 
