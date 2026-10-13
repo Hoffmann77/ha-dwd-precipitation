@@ -17,6 +17,7 @@ from .coordinator import (
     ProductMetadata,
 )
 from .radar.isotime import iso
+from .radar.urls import product_url, radvor_prefix
 from .utils import FailureLatch, async_get
 from .radar.tar_range import fetch_tar_members, member_names, members_from_archive
 from .radar import (
@@ -53,8 +54,6 @@ from .const import (
     CONF_PRECIPITATION_END_ALGORITHM,
     DEFAULT_PRECIPITATION_END_ALGORITHM,
     PRECIP_TYPE_BY_INDEX,
-    DWD_RADOLAN_URL,
-    DWD_COMPOSITE_URL,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -79,14 +78,6 @@ def _nan_to_none(value: float) -> float | None:
 def _mm(value: float | None) -> float | None:
     """Round an amount to the ODIM resolution; the float32 carries noise below it."""
     return round(value, MM_DECIMALS) if value is not None else None
-
-
-def _radvor_prefix(product: str, ts: datetime) -> str:
-    """Return the name stem of a RADVOR release (``composite_rs_<ts>``).
-
-    The tar is ``<stem>.tar``, its members ``<stem>_<lead>-hd5``.
-    """
-    return f"composite_{product}_{ts:%Y%m%d_%H%M}"
 
 
 # The three non-overlapping RS hours: past, next and second-next.
@@ -237,9 +228,9 @@ class WholeFileProduct(BaseProductUpdateCoordinator, ABC):
     event loop, decode it with ``_parse(content, ts)`` in the executor.
     """
 
-    @abstractmethod
     def _get_url(self, ts: datetime) -> str:
-        """Return the URL of release ``ts``."""
+        """Return the URL of release ``ts`` (see radar/urls.py)."""
+        return product_url(self.PRODUCT_KEY, ts)
 
     @abstractmethod
     def _parse(self, content: bytes, ts: datetime) -> tuple[Any, Any]:
@@ -262,11 +253,7 @@ class RadvorProduct(WholeFileProduct, ABC):
 
     def _prefix(self, ts: datetime) -> str:
         """Return release ``ts``'s name stem (``composite_rs_<ts>``)."""
-        return _radvor_prefix(self.PRODUCT_KEY, ts)
-
-    def _get_url(self, ts: datetime) -> str:
-        """Return the URL for the tar archive."""
-        return f"{DWD_COMPOSITE_URL}/{self.PRODUCT_KEY}/{self._prefix(ts)}.tar"
+        return radvor_prefix(self.PRODUCT_KEY, ts)
 
     @cached_property
     def _range_latch(self) -> FailureLatch:
@@ -671,13 +658,6 @@ class HymecNG(WholeFileProduct):
     # is still informative.
     OVERDUE_GRACE = DEFAULT_OVERDUE_GRACE
 
-    def _get_url(self, ts: datetime) -> str:
-        """Return the URL for the single ODIM_H5 file."""
-        return (
-            f"{DWD_COMPOSITE_URL}/hymecng/"
-            f"composite_HymecNG_{ts.strftime('%Y%m%d_%H%M')}_000-hd5"
-        )
-
     def _parse(
         self, content: bytes, ts: datetime
     ) -> tuple[str | None, ProductMetadata]:
@@ -713,7 +693,8 @@ class RadolanProduct(WholeFileProduct, ABC):
     another grid (area means agree to 1 %), so a location may land on a
     slightly different cell than it did on the old grid.
 
-    Concrete subclasses provide PRODUCT_KEY, timing constants, and _get_url().
+    Concrete subclasses provide PRODUCT_KEY and the timing constants; the
+    URL follows from the key (radar/urls.py).
     precipitation -> float, metadata -> ProductMetadata
     """
 
@@ -730,14 +711,6 @@ class RadolanProduct(WholeFileProduct, ABC):
             BytesIO(content), *self.index, expected_shape=RS_GRID_SHAPE
         )
         return _nan_to_none(value), _odim_metadata(what)
-
-
-def _radolan_url(product: str, ts: datetime) -> str:
-    """Return the URL of a RADOLAN analysis in its HDF5 edition."""
-    return (
-        f"{DWD_RADOLAN_URL}/{product}/raa01-{product}_10000-"
-        f"{ts.strftime('%y%m%d%H%M')}-dwd---bin.hdf5"
-    )
 
 
 class RadolanRW(RadolanProduct):
@@ -764,10 +737,6 @@ class RadolanRW(RadolanProduct):
     # An hourly total that is an hour behind is misreported rather than merely
     # old, so give the missing file only the default few minutes.
     OVERDUE_GRACE = DEFAULT_OVERDUE_GRACE
-
-    def _get_url(self, ts: datetime) -> str:
-        """Return the HDF5 URL."""
-        return _radolan_url("rw", ts)
 
 
 
@@ -817,10 +786,6 @@ class RadolanSF(RadolanProduct):
 
     # Same reasoning as RW: the window it reports moves with the release.
     OVERDUE_GRACE = DEFAULT_OVERDUE_GRACE
-
-    def _get_url(self, ts: datetime) -> str:
-        """Return the HDF5 URL."""
-        return _radolan_url("sf", ts)
 
 
 class RadolanSFLastYesterday(RadolanSF):

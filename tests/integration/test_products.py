@@ -1077,3 +1077,28 @@ def test_rs_next_120_needs_both_forecast_hours() -> None:
     assert products._next_120(None, 0.2, meta, meta) == (None, None)
     assert products._next_120(0.1, None, meta, meta) == (None, None)
     assert products._next_120(0.0, 0.0, meta, meta)[0] == 0.0
+
+
+@pytest.mark.parametrize(
+    ("cls", "url"),
+    [
+        (RadvorRS, "https://opendata.dwd.de/weather/radar/composite/rs/composite_rs_20261012_0740.tar"),
+        (RadvorRV, "https://opendata.dwd.de/weather/radar/composite/rv/composite_rv_20261012_0740.tar"),
+        (HymecNG, "https://opendata.dwd.de/weather/radar/composite/hymecng/composite_HymecNG_20261012_0740_000-hd5"),
+        (RadolanRW, "https://opendata.dwd.de/weather/radar/radolan/rw/raa01-rw_10000-2610120740-dwd---bin.hdf5"),
+        (products.RadolanRW10, "https://opendata.dwd.de/weather/radar/radolan/rw/raa01-rw_10000-2610120740-dwd---bin.hdf5"),
+        (RadolanSF, "https://opendata.dwd.de/weather/radar/radolan/sf/raa01-sf_10000-2610120740-dwd---bin.hdf5"),
+        (products.RadolanSFLastYesterday, "https://opendata.dwd.de/weather/radar/radolan/sf/raa01-sf_10000-2610120740-dwd---bin.hdf5"),
+    ],
+)
+def test_every_product_fetches_the_file_dwd_publishes(cls, url) -> None:
+    """The URLs, spelled out: radar/urls.py must not move any of them."""
+    ts = datetime(2026, 10, 12, 7, 40, tzinfo=timezone.utc)
+    assert cls.__new__(cls)._get_url(ts) == url
+
+
+def test_every_product_class_has_a_url() -> None:
+    from custom_components.dwd_precipitation import PRODUCT_CLASSES
+    from custom_components.dwd_precipitation.radar.urls import PRODUCT_URLS
+
+    assert {cls.PRODUCT_KEY for cls in PRODUCT_CLASSES} == set(PRODUCT_URLS)
