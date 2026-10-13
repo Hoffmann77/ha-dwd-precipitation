@@ -16,6 +16,7 @@ PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR]
 CONF_COORDS = "coordinates"
 
 CONF_EXTRA_ATTRIBUTES = "extra_state_attributes"
+DEFAULT_EXTRA_ATTRIBUTES = False
 
 CONF_UNAVAILABLE_WHEN_STALE = "unavailable_when_stale"
 

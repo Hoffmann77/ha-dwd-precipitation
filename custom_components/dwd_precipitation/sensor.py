@@ -28,6 +28,7 @@ from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_EXTRA_ATTRIBUTES,
+    DEFAULT_EXTRA_ATTRIBUTES,
     CONF_FULL_ROLLING_SERIES,
     DEFAULT_FULL_ROLLING_SERIES,
     CONF_PRECIPITATION_RESET_THRESHOLD,
@@ -478,7 +479,7 @@ class PrecipitationSensorEntity(DwdCoordinatorEntity, SensorEntity):
 
         # Diagnostic metadata is opt-in via the integration options.
         if not self.coordinator.config_entry.options.get(
-            CONF_EXTRA_ATTRIBUTES, False
+            CONF_EXTRA_ATTRIBUTES, DEFAULT_EXTRA_ATTRIBUTES
         ):
             return attrs
 
