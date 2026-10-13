@@ -117,9 +117,3 @@ PRECIP_TYPE_BY_INDEX = (
     "large_hail",         # 10 LARGE_HAIL
 )
 PRECIP_TYPE_OPTIONS = list(PRECIP_TYPE_BY_INDEX)
-
-DWD_OPENDATA_URL = "https://opendata.dwd.de"
-
-DWD_RADOLAN_URL = f"{DWD_OPENDATA_URL}/weather/radar/radolan"
-
-DWD_COMPOSITE_URL = f"{DWD_OPENDATA_URL}/weather/radar/composite"

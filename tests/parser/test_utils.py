@@ -8,6 +8,7 @@ import pytest
 from utils import (
     AsyncResponse,
     DEFAULT_MAX_BYTES,
+    DownloadCache,
     FailureLatch,
     async_get,
 )
@@ -166,3 +167,76 @@ def test_failure_latch_reports_a_run_once_and_its_end_once():
     assert latch.failing
     assert [latch.ok() for _ in range(2)] == [True, False]
     assert latch.fail() is True  # a new run
+
+
+# ===========================================================================
+# DownloadCache
+# ===========================================================================
+
+def _counting_fetch(calls, content=b"x", delay=0.0, error=None):
+    async def fetch():
+        calls.append(1)
+        await asyncio.sleep(delay)
+        if error is not None:
+            raise error
+        return AsyncResponse(content=content)
+    return fetch
+
+
+def test_download_cache_downloads_a_url_once_for_concurrent_asks():
+    async def run():
+        cache, calls = DownloadCache(ttl=300), []
+        a, b = await asyncio.gather(
+            cache.async_get("u", _counting_fetch(calls, delay=0.01)),
+            cache.async_get("u", _counting_fetch(calls, delay=0.01)),
+        )
+        return a, b, calls
+    a, b, calls = asyncio.run(run())
+    assert calls == [1]
+    assert a is b
+
+
+def test_download_cache_keeps_a_download_for_its_ttl():
+    clock = [0.0]
+
+    async def run():
+        cache, calls = DownloadCache(ttl=300, clock=lambda: clock[0]), []
+        await cache.async_get("u", _counting_fetch(calls))
+        clock[0] = 299
+        await cache.async_get("u", _counting_fetch(calls))
+        assert calls == [1]  # still kept
+        clock[0] = 301
+        await cache.async_get("u", _counting_fetch(calls))
+        assert calls == [1, 1]  # expired: downloaded again
+        await cache.async_get("other", _counting_fetch(calls))
+        assert calls == [1, 1, 1]
+    asyncio.run(run())
+
+
+def test_download_cache_does_not_keep_a_failure():
+    async def run():
+        cache, calls = DownloadCache(ttl=300), []
+        results = await asyncio.gather(
+            cache.async_get("u", _counting_fetch(calls, delay=0.01, error=OSError("404"))),
+            cache.async_get("u", _counting_fetch(calls)),
+            return_exceptions=True,
+        )
+        assert [type(r) for r in results] == [OSError, OSError]  # both waited for it
+        assert (await cache.async_get("u", _counting_fetch(calls))).content == b"x"
+        return calls
+    assert asyncio.run(run()) == [1, 1]
+
+
+def test_download_cache_survives_a_cancelled_waiter():
+    async def run():
+        cache, calls = DownloadCache(ttl=300), []
+        first = asyncio.ensure_future(cache.async_get("u", _counting_fetch(calls, delay=0.02)))
+        await asyncio.sleep(0)
+        second = asyncio.ensure_future(cache.async_get("u", _counting_fetch(calls)))
+        await asyncio.sleep(0)
+        first.cancel()
+        response = await second
+        return response, calls
+    response, calls = asyncio.run(run())
+    assert response.content == b"x"
+    assert calls == [1]

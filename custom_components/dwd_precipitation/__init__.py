@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
+from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -12,6 +13,7 @@ from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .coordinator import BaseProductUpdateCoordinator
+from .utils import DownloadCache
 from .const import CONF_DRY_STREAK_SOURCE, LEGACY_DRY_STREAK_SOURCE, PLATFORMS
 from .rain_events_tracker import RainEventsTracker
 from .products import (
@@ -37,6 +39,11 @@ PRODUCT_CLASSES: tuple[type[BaseProductUpdateCoordinator], ...] = (
 
 _LOGGER = logging.getLogger(__name__)
 
+# How long a shared download is kept: two products fetch the same release
+# within their fetch jitter (<= 30 s) of each other; a few minutes also
+# covers one of them retrying after a 404. RADOLAN files are ~30 KB.
+SHARED_DOWNLOAD_TTL = timedelta(minutes=5)
+
 type MyConfigEntry = ConfigEntry[MyData]
 
 
@@ -61,6 +68,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: MyConfigEntry) -> bool:
         for cls in PRODUCT_CLASSES
         if cls.is_needed(entry.options)
     ]
+    # Products that read the same files share one download of each.
+    downloads = DownloadCache(SHARED_DOWNLOAD_TTL.total_seconds())
+    for coordinator in product_coordinators:
+        coordinator.download_cache = downloads
 
     # Refresh every product concurrently. async_refresh() records a failure on
     # the coordinator instead of raising, so one dead product cannot veto the

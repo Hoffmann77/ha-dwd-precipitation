@@ -12,11 +12,10 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from custom_components.dwd_precipitation import PRODUCT_CLASSES
 from custom_components.dwd_precipitation.products import (
-    HymecNG,
-    RadolanRW,
     RadolanSF,
-    RadvorRS,
+    RadolanSFLastYesterday,
 )
 from scripts.check_release_delay import (
     PRODUCTS,
@@ -33,13 +32,29 @@ UTC = timezone.utc
 # Drift guard: extractor must agree with the real integration constants
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("cls", [RadvorRS, RadolanRW, RadolanSF, HymecNG])
+@pytest.mark.parametrize("cls", PRODUCT_CLASSES, ids=lambda c: c.__name__)
 def test_extract_timing_matches_integration(cls):
     """The ast extractor reproduces each class's resolved RELEASE_* constants."""
     timing = extract_timing(cls.__name__)
     assert timing["RELEASE_INTERVAL"] == cls.RELEASE_INTERVAL
     assert timing["RELEASE_DELAY"] == cls.RELEASE_DELAY
     assert timing["RELEASE_OFFSET"] == cls.RELEASE_OFFSET
+
+
+def test_every_utc_product_is_probed():
+    """A product the probe skips would let its RELEASE_DELAY drift unnoticed."""
+    probed = {spec.class_name for spec in PRODUCTS.values()}
+    utc = {cls.__name__ for cls in PRODUCT_CLASSES if not cls.USE_LOCAL_TIME}
+    assert probed == utc
+
+
+def test_sf_2350_waits_like_the_sf_it_reads():
+    """sf_2350 is not probed on its own: it reads SF's files, so SF's lag is its."""
+    assert RadolanSFLastYesterday.RELEASE_DELAY == RadolanSF.RELEASE_DELAY
+    for ts in (datetime(2026, 7, 3, 21, 50, tzinfo=UTC),):
+        assert PRODUCTS["sf"].url_for(ts) == RadolanSFLastYesterday.__new__(
+            RadolanSFLastYesterday
+        )._get_url(ts)
 
 
 def test_extract_timing_resolves_inheritance():

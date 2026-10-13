@@ -36,12 +36,12 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "custom_components/dwd_precipitation"))
 
+from radar.nowcast import LEADS  # noqa: E402
 from radar.odim import read_odim_composite  # noqa: E402
 from radar.tar_range import fetch_tar_members, member_names  # noqa: E402
+from radar.urls import RADOLAN, product_url, radvor_prefix  # noqa: E402
 
-RW_DIR = "https://opendata.dwd.de/weather/radar/radolan/rw/"
-RS_DIR = "https://opendata.dwd.de/weather/radar/composite/rs/"
-LEADS = list(range(0, 121, 5))
+RW_DIR = f"{RADOLAN}/rw/"
 
 
 class _Response:
@@ -57,9 +57,9 @@ async def _get(session, url, headers=None):
 
 async def _pair(session, t: datetime, wet: float):
     """Return per-run statistics for the hour ending at t, or None."""
-    rw_url = f"{RW_DIR}raa01-rw_10000-{t:%y%m%d%H%M}-dwd---bin.hdf5"
-    rs_name = f"composite_rs_{t:%Y%m%d_%H%M}"
-    rs_url = f"{RS_DIR}{rs_name}.tar"
+    rw_url = product_url("rw", t)
+    rs_name = radvor_prefix("rs", t)
+    rs_url = product_url("rs", t)
     try:
         rw_bytes = (await _get(session, rw_url)).content
         read = await fetch_tar_members(

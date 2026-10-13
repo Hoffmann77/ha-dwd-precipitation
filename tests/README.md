@@ -33,8 +33,10 @@ tracking issue on failure instead of blocking merges.**
   `tests/wradlib_ref.py` and never imports our `radar/` code.
 - **`live/`** — downloads and parses the **real** DWD files for every product, walking
   back several releases (OpenData publishes with a delay). Catches URL/format/archive
-  drift at the source. Marked `@pytest.mark.live`; HA-free by design (base URLs are
-  hardcoded because `const.py` imports HA).
+  drift at the source, and reads RS by range as the integration does, so a lost
+  range support or a changed tar layout fails here rather than as a silent
+  fallback. Marked `@pytest.mark.live`; HA-free by design: the URLs come from the
+  HA-free `radar/urls.py`, the same patterns the integration fetches.
 - **`live_wradlib/`** — the reference comparison on **today's** DWD files for every
   product (RS, RV, HymecNG, RW, SF). For a fixed set of German locations it checks
   that our lookup lands on the same cell as wradlib and that the production read

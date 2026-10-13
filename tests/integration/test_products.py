@@ -1077,3 +1077,57 @@ def test_rs_next_120_needs_both_forecast_hours() -> None:
     assert products._next_120(None, 0.2, meta, meta) == (None, None)
     assert products._next_120(0.1, None, meta, meta) == (None, None)
     assert products._next_120(0.0, 0.0, meta, meta)[0] == 0.0
+
+
+@pytest.mark.parametrize(
+    ("cls", "url"),
+    [
+        (RadvorRS, "https://opendata.dwd.de/weather/radar/composite/rs/composite_rs_20261012_0740.tar"),
+        (RadvorRV, "https://opendata.dwd.de/weather/radar/composite/rv/composite_rv_20261012_0740.tar"),
+        (HymecNG, "https://opendata.dwd.de/weather/radar/composite/hymecng/composite_HymecNG_20261012_0740_000-hd5"),
+        (RadolanRW, "https://opendata.dwd.de/weather/radar/radolan/rw/raa01-rw_10000-2610120740-dwd---bin.hdf5"),
+        (products.RadolanRW10, "https://opendata.dwd.de/weather/radar/radolan/rw/raa01-rw_10000-2610120740-dwd---bin.hdf5"),
+        (RadolanSF, "https://opendata.dwd.de/weather/radar/radolan/sf/raa01-sf_10000-2610120740-dwd---bin.hdf5"),
+        (products.RadolanSFLastYesterday, "https://opendata.dwd.de/weather/radar/radolan/sf/raa01-sf_10000-2610120740-dwd---bin.hdf5"),
+    ],
+)
+def test_every_product_fetches_the_file_dwd_publishes(cls, url) -> None:
+    """The URLs, spelled out: radar/urls.py must not move any of them."""
+    ts = datetime(2026, 10, 12, 7, 40, tzinfo=timezone.utc)
+    assert cls.__new__(cls)._get_url(ts) == url
+
+
+def test_every_product_class_has_a_url() -> None:
+    from custom_components.dwd_precipitation import PRODUCT_CLASSES
+    from custom_components.dwd_precipitation.radar.urls import PRODUCT_URLS
+
+    assert {cls.PRODUCT_KEY for cls in PRODUCT_CLASSES} == set(PRODUCT_URLS)
+
+
+@pytest.mark.asyncio
+async def test_products_reading_the_same_file_download_it_once() -> None:
+    """RW's :00 run is one of RW-10min's; one download serves both."""
+    from custom_components.dwd_precipitation.utils import DownloadCache
+
+    ts = datetime(2026, 10, 12, 12, 0, tzinfo=timezone.utc)
+    content = (Path(__file__).parents[1] / "fixtures" / "radolan_rw_sample.hdf5").read_bytes()
+    downloads: list[str] = []
+
+    async def fake_get(url, _client, **_kw):
+        downloads.append(url)
+        await asyncio.sleep(0)
+        return AsyncResponse(content=content)
+
+    cache = DownloadCache(ttl=300)
+    rw, rw10, rs = _coord(RadolanRW), _coord(products.RadolanRW10), _coord(RadvorRS)
+    for coord in (rw, rw10, rs):
+        coord.download_cache = cache
+    with patch.object(products, "async_get", side_effect=fake_get):
+        hourly, sliding = await asyncio.gather(
+            rw._fetch_and_parse(ts), rw10._fetch_and_parse(ts)
+        )
+        await rw10._fetch_and_parse(ts)  # later: still within the TTL
+    assert downloads == [rw._get_url(ts)]
+    assert hourly[0] == sliding[0]
+    # RADVOR archives are not shared, so they never sit in the cache.
+    assert not RadvorRS.SHARES_FILES and not RadvorRV.SHARES_FILES
