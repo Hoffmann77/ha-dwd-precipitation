@@ -144,6 +144,10 @@ TOTAL_SENSORS = (
     PrecipitationTotalEntityDescription(
         key="radolan_sf_yesterday_total",
         translation_key="precipitation_total_daily",
+        # Precipitation total is the one to use; this one puts every day's
+        # rain under the next day in HA's statistics. Only applies when the
+        # entity is first registered, so installs that have it keep it on.
+        entity_registry_enabled_default=False,
         native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,

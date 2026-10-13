@@ -252,8 +252,12 @@ counted once. RW backs `Precipitation total`, the one to use: it is up to date
 within the hour, and HA's statistics see each hour one hour late (11:00-12:00
 is added at ~12:28), so only the last hour of a day spills into the next.
 `sf_2350` backs the daily one, whose rain every day lands in the *next* day's
-statistics; it stays because 2026.10.0 shipped it
-(removing it would orphan users' entities). They are separate entities rather
+statistics; it stays because 2026.10.0 shipped it (removing it would orphan
+users' entities), but `entity_registry_enabled_default=False`. That only
+applies when HA first registers the entity, so installs that had it keep it
+enabled, and new ones get it disabled; enabling it reloads the entry and it
+starts from 0, like any new total. The `sf_2350` coordinator runs either way,
+for `Precipitation yesterday`. They are separate entities rather
 than one with a source option, because switching the source would make a
 `TOTAL_INCREASING` sensor jump. Up to 2026.10.0 they were `(hourly)` /
 `(daily)`; the daily one keeps its slug (`precipitation_total_daily`), the

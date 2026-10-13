@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from homeassistant.core import HomeAssistant, State
+from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 from pytest import approx
 from pytest_homeassistant_custom_component.common import (
@@ -515,7 +516,41 @@ async def test_restart_restores_total_and_backfills_the_gap(
     assert state.attributes["counted_until"] == "2026-07-03T11:00:00+00:00"
     assert state.attributes["state_class"] == "total_increasing"
 
-    # A fresh install starts the daily total at zero.
+    # A new install gets the daily total disabled: registered, but not running.
+    daily = er.async_get(hass).async_get("sensor.home_precipitation_total_daily")
+    assert daily.disabled_by is er.RegistryEntryDisabler.INTEGRATION
+    assert hass.states.get("sensor.home_precipitation_total_daily") is None
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+@pytest.mark.asyncio
+async def test_existing_daily_total_stays_enabled(hass: HomeAssistant, freezer) -> None:
+    """Disabled by default only applies when the entity is first registered."""
+    freezer.move_to("2026-07-03 11:30:00+00:00")
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Home",
+        data={"name": "Home", "latitude": 51.05, "longitude": 13.73},
+        options={},
+    )
+    entry.add_to_hass(hass)
+    # As 2026.10.0 registered it.
+    er.async_get(hass).async_get_or_create(
+        "sensor",
+        DOMAIN,
+        f"{entry.entry_id}_radolan_sf_yesterday_total",
+        config_entry=entry,
+        suggested_object_id="home_precipitation_total_daily",
+    )
+
+    with _patched_products():
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    daily = er.async_get(hass).async_get("sensor.home_precipitation_total_daily")
+    assert daily.disabled_by is None
     assert float(hass.states.get("sensor.home_precipitation_total_daily").state) == 0.0
 
     assert await hass.config_entries.async_unload(entry.entry_id)
