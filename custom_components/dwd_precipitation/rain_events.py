@@ -522,8 +522,16 @@ def update(
     missed measured steps (steps_to_fill / record_measured) *before* calling
     this: a lost release must never cause an unseen event, a split or an end.
     """
-    if state.base is not None and base == state.base and state.view is not None:
-        return state.view  # the same release again: nothing has changed
+    if (
+        state.base is not None
+        and base == state.base
+        and state.view is not None
+        and state.wet_milli == milli
+    ):
+        # The same release again: nothing has changed. Not after a threshold
+        # change, though: an options change reloads the entry, whose first
+        # refresh is this very release.
+        return state.view
     if state.base is not None and base < state.base:
         state.events = []  # the clock went backwards; ids could repeat
     if state.wet_milli != milli:

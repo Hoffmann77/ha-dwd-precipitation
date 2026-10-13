@@ -127,6 +127,20 @@ def test_threshold_change_drops_events_but_keeps_steps_and_last_ended():
     assert view["steps"][:5] == [1.0, 1.0, 1.0, 1.0, 0.0]
 
 
+def test_threshold_change_applies_to_the_same_release():
+    # An options change reloads the entry, and its first refresh is the
+    # release the old threshold already processed.
+    sim = Sim(threshold_mmh=0.1)
+    drizzle = steady(0.02, "15:30", "15:40")  # 0.24 mm/h
+    assert only(sim.release(at("14:55"), DRY, drizzle))["status"] == "upcoming"
+
+    sim.milli = wet_step_milli(0.5)
+    view = sim.release(at("14:55"), DRY, drizzle)
+
+    assert view["wet_step_mm"] == sim.milli / 1000
+    assert view["events"] == []
+
+
 # ---------------------------------------------------------------------------
 # Scenario 1: an approaching cell
 # ---------------------------------------------------------------------------
