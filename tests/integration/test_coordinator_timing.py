@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 import aiohttp
 import pytest
 from homeassistant.helpers.update_coordinator import UpdateFailed
+from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
 from custom_components.dwd_precipitation import (
     PRODUCT_CLASSES,
@@ -310,6 +311,58 @@ async def test_timers_are_registered_for_entry_unload(make_coordinator, make_ent
         coord._stop_fast_polling,
         coord._cancel_stale_check,
     ]
+
+
+@pytest.mark.asyncio
+async def test_a_release_already_fetched_is_not_fetched_again(make_coordinator):
+    """Nothing new is due: the cached payload comes back untouched, no fetch.
+
+    A pending retry ends too: whatever it was for has been fetched since.
+    """
+    now = datetime(2025, 6, 1, 13, 0, tzinfo=UTC)  # 12:00 is the latest RW release
+    cached = CoordinatorData({"amount": 3.2}, {})
+    coord = make_coordinator(
+        RadolanRW, data=cached, curr_release=datetime(2025, 6, 1, 12, 0, tzinfo=UTC)
+    )
+    coord._fetch_and_parse = AsyncMock(side_effect=AssertionError("fetched again"))
+
+    with (
+        patch.object(coordinator_mod.dt_util, "utcnow", return_value=now),
+        _capture_scheduled_delays(),
+    ):
+        coord._schedule_fast_poll()
+        unsub = coord._fast_poll_unsub
+        assert await coord._async_update_data() is cached
+
+    coord._fetch_and_parse.assert_not_awaited()
+    unsub.assert_called_once_with()
+    assert coord._fast_poll_failures == 0
+
+
+@pytest.mark.asyncio
+async def test_fast_poll_retry_fetches_when_it_fires(hass, make_coordinator, freezer):
+    """End to end on real timers: a failure arms the retry, and it refreshes."""
+    freezer.move_to("2025-06-01 13:00:00+00:00")
+    coord = make_coordinator(RadolanRW)
+    coord._fetch_and_parse = AsyncMock(
+        side_effect=[OSError("not there yet"), ({"amount": 3.2}, {})]
+    )
+
+    with patch.object(coordinator_mod, "_apply_retry_jitter", lambda delay: delay):
+        await coord.async_refresh()
+    assert not coord.last_update_success
+    assert coord._fast_poll_unsub is not None
+
+    freezer.tick(timedelta(seconds=61))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+
+    assert coord._fetch_and_parse.await_count == 2
+    assert coord.last_update_success
+    assert coord.data.data == {"amount": 3.2}
+    assert coord.curr_release == datetime(2025, 6, 1, 12, 0, tzinfo=UTC)
+    assert coord._fast_poll_unsub is None
+    coord._cancel_stale_check()
 
 
 @pytest.mark.asyncio
