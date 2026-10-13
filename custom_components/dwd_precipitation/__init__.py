@@ -25,6 +25,7 @@ from .products import (
     RadolanRW10,
     RadolanSF,
     RadolanSFLastYesterday,
+    WholeFileProduct,
 )
 
 PRODUCT_CLASSES: tuple[type[BaseProductUpdateCoordinator], ...] = (
@@ -73,7 +74,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: MyConfigEntry) -> bool:
     # Products that read the same files share one download of each.
     downloads = DownloadCache(SHARED_DOWNLOAD_TTL.total_seconds())
     for coordinator in product_coordinators:
-        coordinator.download_cache = downloads
+        if isinstance(coordinator, WholeFileProduct):
+            coordinator.download_cache = downloads
 
     # Refresh every product concurrently. async_refresh() records a failure on
     # the coordinator instead of raising, so one dead product cannot veto the

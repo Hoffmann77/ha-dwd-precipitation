@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Callable, Coroutine, Mapping
 from dataclasses import dataclass, field
 from functools import partial
+from typing import Any
 from urllib.parse import urlsplit
 
 import aiohttp
@@ -58,7 +59,7 @@ class DownloadCache:
         self._pending: dict[str, asyncio.Task[AsyncResponse]] = {}
 
     async def async_get(
-        self, url: str, fetch: Callable[[], Awaitable[AsyncResponse]]
+        self, url: str, fetch: Callable[[], Coroutine[Any, Any, AsyncResponse]]
     ) -> AsyncResponse:
         """Return ``url``'s response, downloading it with ``fetch`` only if needed."""
         now = self._clock()
@@ -196,3 +197,4 @@ async def async_get(
                 await asyncio.sleep((attempt + 1) * 0.1)
                 continue
             raise err
+    raise ValueError(f"attempts must be at least 1, not {attempts}")

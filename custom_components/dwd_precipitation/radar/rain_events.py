@@ -190,12 +190,12 @@ class RainEventsState:
     nodata: set[datetime] = field(default_factory=set)
     # Upcoming, ongoing and unseen events (internal records).
     events: list[dict[str, Any]] = field(default_factory=list)
-    last_ended: dict[str, Any] | None = None
+    last_ended: EndedRecord | None = None
     # (start, end) of ended events still in view, so their rain is not
     # picked up again as a new event.
     ended_spans: list[tuple[datetime, datetime]] = field(default_factory=list)
     # The attribute as last published.
-    view: dict[str, Any] | None = None
+    view: RainEventsView | None = None
 
     def as_dict(self) -> dict[str, Any]:
         """Serialize for homeassistant.helpers.storage.Store."""
@@ -413,7 +413,7 @@ def _keep_from(state: RainEventsState, base: datetime) -> datetime:
         # Two steps before the start decide whether it is clipped.
         keep = min(keep, event["start"] - STEP)
         if (onset := event.get("onset")) is not None:
-            keep = min(keep, _parse(onset["base"]) + STEP)
+            keep = min(keep, _required_time(onset["base"]) + STEP)
     return keep
 
 
@@ -453,7 +453,8 @@ def _runs(tl: _Timeline) -> list[tuple[int, int]]:
     MAX_UNKNOWN_BRIDGE of them in a row count as dry.
     """
     runs: list[tuple[int, int]] = []
-    first = last = None
+    first: int | None = None
+    last = 0  # set together with first
     dry = unknown = 0
     for i, kind in enumerate(tl.kinds):
         if kind == UNKNOWN:
@@ -473,7 +474,7 @@ def _runs(tl: _Timeline) -> list[tuple[int, int]]:
             dry += 1
             if dry >= 2:
                 runs.append((first, last))
-                first = last = None
+                first = None
                 dry = 0
     if first is not None:
         runs.append((first, last))
@@ -494,12 +495,14 @@ def _peak(tl: _Timeline, lo: int, hi: int, width: int) -> Peak | None:
     if hi < lo:
         return None
     width = min(width, hi - lo + 1)
-    best: tuple[float, int] | None = None
-    for i in range(lo, hi - width + 2):
-        total = _mm(sum(tl.values[k] or 0.0 for k in range(i, i + width)))
-        if best is None or total > best[0]:
-            best = (total, i)
-    mm, i = best
+    # max() keeps the first of equal totals: the earlier window.
+    mm, i = max(
+        (
+            (_mm(sum(tl.values[k] or 0.0 for k in range(i, i + width))), i)
+            for i in range(lo, hi - width + 2)
+        ),
+        key=lambda total_at: total_at[0],
+    )
     return {"mm": mm, "start": _iso(tl.start(i)), "end": _iso(tl.end(i + width - 1))}
 
 
@@ -539,7 +542,7 @@ def _onset_view(
     """
     if snapshot is None:
         return None
-    snap_base = _parse(snapshot["base"])
+    snap_base = _required_time(snapshot["base"])
     expected = observed = 0.0
     for k, value in enumerate(snapshot["forecast"]):
         t = snap_base + (k + 1) * STEP
@@ -708,7 +711,7 @@ def update(
             remaining.append(event)
 
     if newly_ended:
-        state.last_ended = max(newly_ended, key=lambda r: r["end"])
+        state.last_ended = max(newly_ended, key=lambda r: r["end"] or "")
     state.events = remaining
     state.view = _publish(state, tl, base, milli)
     return state.view
@@ -865,7 +868,7 @@ def _publish(
     """Return the view of the events as they now stand."""
     events_view: list[EventView] = []
     for event in sorted(state.events, key=lambda e: e["start"]):
-        view = dict(event["view"])
+        view = EventView(**event["view"])
         view["status"] = event["status"]
         events_view.append(view)
 

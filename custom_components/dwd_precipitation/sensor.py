@@ -67,14 +67,15 @@ class PrecipitationSensorEntityDescription(
 
 
 # What every amount (mm) and every intensity (mm/h) sensor shares.
-_MM = dict(
+# Spread into descriptions; each value goes to a differently typed field.
+_MM: dict[str, Any] = dict(
     native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
     device_class=SensorDeviceClass.PRECIPITATION,
     suggested_display_precision=1,
     state_class=SensorStateClass.MEASUREMENT,
 )
-_MM_TOTAL = _MM | dict(state_class=SensorStateClass.TOTAL_INCREASING)
-_MMH = dict(
+_MM_TOTAL: dict[str, Any] = _MM | dict(state_class=SensorStateClass.TOTAL_INCREASING)
+_MMH: dict[str, Any] = dict(
     native_unit_of_measurement=UnitOfVolumetricFlux.MILLIMETERS_PER_HOUR,
     device_class=SensorDeviceClass.PRECIPITATION_INTENSITY,
     suggested_display_precision=1,
@@ -195,7 +196,7 @@ def _peak_hour_sensor(full_rolling_series: bool) -> PrecipitationSensorEntityDes
     cannot reach. The key is product-neutral so toggling the option keeps the
     entity, its id and its history.
     """
-    common = dict(
+    common: dict[str, Any] = dict(
         key="radvor_peak_1h_120",
         translation_key="peak_hourly_precipitation_next_120_min",
         **_MM,
@@ -592,7 +593,7 @@ class PrecipitationTotalSensor(DwdCoordinatorEntity, RestoreEntity, SensorEntity
             )
 
         if (value := countable(cdata.data.get(KEY_AMOUNT))) is not None:
-            self._total += value
+            self._total = (self._total or 0.0) + value
         self._last_release = release
         self._pending = sorted(set(self._pending) | set(missed))
 
@@ -663,7 +664,7 @@ class PrecipitationTotalSensor(DwdCoordinatorEntity, RestoreEntity, SensorEntity
                     continue  # given up on while it was being fetched
                 self._pending.remove(release)
                 if (mm := countable(value)) is not None:
-                    self._total += mm
+                    self._total = (self._total or 0.0) + mm
                     added = True
         finally:
             self._backfilling = False
