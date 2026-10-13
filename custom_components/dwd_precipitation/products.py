@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import tarfile
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
 from functools import cached_property
@@ -19,8 +18,8 @@ from .coordinator import (
     BaseProductUpdateCoordinator,
     ProductMetadata,
 )
-from .utils import async_get
-from .radar.tar_range import fetch_tar_members, member_names
+from .utils import async_get, iso
+from .radar.tar_range import fetch_tar_members, member_names, members_from_archive
 from .radar import (
     read_odim_composite_cell,
     read_odim_classification_cell,
@@ -73,16 +72,6 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 
-def _utc(dt: datetime | None) -> datetime | None:
-    """Ensure a datetime is UTC-aware; returns None for None."""
-    if dt is None:
-        return None
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-
-    return dt.astimezone(timezone.utc)
-
-
 def _parse_odim_ts(date: str | None, time: str | None) -> datetime | None:
     """Parse ODIM date/time strings (YYYYMMDD / HHMMSS) into a UTC datetime."""
     if not date or not time:
@@ -91,6 +80,25 @@ def _parse_odim_ts(date: str | None, time: str | None) -> datetime | None:
         return datetime.strptime(f"{date}{time}", "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
     except ValueError:
         return None
+
+
+def _nan_to_none(value: float) -> float | None:
+    """Return a cell reading as a float, None for nodata (NaN)."""
+    value = float(value)
+    return None if np.isnan(value) else value
+
+
+def _mm(value: float | None) -> float | None:
+    """Round an amount to the ODIM resolution; the float32 carries noise below it."""
+    return round(value, MM_DECIMALS) if value is not None else None
+
+
+def _radvor_prefix(product: str, ts: datetime) -> str:
+    """Return the name stem of a RADVOR release (``composite_rs_<ts>``).
+
+    The tar is ``<stem>.tar``, its members ``<stem>_<lead>-hd5``.
+    """
+    return f"composite_{product}_{ts:%Y%m%d_%H%M}"
 
 
 # The three non-overlapping RS hours: past, next and second-next.
@@ -160,18 +168,18 @@ def rain_events_store_key(entry_id: str) -> str:
     return f"{DOMAIN}.{entry_id}.rain_events"
 
 
+def rain_events_store(hass, entry_id: str) -> Store:
+    """Return the Store of one config entry's rain_events state.
+
+    The one place it is built, so a version bump (or a migration) reaches the
+    tracker and the clean-up on option-off and entry removal alike.
+    """
+    return Store(hass, RAIN_EVENTS_STORE_VERSION, rain_events_store_key(entry_id))
+
+
 def _tar_members(content: bytes, prefix: str, leads) -> dict[str, bytes]:
-    """Return the requested members of a whole RADVOR tar, by name."""
-    out: dict[str, bytes] = {}
-    with tarfile.open(fileobj=BytesIO(content), mode="r") as tf:
-        for name in member_names(prefix, leads):
-            try:
-                f = tf.extractfile(name)
-            except KeyError:
-                continue
-            if f is not None:
-                out[name] = f.read()
-    return out
+    """Return the requested members of a whole RADVOR tar, by name (blocking)."""
+    return members_from_archive(content, member_names(prefix, leads))
 
 
 def _decode_cells(
@@ -193,36 +201,29 @@ def _decode_cells(
         val, what = read_odim_composite_cell(
             BytesIO(member), row, col, expected_shape=RS_GRID_SHAPE
         )
-        val = float(val)
-        out[lead] = (None if np.isnan(val) else val, what)
+        out[lead] = (_nan_to_none(val), what)
     return out
 
 
-def _read_tar_cells(
-    content: bytes, prefix: str, leads, cell: tuple[int, int], label: str
-) -> dict[int, tuple[float | None, dict] | None]:
-    """Decode one grid cell from each requested member of a whole RADVOR tar."""
-    return _decode_cells(_tar_members(content, prefix, leads), prefix, leads, cell, label)
-
-
 async def async_read_tar_members(
-    client, url: str, prefix: str, leads
+    hass, client, url: str, prefix: str, leads
 ) -> dict[str, bytes]:
     """Fetch only the requested members of a RADVOR tar, by range reads.
 
     Falls back to the whole archive on anything unexpected (see
-    radar.tar_range); a missing release still raises, like any fetch.
+    radar.tar_range), unpacked in the executor; a missing release still
+    raises, like any fetch.
     """
     async def fetch(target: str, headers):
         return await async_get(
             target, client, headers=headers, partial_max_bytes=RANGE_MAX_BYTES
         )
 
-    async def whole() -> bytes:
-        return (await async_get(url, client)).content
+    async def extract(content: bytes, wanted) -> dict[str, bytes]:
+        return await hass.async_add_executor_job(members_from_archive, content, wanted)
 
     result = await fetch_tar_members(
-        fetch, url, member_names(prefix, LEADS), member_names(prefix, leads), whole
+        fetch, url, member_names(prefix, LEADS), member_names(prefix, leads), extract
     )
     _LOGGER.debug(
         "Read %s member(s) of %s in %s request(s), %s bytes%s",
@@ -243,27 +244,42 @@ def _odim_window(what: dict) -> tuple[datetime | None, datetime | None]:
     )
 
 
+def _odim_metadata(what: dict, lead: int | None = None) -> ProductMetadata:
+    """Return the metadata of one ODIM grid from its /dataset/what.
+
+    The window ends at the release time plus ``lead``, so the release (the
+    source timestamp) is the window end minus the lead.
+    """
+    data_start, data_end = _odim_window(what)
+    return ProductMetadata(
+        source_product=what.get("prodname") or what.get("product"),
+        source_timestamp=(
+            data_end - timedelta(minutes=lead or 0) if data_end else None
+        ),
+        lead_time_minutes=lead,
+        data_start=data_start,
+        data_end=data_end,
+    )
+
+
 def _peak_hour_payload(
     sums: list[float | None],
     windows: list[tuple[datetime | None, datetime | None]],
     series_leads: list[int],
-    source_product: str | None,
-    source_timestamp: datetime | None,
+    base: ProductMetadata | None,
 ) -> tuple[float | None, ProductMetadata]:
     """Build the "Peak hourly precipitation next 120 min" value and metadata.
 
     ``sums`` (rolling 60-minute totals, mm) and ``windows`` are aligned to
-    LEADS; ``series_leads`` picks the points exposed as ``rolling_1h``. RS and
-    RV both land here, so the two sources cannot drift apart in shape.
+    LEADS; ``series_leads`` picks the points exposed as ``rolling_1h``;
+    ``base`` names the product and release. RS and RV both land here, so the
+    two sources cannot drift apart in shape.
     """
-    def _iso(dt: datetime | None) -> str | None:
-        return dt.isoformat() if dt is not None else None
-
     rolling_1h = [
         {
             "lead": lead,
-            "start": _iso(windows[lead // LEAD_STEP][0]),
-            "end": _iso(windows[lead // LEAD_STEP][1]),
+            "start": iso(windows[lead // LEAD_STEP][0]),
+            "end": iso(windows[lead // LEAD_STEP][1]),
             "value": sums[lead // LEAD_STEP],
         }
         for lead in series_leads
@@ -273,8 +289,8 @@ def _peak_hour_payload(
     # A dry forecast has no wettest hour, so it gets no window either.
     start, end = windows[peak_lead // LEAD_STEP] if peak else (None, None)
     return peak, ProductMetadata(
-        source_product=source_product,
-        source_timestamp=source_timestamp,
+        source_product=base.source_product if base else None,
+        source_timestamp=base.source_timestamp if base else None,
         lead_time_minutes=peak_lead if peak else None,
         data_start=start,
         data_end=end,
@@ -354,9 +370,7 @@ class RadvorRS(BaseProductUpdateCoordinator):
 
     def _get_url(self, ts: datetime) -> str:
         """Return the URL for the tar archive."""
-        return (
-            f"{DWD_COMPOSITE_URL}/rs/composite_rs_{ts.strftime('%Y%m%d_%H%M')}.tar"
-        )
+        return f"{DWD_COMPOSITE_URL}/rs/{_radvor_prefix('rs', ts)}.tar"
 
     async def _fetch_and_parse(self, ts: datetime) -> tuple[list, list]:
         """Fetch the members this entry decodes, then decode them off the loop.
@@ -364,48 +378,36 @@ class RadvorRS(BaseProductUpdateCoordinator):
         All 25 for the full rolling series, so the whole archive; otherwise
         only the three fixed hours, read by range (~20 % of the bytes).
         """
-        prefix = f"composite_rs_{ts.strftime('%Y%m%d_%H%M')}"
+        prefix = _radvor_prefix("rs", ts)
         if self.full_rolling_series:
             response = await async_get(self._get_url(ts), self.async_client)
             return await self.hass.async_add_executor_job(
                 self._parse_archive, response.content, ts
             )
         members = await async_read_tar_members(
-            self.async_client, self._get_url(ts), prefix, RS_HOURLY_LEADS
+            self.hass, self.async_client, self._get_url(ts), prefix, RS_HOURLY_LEADS
         )
         return await self.hass.async_add_executor_job(self._parse, members, ts)
 
     def _parse_archive(self, content: bytes, ts: datetime) -> tuple[list, list]:
         """Derive the RS entity payloads from a whole tar (blocking)."""
-        prefix = f"composite_rs_{ts.strftime('%Y%m%d_%H%M')}"
-        return self._parse(_tar_members(content, prefix, LEADS), ts)
+        return self._parse(_tar_members(content, _radvor_prefix("rs", ts), LEADS), ts)
 
     def _parse(self, members: dict[str, bytes], ts: datetime) -> tuple[list, list]:
         """Derive the RS entity payloads from its members' bytes (blocking)."""
         full = self.full_rolling_series
         cells = _decode_cells(
             members,
-            f"composite_rs_{ts.strftime('%Y%m%d_%H%M')}",
+            _radvor_prefix("rs", ts),
             LEADS if full else RS_HOURLY_LEADS,
             self.index,
             "RS",
         )
 
-        per_lead: dict[int, ProductMetadata | None] = {}
-        for lead, cell in cells.items():
-            if cell is None:
-                per_lead[lead] = None
-                continue
-            data_start, data_end = _odim_window(cell[1])
-            per_lead[lead] = ProductMetadata(
-                source_product=cell[1].get("prodname") or cell[1].get("product"),
-                source_timestamp=(
-                    data_end - timedelta(minutes=lead) if data_end else None
-                ),
-                lead_time_minutes=lead,
-                data_start=data_start,
-                data_end=data_end,
-            )
+        per_lead = {
+            lead: _odim_metadata(cell[1], lead) if cell else None
+            for lead, cell in cells.items()
+        }
 
         data = [cells[lead][0] if cells[lead] else None for lead in RS_HOURLY_LEADS]
         metadata = [per_lead[lead] for lead in RS_HOURLY_LEADS]
@@ -414,24 +416,13 @@ class RadvorRS(BaseProductUpdateCoordinator):
         if not full:
             return data + [None, next_120[0]], metadata + [None, next_120[1]]
 
-        sums = [
-            round(cells[lead][0], MM_DECIMALS)
-            if cells[lead] and cells[lead][0] is not None
-            else None
-            for lead in LEADS
-        ]
+        sums = [_mm(cells[lead][0]) if cells[lead] else None for lead in LEADS]
         windows = [
             (m.data_start, m.data_end) if (m := per_lead[lead]) else (None, None)
             for lead in LEADS
         ]
         base = next((m for m in per_lead.values() if m is not None), None)
-        peak, peak_meta = _peak_hour_payload(
-            sums,
-            windows,
-            LEADS,
-            base.source_product if base else None,
-            base.source_timestamp if base else None,
-        )
+        peak, peak_meta = _peak_hour_payload(sums, windows, LEADS, base)
         return data + [peak, next_120[0]], metadata + [peak_meta, next_120[1]]
 
 
@@ -491,9 +482,7 @@ class RadvorRV(BaseProductUpdateCoordinator):
         """Initialize the coordinator and, if tracked, its rain_events store."""
         super().__init__(hass, entry, async_client, lat, lon)
         if rain_events_enabled(entry.options):
-            self._rain_store = Store(
-                hass, RAIN_EVENTS_STORE_VERSION, rain_events_store_key(entry.entry_id)
-            )
+            self._rain_store = rain_events_store(hass, entry.entry_id)
 
     @cached_property
     def index(self) -> tuple[int, int]:
@@ -502,9 +491,7 @@ class RadvorRV(BaseProductUpdateCoordinator):
 
     def _get_url(self, ts: datetime) -> str:
         """Return the URL for the tar archive."""
-        return (
-            f"{DWD_COMPOSITE_URL}/rv/composite_rv_{ts.strftime('%Y%m%d_%H%M')}.tar"
-        )
+        return f"{DWD_COMPOSITE_URL}/rv/{_radvor_prefix('rv', ts)}.tar"
 
     async def _fetch_and_parse(self, ts: datetime) -> tuple[dict, dict]:
         """Fetch one tar archive and decode it off the event loop."""
@@ -672,9 +659,9 @@ class RadvorRV(BaseProductUpdateCoordinator):
 
     async def _async_fetch_analysis(self, step_end: datetime) -> float | None:
         """Return the analysis (lead 0) of release ``step_end``; None for nodata."""
-        prefix = f"composite_rv_{step_end.strftime('%Y%m%d_%H%M')}"
+        prefix = _radvor_prefix("rv", step_end)
         members = await async_read_tar_members(
-            self.async_client, self._get_url(step_end), prefix, [0]
+            self.hass, self.async_client, self._get_url(step_end), prefix, [0]
         )
         return await self.hass.async_add_executor_job(
             self._parse_analysis, members, prefix, step_end
@@ -690,7 +677,7 @@ class RadvorRV(BaseProductUpdateCoordinator):
         _, end = _odim_window(cell[1])
         if end != step_end:
             raise ValueError(f"{prefix} analysis ends at {end}, not {step_end}")
-        return round(cell[0], MM_DECIMALS) if cell[0] is not None else None
+        return _mm(cell[0])
 
     def _schedule_rain_save(self, state: RainEventsState) -> None:
         """Persist the tracker: soon while it matters, else at shutdown.
@@ -716,8 +703,9 @@ class RadvorRV(BaseProductUpdateCoordinator):
 
     def _parse(self, content: bytes, ts: datetime) -> tuple[dict, dict]:
         """Derive the RV entity payloads from the tar bytes (blocking)."""
-        cells = _read_tar_cells(
-            content, f"composite_rv_{ts.strftime('%Y%m%d_%H%M')}", LEADS, self.index, "RV"
+        prefix = _radvor_prefix("rv", ts)
+        cells = _decode_cells(
+            _tar_members(content, prefix, LEADS), prefix, LEADS, self.index, "RV"
         )
 
         # Per-lead 5-minute cell values (mm) and window bounds, aligned to LEADS.
@@ -735,8 +723,7 @@ class RadvorRV(BaseProductUpdateCoordinator):
                 continue
 
             data_start, data_end = _odim_window(cell[1])
-            # At the ODIM resolution: the float32 reading carries noise below it.
-            values.append(round(cell[0], MM_DECIMALS) if cell[0] is not None else None)
+            values.append(_mm(cell[0]))
             starts.append(data_start)
             ends.append(data_end)
             # Base run time T = end of the analysis window (lead 0).
@@ -766,8 +753,8 @@ class RadvorRV(BaseProductUpdateCoordinator):
                 value = values[i]
                 out.append({
                     "lead": lead,
-                    "start": starts[i].isoformat() if starts[i] else None,
-                    "end": ends[i].isoformat() if ends[i] else None,
+                    "start": iso(starts[i]),
+                    "end": iso(ends[i]),
                     "value": value,
                     # 5-minute accumulation extrapolated to an hourly rate.
                     "intensity": (
@@ -810,13 +797,13 @@ class RadvorRV(BaseProductUpdateCoordinator):
                 start = end - timedelta(minutes=60)
             windows[lead // LEAD_STEP] = (start, end)
         peak_1h, peak_meta = _peak_hour_payload(
-            rolling_hour_sums(values), windows, FUTURE_HOUR_LEADS, "RV", base_ts
+            rolling_hour_sums(values), windows, FUTURE_HOUR_LEADS, timing_meta
         )
 
         # The analysis (lead 0) is the 5 minutes ending at T: the only measured
         # step in the release, reported as an hourly rate like the peaks. Both
         # are rounded to the ODIM resolution; x12 keeps it exact.
-        now_mm = round(values[0], MM_DECIMALS) if values[0] is not None else None
+        now_mm = values[0]
         now_meta = ProductMetadata(
             source_product="RV",
             source_timestamp=base_ts,
@@ -922,19 +909,7 @@ class HymecNG(BaseProductUpdateCoordinator):
             _LOGGER.warning("HymecNG: unexpected class index %s", value)
             precip_type = None
 
-        data_start = _parse_odim_ts(
-            dataset_what.get("startdate"), dataset_what.get("starttime")
-        )
-        data_end = _parse_odim_ts(
-            dataset_what.get("enddate"), dataset_what.get("endtime")
-        )
-
-        return precip_type, ProductMetadata(
-            source_product=dataset_what.get("prodname") or dataset_what.get("product"),
-            source_timestamp=data_end,
-            data_start=data_start,
-            data_end=data_end,
-        )
+        return precip_type, _odim_metadata(dataset_what)
 
 
 class RadolanProduct(BaseProductUpdateCoordinator, ABC):
@@ -976,15 +951,7 @@ class RadolanProduct(BaseProductUpdateCoordinator, ABC):
         value, what = read_odim_composite_cell(
             BytesIO(content), *self.index, expected_shape=RS_GRID_SHAPE
         )
-        value = float(value)
-        data_start, data_end = _odim_window(what)
-
-        return (None if value != value else value), ProductMetadata(
-            source_product=what.get("prodname") or what.get("product"),
-            source_timestamp=data_end,
-            data_start=data_start,
-            data_end=data_end,
-        )
+        return _nan_to_none(value), _odim_metadata(what)
 
 
 def _radolan_url(product: str, ts: datetime) -> str:
@@ -1030,8 +997,8 @@ class RadolanRW10(RadolanRW):
     """DWD RADOLAN RW's 10-minute runs: a sliding hour ending at each :x0.
 
     Same file family as RW (its hourly runs are among them), so it reuses RW's
-    URL and parsing; only the grid is every 10 minutes. Gauge-adjusted as
-    strongly as the HH:50 run, measured against radar-only RS over 285 runs
+    URL and parsing; only the grid is every 10 minutes. Every run minute is
+    gauge-adjusted alike, measured against radar-only RS over 285 runs
     (scripts/compare_rw_runs.py). Only built for a dry streak counting RW.
     """
 

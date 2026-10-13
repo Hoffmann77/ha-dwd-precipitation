@@ -464,6 +464,47 @@ async def test_restart_resumes_a_pending_backfill(hass: HomeAssistant, freezer) 
 
 
 @pytest.mark.asyncio
+async def test_restore_without_a_total_starts_over(hass: HomeAssistant, freezer) -> None:
+    """A payload with releases but no total counted nothing: start from 0."""
+    freezer.move_to("2026-07-03 11:30:00+00:00")
+    entity_id = "sensor.home_precipitation_total"
+    mock_restore_cache_with_extra_data(
+        hass,
+        [
+            (
+                State(entity_id, "unknown"),
+                {
+                    "total": None,
+                    "last_release": "2026-07-03T08:00:00+00:00",
+                    "pending": ["2026-07-03T07:00:00+00:00"],
+                },
+            )
+        ],
+    )
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Home",
+        data={"name": "Home", "latitude": 51.05, "longitude": 13.73},
+        options={},
+    )
+    entry.add_to_hass(hass)
+
+    with _patched_products():
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        fetched = RadolanRW._fetch_and_parse.call_args_list
+
+    # Only the live release: it sets the starting point, nothing is backfilled.
+    assert [c.args[0] for c in fetched] == [datetime(2026, 7, 3, 11, 0, tzinfo=UTC)]
+    state = hass.states.get(entity_id)
+    assert float(state.state) == 0.0
+    assert state.attributes["counted_until"] == "2026-07-03T11:00:00+00:00"
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("restored_release", "backfilled"),
     [

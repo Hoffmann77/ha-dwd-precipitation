@@ -15,6 +15,7 @@ from .const import (
     DOMAIN,
     CONF_COORDS,
     CONF_EXTRA_ATTRIBUTES,
+    DEFAULT_EXTRA_ATTRIBUTES,
     CONF_UNAVAILABLE_WHEN_STALE,
     DEFAULT_UNAVAILABLE_WHEN_STALE,
     CONF_PRECIPITATION_THRESHOLD,
@@ -31,8 +32,7 @@ from .const import (
     DEFAULT_PRECIPITATION_RESET_THRESHOLD,
     CONF_DRY_STREAK_SOURCE,
     DEFAULT_DRY_STREAK_SOURCE,
-    DRY_STREAK_SOURCE_RW,
-    DRY_STREAK_SOURCE_RS,
+    DRY_STREAK_SOURCES,
     CONF_FULL_ROLLING_SERIES,
     DEFAULT_FULL_ROLLING_SERIES,
     CONF_RAIN_EVENTS,
@@ -48,6 +48,26 @@ SECTION_ADVANCED = "advanced_options"
 
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _number(unit: str) -> selector.NumberSelector:
+    """Return a non-negative number box in steps of 0.1 ``unit``."""
+    return selector.NumberSelector(
+        selector.NumberSelectorConfig(
+            min=0, step=0.1, unit_of_measurement=unit, mode=selector.NumberSelectorMode.BOX
+        )
+    )
+
+
+def _dropdown(options: list[str], translation_key: str) -> selector.SelectSelector:
+    """Return a dropdown of ``options``, labelled by ``translation_key``."""
+    return selector.SelectSelector(
+        selector.SelectSelectorConfig(
+            options=options,
+            translation_key=translation_key,
+            mode=selector.SelectSelectorMode.DROPDOWN,
+        )
+    )
 
 
 class OptionsFlowHandler(config_entries.OptionsFlow):
@@ -67,114 +87,48 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             return self.async_create_entry(title="", data=data)
 
         options = self.config_entry.options
+
+        def current(key: str, default) -> vol.Optional:
+            """An optional field that shows the entry's value, else the default."""
+            return vol.Optional(key, default=options.get(key, default))
+
         advanced = vol.Schema(
             {
-                vol.Optional(
-                    CONF_RAIN_EVENTS,
-                    default=options.get(CONF_RAIN_EVENTS, DEFAULT_RAIN_EVENTS),
-                ): selector.BooleanSelector(),
-                vol.Optional(
-                    CONF_RAIN_EVENT_THRESHOLD,
-                    default=options.get(
-                        CONF_RAIN_EVENT_THRESHOLD, DEFAULT_RAIN_EVENT_THRESHOLD
-                    ),
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=0,
-                        step=0.1,
-                        unit_of_measurement="mm/h",
-                        mode=selector.NumberSelectorMode.BOX,
-                    )
+                current(CONF_RAIN_EVENTS, DEFAULT_RAIN_EVENTS): selector.BooleanSelector(),
+                current(CONF_RAIN_EVENT_THRESHOLD, DEFAULT_RAIN_EVENT_THRESHOLD): _number(
+                    "mm/h"
                 ),
-                vol.Optional(
+                current(
+                    CONF_PRECIPITATION_END_ALGORITHM, DEFAULT_PRECIPITATION_END_ALGORITHM
+                ): _dropdown(
+                    [RAIN_END_ALGO_EPISODE, RAIN_END_ALGO_CLEARING],
                     CONF_PRECIPITATION_END_ALGORITHM,
-                    default=options.get(
-                        CONF_PRECIPITATION_END_ALGORITHM, DEFAULT_PRECIPITATION_END_ALGORITHM
-                    ),
-                ): selector.SelectSelector(
-                    selector.SelectSelectorConfig(
-                        options=[
-                            RAIN_END_ALGO_EPISODE,
-                            RAIN_END_ALGO_CLEARING,
-                        ],
-                        translation_key=CONF_PRECIPITATION_END_ALGORITHM,
-                        mode=selector.SelectSelectorMode.DROPDOWN,
-                    )
                 ),
-                vol.Optional(
-                    CONF_FULL_ROLLING_SERIES,
-                    default=options.get(
-                        CONF_FULL_ROLLING_SERIES, DEFAULT_FULL_ROLLING_SERIES
-                    ),
+                current(
+                    CONF_FULL_ROLLING_SERIES, DEFAULT_FULL_ROLLING_SERIES
                 ): selector.BooleanSelector(),
-                vol.Optional(
-                    CONF_UNAVAILABLE_WHEN_STALE,
-                    default=options.get(
-                        CONF_UNAVAILABLE_WHEN_STALE,
-                        DEFAULT_UNAVAILABLE_WHEN_STALE,
-                    ),
+                current(
+                    CONF_UNAVAILABLE_WHEN_STALE, DEFAULT_UNAVAILABLE_WHEN_STALE
                 ): selector.BooleanSelector(),
             }
         )
         schema = vol.Schema(
             {
-                vol.Optional(
-                    CONF_EXTRA_ATTRIBUTES,
-                    default=options.get(CONF_EXTRA_ATTRIBUTES, False),
+                current(
+                    CONF_EXTRA_ATTRIBUTES, DEFAULT_EXTRA_ATTRIBUTES
                 ): selector.BooleanSelector(),
-                vol.Optional(
-                    CONF_PRECIPITATION_THRESHOLD,
-                    default=options.get(
-                        CONF_PRECIPITATION_THRESHOLD, DEFAULT_PRECIPITATION_THRESHOLD
-                    ),
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=0,
-                        step=0.1,
-                        unit_of_measurement="mm/h",
-                        mode=selector.NumberSelectorMode.BOX,
-                    )
-                ),
-                vol.Optional(
+                current(
+                    CONF_PRECIPITATION_THRESHOLD, DEFAULT_PRECIPITATION_THRESHOLD
+                ): _number("mm/h"),
+                current(CONF_START_END_MODE, DEFAULT_START_END_MODE): _dropdown(
+                    [START_END_MODE_TIMESTAMP, START_END_MODE_DURATION],
                     CONF_START_END_MODE,
-                    default=options.get(CONF_START_END_MODE, DEFAULT_START_END_MODE),
-                ): selector.SelectSelector(
-                    selector.SelectSelectorConfig(
-                        options=[
-                            START_END_MODE_TIMESTAMP,
-                            START_END_MODE_DURATION,
-                        ],
-                        translation_key=CONF_START_END_MODE,
-                        mode=selector.SelectSelectorMode.DROPDOWN,
-                    )
                 ),
-                vol.Optional(
-                    CONF_PRECIPITATION_RESET_THRESHOLD,
-                    default=options.get(
-                        CONF_PRECIPITATION_RESET_THRESHOLD, DEFAULT_PRECIPITATION_RESET_THRESHOLD
-                    ),
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=0,
-                        step=0.1,
-                        unit_of_measurement="mm",
-                        mode=selector.NumberSelectorMode.BOX,
-                    )
-                ),
-                vol.Optional(
-                    CONF_DRY_STREAK_SOURCE,
-                    default=options.get(
-                        CONF_DRY_STREAK_SOURCE, DEFAULT_DRY_STREAK_SOURCE
-                    ),
-                ): selector.SelectSelector(
-                    selector.SelectSelectorConfig(
-                        options=[
-                            DRY_STREAK_SOURCE_RW,
-                            DRY_STREAK_SOURCE_RS,
-                        ],
-                        translation_key=CONF_DRY_STREAK_SOURCE,
-                        mode=selector.SelectSelectorMode.DROPDOWN,
-                    )
+                current(
+                    CONF_PRECIPITATION_RESET_THRESHOLD, DEFAULT_PRECIPITATION_RESET_THRESHOLD
+                ): _number("mm"),
+                current(CONF_DRY_STREAK_SOURCE, DEFAULT_DRY_STREAK_SOURCE): _dropdown(
+                    list(DRY_STREAK_SOURCES), CONF_DRY_STREAK_SOURCE
                 ),
                 vol.Required(SECTION_ADVANCED): section(advanced, {"collapsed": True}),
             }

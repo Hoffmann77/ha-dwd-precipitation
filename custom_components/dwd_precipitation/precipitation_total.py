@@ -22,7 +22,8 @@ from datetime import datetime
 from typing import Any
 
 from homeassistant.helpers.restore_state import ExtraStoredData
-from homeassistant.util import dt as dt_util
+
+from .utils import iso, parse_utc
 
 
 @dataclass
@@ -38,10 +39,8 @@ class PrecipitationTotalExtraData(ExtraStoredData):
         """Serialize the total for restore_state."""
         return {
             "total": self.total,
-            "last_release": (
-                self.last_release.isoformat() if self.last_release else None
-            ),
-            "pending": [release.isoformat() for release in self.pending],
+            "last_release": iso(self.last_release),
+            "pending": [iso(release) for release in self.pending],
         }
 
     @classmethod
@@ -54,22 +53,13 @@ class PrecipitationTotalExtraData(ExtraStoredData):
 
         return cls(
             total=float(total) if total is not None else None,
-            last_release=_parse_utc(restored.get("last_release")),
+            last_release=parse_utc(restored.get("last_release")),
             pending=sorted(
                 ts
                 for raw in restored.get("pending") or ()
-                if (ts := _parse_utc(raw)) is not None
+                if (ts := parse_utc(raw)) is not None
             ),
         )
-
-
-def _parse_utc(raw: Any) -> datetime | None:
-    """Parse a stored ISO timestamp as an aware UTC datetime."""
-    ts = dt_util.parse_datetime(raw) if isinstance(raw, str) else None
-    if ts is not None and ts.tzinfo is None:
-        ts = dt_util.as_utc(ts)
-
-    return ts
 
 
 def countable(value: Any) -> float | None:

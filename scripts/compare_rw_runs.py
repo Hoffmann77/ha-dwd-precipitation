@@ -67,7 +67,6 @@ async def _pair(session, t: datetime, wet: float):
             rs_url,
             member_names(rs_name, LEADS),
             [f"{rs_name}_000-hd5"],
-            lambda: _whole(session, rs_url),
         )
     except aiohttp.ClientResponseError:
         return None
@@ -93,10 +92,6 @@ async def _pair(session, t: datetime, wet: float):
         "adjusted_share": float((diff > 0.15).mean()),  # beyond RW's 0.1 mm step
         "median_ratio": float(np.median(ratio)) if ratio.size else float("nan"),
     }
-
-
-async def _whole(session, url):
-    return (await _get(session, url)).content
 
 
 async def main() -> None:

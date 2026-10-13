@@ -379,8 +379,11 @@ def test_peak_hour_sensor_always_exposes_window_and_series():
         "window_end": "2026-05-18T17:30:00+00:00",
         "forecast_rolling_1h": series,
     }
-    # The series is kept out of the recorder, like the RV 5-minute one.
-    assert "forecast_rolling_1h" in PrecipitationSensorEntity._unrecorded_attributes
+    # The series is kept out of the recorder, like the RV 5-minute one, and
+    # so is the window, which moves with every release.
+    assert {"forecast_rolling_1h", "window_start", "window_end"} <= (
+        PrecipitationSensorEntity._unrecorded_attributes
+    )
 
 
 def test_peak_hour_sensor_dry_forecast_has_null_window():

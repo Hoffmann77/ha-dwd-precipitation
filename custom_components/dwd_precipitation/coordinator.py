@@ -354,17 +354,6 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
         return deadline is None or now > deadline
 
     @property
-    def data_is_stale(self) -> bool:
-        """Return True if the cached value is past its deadline right now.
-
-        "Stale" is a fact about the clock rather than the outcome of the last
-        fetch, so it stays true even if no further fetch is ever attempted.
-        Entities do not read this directly -- they ask data_is_reportable,
-        which weighs it against the user's unavailable_when_stale option.
-        """
-        return self._data_is_stale(self._now())
-
-    @property
     def unavailable_when_stale(self) -> bool:
         """Return whether a value past its deadline should be hidden."""
         return self.config_entry.options.get(
@@ -458,10 +447,12 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
 
     @cached_property
     def track_time_change_args(self) -> list[dict]:
-        """Return minimal UTC time-change args covering every release timestamp.
+        """Return minimal time-change args covering every release timestamp.
 
-        Each entry is passed as **kwargs to async_track_utc_time_change so
-        that the coordinator is refreshed exactly when new data becomes available.
+        Each entry is passed as **kwargs to async_track_utc_time_change, or to
+        async_track_time_change for a USE_LOCAL_TIME product (the grid is in
+        the product's own time reference, see async_track_releases), so that
+        the coordinator is refreshed exactly when new data becomes available.
 
         Grouping strategy — fewest tracker registrations with no spurious firings:
           1. Group by second, express hour and minute as lists. Valid whenever

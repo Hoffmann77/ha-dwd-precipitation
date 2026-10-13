@@ -28,6 +28,7 @@ from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_EXTRA_ATTRIBUTES,
+    DEFAULT_EXTRA_ATTRIBUTES,
     CONF_FULL_ROLLING_SERIES,
     DEFAULT_FULL_ROLLING_SERIES,
     CONF_PRECIPITATION_RESET_THRESHOLD,
@@ -49,8 +50,9 @@ from .dry_streak import (
     fresh_anchor,
     scalar_reading,
 )
-from .entity import DwdCoordinatorEntity
+from .entity import DwdCoordinatorEntity, unique_id_for
 from .products import dry_streak_coordinator_key, rain_events_enabled
+from .utils import iso
 from .rain_events import NO_EVENT, ONGOING, UPCOMING, VIEW_KEYS, overall_status
 from .precipitation_total import (
     PrecipitationTotalExtraData,
@@ -77,6 +79,22 @@ class PrecipitationSensorEntityDescription(SensorEntityDescription):
     metadata_attrs_fn: Callable[[ProductMetadata], dict[str, Any]] | None = None
 
 
+# What every amount (mm) and every intensity (mm/h) sensor shares.
+_MM = dict(
+    native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
+    device_class=SensorDeviceClass.PRECIPITATION,
+    suggested_display_precision=1,
+    state_class=SensorStateClass.MEASUREMENT,
+)
+_MM_TOTAL = _MM | dict(state_class=SensorStateClass.TOTAL_INCREASING)
+_MMH = dict(
+    native_unit_of_measurement=UnitOfVolumetricFlux.MILLIMETERS_PER_HOUR,
+    device_class=SensorDeviceClass.PRECIPITATION_INTENSITY,
+    suggested_display_precision=1,
+    state_class=SensorStateClass.MEASUREMENT,
+)
+
+
 # The gauge-adjusted analyses. RW's is a clock hour, so it is the "previous
 # hour" rather than a "last 60 min": that name belongs to RS's rolling hour,
 # a sliding window like every other "last"/"next" one.
@@ -84,30 +102,21 @@ RADOLAN_SENSORS = (
     PrecipitationSensorEntityDescription(
         key="radolan_rw",
         translation_key="precipitation_previous_hour",
-        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
-        device_class=SensorDeviceClass.PRECIPITATION,
-        suggested_display_precision=1,
-        state_class=SensorStateClass.MEASUREMENT,
+        **_MM,
         product_key="rw",
         access_fn=lambda d: d,
     ),
     PrecipitationSensorEntityDescription(
         key="radolan_sf",
         translation_key="precipitation_last_24h",
-        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
-        device_class=SensorDeviceClass.PRECIPITATION,
-        suggested_display_precision=1,
-        state_class=SensorStateClass.MEASUREMENT,
+        **_MM,
         product_key="sf",
         access_fn=lambda d: d,
     ),
     PrecipitationSensorEntityDescription(
         key="radolan_sf_yesterday",
         translation_key="precipitation_yesterday",
-        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
-        device_class=SensorDeviceClass.PRECIPITATION,
-        suggested_display_precision=1,
-        state_class=SensorStateClass.MEASUREMENT,
+        **_MM,
         product_key="sf_2350",
         access_fn=lambda d: d,
     ),
@@ -131,10 +140,7 @@ TOTAL_SENSORS = (
     PrecipitationTotalEntityDescription(
         key="radolan_rw_total",
         translation_key="precipitation_total",
-        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
-        device_class=SensorDeviceClass.PRECIPITATION,
-        suggested_display_precision=1,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        **_MM_TOTAL,
         product_key="rw",
         max_backfill=48,
     ),
@@ -145,10 +151,7 @@ TOTAL_SENSORS = (
         # rain under the next day in HA's statistics. Only applies when the
         # entity is first registered, so installs that have it keep it on.
         entity_registry_enabled_default=False,
-        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
-        device_class=SensorDeviceClass.PRECIPITATION,
-        suggested_display_precision=1,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        **_MM_TOTAL,
         product_key="sf_2350",
         max_backfill=7,
     ),
@@ -159,40 +162,28 @@ RADVOR_SENSORS = (
     PrecipitationSensorEntityDescription(
         key="radvor_rs_000",
         translation_key="precipitation_last_60_min",
-        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
-        device_class=SensorDeviceClass.PRECIPITATION,
-        suggested_display_precision=1,
-        state_class=SensorStateClass.MEASUREMENT,
+        **_MM,
         product_key="rs",
         access_fn=lambda _list: _list[0],
     ),
     PrecipitationSensorEntityDescription(
         key="radvor_rs_060",
         translation_key="precipitation_next_60_min",
-        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
-        device_class=SensorDeviceClass.PRECIPITATION,
-        suggested_display_precision=1,
-        state_class=SensorStateClass.MEASUREMENT,
+        **_MM,
         product_key="rs",
         access_fn=lambda _list: _list[1],
     ),
     PrecipitationSensorEntityDescription(
         key="radvor_rs_120",
         translation_key="precipitation_next_60_120_min",
-        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
-        device_class=SensorDeviceClass.PRECIPITATION,
-        suggested_display_precision=1,
-        state_class=SensorStateClass.MEASUREMENT,
+        **_MM,
         product_key="rs",
         access_fn=lambda _list: _list[2],
     ),
     PrecipitationSensorEntityDescription(
         key="radvor_rs_000_120",
         translation_key="precipitation_next_120_min",
-        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
-        device_class=SensorDeviceClass.PRECIPITATION,
-        suggested_display_precision=1,
-        state_class=SensorStateClass.MEASUREMENT,
+        **_MM,
         product_key="rs",
         access_fn=lambda _list: _list[4],
     ),
@@ -220,10 +211,7 @@ def _peak_hour_sensor(full_rolling_series: bool) -> PrecipitationSensorEntityDes
     common = dict(
         key="radvor_peak_1h_120",
         translation_key="peak_hourly_precipitation_next_120_min",
-        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
-        device_class=SensorDeviceClass.PRECIPITATION,
-        suggested_display_precision=1,
-        state_class=SensorStateClass.MEASUREMENT,
+        **_MM,
         metadata_attrs_fn=_peak_hour_attrs,
     )
     if full_rolling_series:
@@ -241,10 +229,7 @@ RADVOR_RV_SENSORS = (
     PrecipitationSensorEntityDescription(
         key="radvor_rv_intensity_000",
         translation_key="precipitation_intensity_now",
-        native_unit_of_measurement=UnitOfVolumetricFlux.MILLIMETERS_PER_HOUR,
-        device_class=SensorDeviceClass.PRECIPITATION_INTENSITY,
-        suggested_display_precision=1,
-        state_class=SensorStateClass.MEASUREMENT,
+        **_MMH,
         product_key="rv",
         access_fn=lambda d: d["intensity_000"],
         # "Now" is the latest analysis, the 5 minutes ending at the release
@@ -258,30 +243,21 @@ RADVOR_RV_SENSORS = (
     PrecipitationSensorEntityDescription(
         key="radvor_rv_max_intensity_060",
         translation_key="peak_intensity_next_60_min",
-        native_unit_of_measurement=UnitOfVolumetricFlux.MILLIMETERS_PER_HOUR,
-        device_class=SensorDeviceClass.PRECIPITATION_INTENSITY,
-        suggested_display_precision=1,
-        state_class=SensorStateClass.MEASUREMENT,
+        **_MMH,
         product_key="rv",
         access_fn=lambda d: d["max_060"],
     ),
     PrecipitationSensorEntityDescription(
         key="radvor_rv_max_intensity_120",
         translation_key="peak_intensity_next_60_120_min",
-        native_unit_of_measurement=UnitOfVolumetricFlux.MILLIMETERS_PER_HOUR,
-        device_class=SensorDeviceClass.PRECIPITATION_INTENSITY,
-        suggested_display_precision=1,
-        state_class=SensorStateClass.MEASUREMENT,
+        **_MMH,
         product_key="rv",
         access_fn=lambda d: d["max_120"],
     ),
     PrecipitationSensorEntityDescription(
         key="radvor_rv_max_intensity_000_120",
         translation_key="peak_intensity_next_120_min",
-        native_unit_of_measurement=UnitOfVolumetricFlux.MILLIMETERS_PER_HOUR,
-        device_class=SensorDeviceClass.PRECIPITATION_INTENSITY,
-        suggested_display_precision=1,
-        state_class=SensorStateClass.MEASUREMENT,
+        **_MMH,
         product_key="rv",
         access_fn=lambda d: d["max_000_120"],
     ),
@@ -414,10 +390,12 @@ async def async_setup_entry(
     # entity goes too, rather than lingering as "no longer provided".
     if rain_events_enabled(entry.options):
         entities.append(RainEventsSensor(coordinators["rv"], RAIN_EVENTS_SENSOR))
-    elif entity_id := er.async_get(hass).async_get_entity_id(
-        "sensor", DOMAIN, f"{entry.entry_id}_{RAIN_EVENTS_SENSOR.key}"
-    ):
-        er.async_get(hass).async_remove(entity_id)
+    else:
+        registry = er.async_get(hass)
+        if entity_id := registry.async_get_entity_id(
+            "sensor", DOMAIN, unique_id_for(entry.entry_id, RAIN_EVENTS_SENSOR.key)
+        ):
+            registry.async_remove(entity_id)
 
     # Changing the source reloads the entry, so binding once at setup is enough.
     # The unique id does not depend on it, so the entity and its persisted
@@ -448,8 +426,12 @@ class PrecipitationSensorEntity(DwdCoordinatorEntity, SensorEntity):
 
     entity_description: PrecipitationSensorEntityDescription
 
-    # The per-lead forecast series would bloat the recorder history.
-    _unrecorded_attributes = frozenset({"forecast_5min", "forecast_rolling_1h"})
+    # The per-lead forecast series would bloat the recorder history, and the
+    # windows move with every release: each would be a new attribute row every
+    # 5 minutes, while what they say follows from the release time.
+    _unrecorded_attributes = frozenset(
+        {"forecast_5min", "forecast_rolling_1h", "window_start", "window_end"}
+    )
 
     @property
     def native_value(self) -> float | datetime | str | None:
@@ -497,7 +479,7 @@ class PrecipitationSensorEntity(DwdCoordinatorEntity, SensorEntity):
 
         # Diagnostic metadata is opt-in via the integration options.
         if not self.coordinator.config_entry.options.get(
-            CONF_EXTRA_ATTRIBUTES, False
+            CONF_EXTRA_ATTRIBUTES, DEFAULT_EXTRA_ATTRIBUTES
         ):
             return attrs
 
@@ -572,6 +554,9 @@ class PrecipitationTotalSensor(DwdCoordinatorEntity, RestoreEntity, SensorEntity
     ) -> None:
         """Initialize the sensor."""
         super().__init__(coordinator, description)
+        # A counted release always has a total: _last_release is set only
+        # together with _total (async_added_to_hass keeps that for a damaged
+        # restore payload too).
         self._total: float | None = None
         self._last_release: datetime | None = None
         self._pending: list[datetime] = []
@@ -595,11 +580,7 @@ class PrecipitationTotalSensor(DwdCoordinatorEntity, RestoreEntity, SensorEntity
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return the end of the newest window included in the total."""
-        return {
-            "counted_until": (
-                self._last_release.isoformat() if self._last_release else None
-            )
-        }
+        return {"counted_until": iso(self._last_release)}
 
     @property
     def extra_restore_state_data(self) -> PrecipitationTotalExtraData:
@@ -617,8 +598,10 @@ class PrecipitationTotalSensor(DwdCoordinatorEntity, RestoreEntity, SensorEntity
         if (restored := await self.async_get_last_extra_data()) is not None:
             data = PrecipitationTotalExtraData.from_dict(restored.as_dict())
             self._total = data.total
-            self._last_release = data.last_release
-            self._pending = data.pending
+            if data.total is not None:
+                # Without a total, nothing was counted: start over.
+                self._last_release = data.last_release
+                self._pending = data.pending
 
         # coordinator.data is already populated by the first refresh.
         self._count_new_release()
@@ -642,7 +625,7 @@ class PrecipitationTotalSensor(DwdCoordinatorEntity, RestoreEntity, SensorEntity
         if self._last_release is not None and release <= self._last_release:
             return
 
-        if self._last_release is None or self._total is None:
+        if self._last_release is None:
             # First release ever seen: it fixes the starting point only.
             self._total = self._total or 0.0
             self._last_release = release
@@ -733,7 +716,7 @@ class PrecipitationTotalSensor(DwdCoordinatorEntity, RestoreEntity, SensorEntity
                     continue  # given up on while it was being fetched
                 self._pending.remove(release)
                 if (mm := countable(value)) is not None:
-                    self._total = (self._total or 0.0) + mm
+                    self._total += mm
                     self.async_write_ha_state()
         finally:
             self._backfilling = False

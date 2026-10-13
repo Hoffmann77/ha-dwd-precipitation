@@ -85,7 +85,9 @@ async def _rs_fetch(ts: datetime, values: dict[int, float], full: bool = True):
         patch.object(products, "read_odim_composite_cell", side_effect=_read),
     ):
         data, meta = await coord._fetch_and_parse(ts)
-    assert coord.hass.executor_jobs == 1
+    # The decode runs off the loop; so does unpacking the archive this server
+    # sends whole instead of a range (default mode only).
+    assert coord.hass.executor_jobs == (1 if full else 2)
     return data, meta, decoded
 
 
