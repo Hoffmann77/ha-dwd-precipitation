@@ -25,6 +25,20 @@ jobs:
       - name: Run ruff
         run: uv run --locked --only-group lint ruff check --output-format github .
 
+  # Pyright (basic) on the component, against HA's own types; settings in
+  # pyproject.toml [tool.pyright].
+  typecheck:
+    name: Type check (pyright)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+      - name: Install HA environment and pyright
+        run: uv sync --locked --only-group typecheck
+      - name: Run pyright
+        run: uv run --no-sync pyright
+
   # Pure parser unit tests — no HA, no wradlib, no network.
   parser-tests:
     name: Parser unit tests

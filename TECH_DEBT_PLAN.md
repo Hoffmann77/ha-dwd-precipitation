@@ -397,6 +397,17 @@ The base the next three PRs stand on. *(TD 1, 3, 6, 10, 18; S-altitude 2, 6, 9, 
 | D6 | `full_rolling_series` downloads the whole RS tar (1-5 GB/day). | **Decided: leave as is.** |
 | D7 | Pyright in CI | **Decided: after step 7**, once the payload types are stable. |
 
+**D7 outcome (done, 3 commits `61a80b1`..).** Pyright 1.1.414, basic mode,
+on `custom_components/`, in a `typecheck` group (`ha-test` + pyright) and a
+`typecheck` CI job. The first run had 349 errors: ~280 were one cause (the
+shared sensor kwargs dicts inferred as a union), 34 HA's entity override
+pattern (`reportIncompatibleVariableOverride`, turned off), and the rest were
+fixed one by one. One real bug, fixed and tested on its own: a null `nodata`
+entry in the rain-events store restored as None and then failed every save.
+The only ignores are the config flow's three `Schema` arguments (probatio,
+see CLAUDE.md "Checks"). Not covered yet: `scripts/` and `tests/`, and
+standard mode.
+
 ## Sequencing and size
 
 | PR | Depends on | Size | Risk |

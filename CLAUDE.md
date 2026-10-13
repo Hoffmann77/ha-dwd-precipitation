@@ -453,6 +453,19 @@ GDAL, or other packages with complex build requirements.
 
 Current runtime deps: `numpy`, `h5py`
 
+## Checks
+
+Besides the three test tiers, CI (`tests.yml`) runs ruff (F rules only) and
+pyright (basic mode, settings in `pyproject.toml` `[tool.pyright]`) on the
+component. Pyright checks against HA's own types, so it runs in the
+`typecheck` dependency group, which is `ha-test` plus pyright. Keep it at 0
+errors: fix a finding, or ignore it on its line with the reason. The one
+such case is the config flow's `vol.Schema`, which HA's annotations call
+`probatio.Schema`; HA installs probatio as voluptuous at runtime, and
+importing probatio ourselves would break every HA from before that alias.
+`reportIncompatibleVariableOverride` is off: HA entities override
+`entity_description` and their cached properties by design.
+
 ## RS product specifics
 
 - **URL**: `https://opendata.dwd.de/weather/radar/composite/rs/composite_rs_YYYYMMDD_HHMM.tar`
