@@ -62,4 +62,11 @@ jobs:
       - name: Install wradlib dependencies
         run: uv sync --locked --only-group wradlib-comparison
       - name: Run reference comparison tests
-        run: uv run pytest tests/reference -v
+        # The tier skips itself without wradlib or its fixture, which locally
+        # is a convenience and here would be a green job that compared nothing.
+        run: |
+          uv run pytest tests/reference -v -rs | tee pytest.log
+          if grep -qE "[0-9]+ skipped" pytest.log; then
+            echo "::error::reference tests were skipped; see the summary above"
+            exit 1
+          fi
