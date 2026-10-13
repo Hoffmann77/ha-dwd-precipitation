@@ -20,6 +20,7 @@ from custom_components.dwd_precipitation.const import (
     START_END_MODE_DURATION,
     START_END_MODE_TIMESTAMP,
 )
+from custom_components.dwd_precipitation.options import DwdOptions
 from custom_components.dwd_precipitation.coordinator import (
     CoordinatorData,
     ProductMetadata,
@@ -28,7 +29,7 @@ from custom_components.dwd_precipitation.dry_streak import (
     DryStreakExtraData,
     downtime_correction,
     fresh_anchor,
-    scalar_reading,
+    amount_reading,
 )
 from homeassistant.components.sensor import SensorDeviceClass
 from custom_components.dwd_precipitation.sensor import (
@@ -43,10 +44,10 @@ UTC = timezone.utc
 
 
 def _make_sensor(metadata, data=1.0, extra=True) -> PrecipitationSensorEntity:
-    desc = PrecipitationSensorEntityDescription(
-        key="k", product_key="rs", access_fn=lambda m: m,
+    desc = PrecipitationSensorEntityDescription(key="k", product_key="rs", sub_key="k")
+    return _make_sensor_with_desc(
+        desc, data={"k": data}, metadata={"k": metadata}, extra=extra
     )
-    return _make_sensor_with_desc(desc, data=data, metadata=metadata, extra=extra)
 
 
 def _make_sensor_with_desc(
@@ -56,6 +57,7 @@ def _make_sensor_with_desc(
     sensor.entity_description = desc
     sensor.coordinator = SimpleNamespace(
         config_entry=SimpleNamespace(options={CONF_EXTRA_ATTRIBUTES: extra}),
+        options=DwdOptions.from_options({CONF_EXTRA_ATTRIBUTES: extra}),
         data=CoordinatorData(data=data, metadata=metadata or {}),
     )
     return sensor
@@ -103,7 +105,7 @@ def test_extra_attrs_omits_window_when_absent():
     assert attrs["source_timestamp"] == "2025-06-01T12:50:00+00:00"
 
 
-def test_native_value_uses_access_fn():
+def test_native_value_is_the_sub_keys_value():
     meta = ProductMetadata(source_product="RS", source_timestamp=None)
     assert _make_sensor(meta, data=2.5).native_value == 2.5
 
@@ -118,15 +120,17 @@ def _make_days_sensor(
     """Build a TimespanWithoutPrecipitationSensor with a stubbed rs coordinator."""
     data = None
     if rs_list is not None:
-        data = CoordinatorData(data=rs_list, metadata=meta_list)
+        data = CoordinatorData(
+            data={"last_60": rs_list[0]}, metadata={"last_60": (meta_list or [None])[0]}
+        )
     return _days_sensor_on(DRY_STREAK_SOURCE_RS, data, dry_since, threshold)
 
 
 def _make_rw_days_sensor(
     dry_since=None, value=None, meta=None, threshold=1.0, empty=False
 ) -> TimespanWithoutPrecipitationSensor:
-    """Build the sensor on a stubbed RW coordinator (scalar data and metadata)."""
-    data = None if empty else CoordinatorData(data=value, metadata=meta)
+    """Build the sensor on a stubbed RW coordinator (its amount and metadata)."""
+    data = None if empty else CoordinatorData(data={"amount": value}, metadata={"amount": meta})
     return _days_sensor_on(DRY_STREAK_SOURCE_RW, data, dry_since, threshold)
 
 
@@ -135,9 +139,11 @@ def _days_sensor_on(
 ) -> TimespanWithoutPrecipitationSensor:
     sensor = TimespanWithoutPrecipitationSensor.__new__(TimespanWithoutPrecipitationSensor)
     sensor._dry_since = dry_since
+    sensor._sub_key = "last_60" if product_key == DRY_STREAK_SOURCE_RS else "amount"
     sensor.coordinator = SimpleNamespace(
         PRODUCT_KEY=product_key,
         config_entry=SimpleNamespace(options={CONF_PRECIPITATION_RESET_THRESHOLD: threshold}),
+        options=DwdOptions.from_options({CONF_PRECIPITATION_RESET_THRESHOLD: threshold}),
         data=data,
     )
     return sensor
@@ -248,9 +254,21 @@ def test_process_rw_first_observation_anchors_at_end_of_the_hour():
     assert sensor._dry_since == hour_end
 
 
-def test_scalar_reading_handles_missing_coordinator():
-    assert scalar_reading(None) == (None, None, None)
-    assert scalar_reading(SimpleNamespace(data=None)) == (None, None, None)
+def test_amount_reading_handles_missing_data():
+    assert amount_reading(None) == (None, None, None)
+    assert amount_reading(SimpleNamespace(data=None)) == (None, None, None)
+    empty = SimpleNamespace(data=CoordinatorData(data={"amount": None}, metadata={}))
+    assert amount_reading(empty) == (None, None, None)
+
+
+def test_amount_reading_returns_the_amount_and_its_window():
+    start = datetime(2026, 7, 3, 10, 0, tzinfo=UTC)
+    end = datetime(2026, 7, 3, 11, 0, tzinfo=UTC)
+    meta = ProductMetadata(
+        source_product="RW", source_timestamp=end, data_start=start, data_end=end
+    )
+    rw = SimpleNamespace(data=CoordinatorData(data={"amount": 3.2}, metadata={"amount": meta}))
+    assert amount_reading(rw) == (3.2, start, end)
 
 
 def test_downtime_correction_rw_rain_resets():
@@ -337,8 +355,8 @@ def _peak_sensor(metadata, extra=False) -> PrecipitationSensorEntity:
     """The peak sensor as RS feeds it (full rolling series option on)."""
     return _make_sensor_with_desc(
         _peak_hour_sensor(True),
-        data=[0.0, 1.0, 2.0, 6.5],
-        metadata=[None, None, None, metadata],
+        data={"last_60": 0.0, "next_60": 1.0, "next_60_120": 2.0, "peak_1h": 6.5},
+        metadata={"last_60": None, "next_60": None, "next_60_120": None, "peak_1h": metadata},
         extra=extra,
     )
 

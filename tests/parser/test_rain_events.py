@@ -526,7 +526,15 @@ def test_a_field_an_older_version_stored_is_dropped():
 
 @pytest.mark.parametrize(
     ("key", "value"),
-    [("measured", ["wet"]), ("wet_milli", "8"), ("view", []), ("last_ended", 3)],
+    [
+        ("measured", ["wet"]),
+        ("wet_milli", "8"),
+        ("view", []),
+        ("last_ended", 3),
+        # Restored as None, it failed to_dict() on every save after.
+        ("nodata", [None]),
+        ("nodata", [""]),
+    ],
 )
 def test_damaged_state_fields_are_rejected(key, value):
     raw = _stored_with_event()

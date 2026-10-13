@@ -16,8 +16,15 @@ coordinator.py        BaseProductUpdateCoordinator: the per-product HA
 products.py           One BaseProductUpdateCoordinator subclass per DWD
                       product. Each handles its own URL, fetch, parse, and
                       grid lookup.
-sensor.py             HA SensorEntity descriptors. value_fn pulls from
-                      coordinator.data[product_key].
+entity.py             DwdCoordinatorEntity, the base of every entity: unique
+                      id, device, availability (data_is_reportable), and the
+                      description mechanism (DwdEntityDescriptionMixin:
+                      product_key, sub_key, attrs_fn, metadata_attrs_fn).
+sensor.py             HA SensorEntity descriptors; sub_key picks each value
+                      from coordinators[product_key].data.
+binary_sensor.py      "Precipitation expected" (RV), on the same descriptions;
+                      its forecast_5min series is always exposed, unlike the
+                      sensors' diagnostics (blueprints read it).
 dry_streak.py         Pure "days without rain" logic: the persisted anchor
                       payload + threshold/downtime-correction helpers used by
                       the TimespanWithoutPrecipitationSensor in sensor.py.
@@ -28,6 +35,10 @@ precipitation_total.py
                       in sensor.py.
 config_flow.py        UI config flow: collects name + lat/lon; options form
                       with a collapsed Advanced section, stored flat.
+options.py            DwdOptions: the entry's options as one typed snapshot,
+                      with every option's default in DEFAULT_OPTIONS. Read as
+                      coordinator.options / entry.runtime_data.options; never
+                      entry.options.get() elsewhere.
 const.py              DWD OpenData base URLs and HA constants.
 utils.py              async_get() HTTP helper (headers, status, separate 206
                       cap, stall timeout); FailureLatch. HA-free.
@@ -64,8 +75,8 @@ poll loop.
    payload untouched if that release was already fetched
 3. `_fetch_and_parse(latest_release)` downloads the file on the event loop,
    then hands the bytes to the product's blocking `_parse()` through
-   `hass.async_add_executor_job`, which extracts `data[self.index]` and returns
-   `(precipitation, metadata)`. Decoding never runs on the event loop: a
+   `hass.async_add_executor_job`, which reads the cell at `self.index` and
+   returns `(data, metadata)`. Decoding never runs on the event loop: a
    radar grid is one gzip chunk of 1.3 M cells, ~6 ms to inflate even on a fast
    machine, times 25 members for RS/RV — many users run HA on a Raspberry Pi
    `_fetch_and_parse` has no side effects, so `async_fetch_release(ts)` can
@@ -74,14 +85,17 @@ poll loop.
    `_async_on_new_release(release, data, metadata)`, called once per adopted
    release before it is published, never raising: RV feeds the rain-events
    tracker there.
-4. The coordinator wraps those in a `CoordinatorData` — its `data`/`metadata`
-   are a scalar for RADOLAN products (`None` for a nodata cell, which the ODIM
-   reader returns as NaN), parallel lists for RS (`[_000, _060,
-   _120, peak, next_120]`, `peak` being `None` unless `full_rolling_series`
-   is on, `next_120` = `_060 + _120`),
-   parallel dicts for RV
-5. `PrecipitationSensorEntity.native_value` calls
-   `description.value_fn(coordinator.data.data)`
+4. The coordinator wraps those in a `CoordinatorData`. Every product has the
+   same shape: `data` and `metadata` are dicts keyed by the same sub-keys
+   (`KEY_*` in `const.py`, except RV's own), `metadata` holding each value's `ProductMetadata`
+   (or `None`). RADOLAN has one, `amount` (`None` for a nodata cell, which the
+   ODIM reader returns as NaN); HymecNG `precipitation_type`; RS `last_60`,
+   `next_60`, `next_60_120` (members `_000`/`_060`/`_120`), `next_120`
+   (`_060 + _120`) and `peak_1h` (`None` unless `full_rolling_series` is on);
+   RV its derived values (`max_060`, `start_at`, `rain_within_2h`, ...)
+5. An entity's value is `coordinator.data.data[description.sub_key]` and its
+   metadata `coordinator.data.metadata[description.sub_key]`
+   (`DwdCoordinatorEntity._value` / `_metadata`)
 
 ## Failure handling
 
@@ -461,8 +475,8 @@ Current runtime deps: `numpy`, `h5py`
   `_000`/`_060`/`_120`, by range (see "Range reads"); with the
   `full_rolling_series` option it downloads the whole tar for all 25. Either
   way `_parse()` gets the members' bytes and decodes them off the loop. The
-  payload list is `[_000, _060, _120, peak, next_120]`, where `peak` is
-  `None` unless the option is on and `next_120` is `_060 + _120`.
+  payload is keyed `last_60`/`next_60`/`next_60_120` (`_000`/`_060`/`_120`),
+  `peak_1h` (`None` unless the option is on) and `next_120` (`_060 + _120`).
 
 ## Peak hourly precipitation
 
@@ -496,11 +510,11 @@ entity to `coordinators[source]` directly (options reload the entry, as for
 
 - `rw` — RW, gauge-adjusted, ~28 min late, counted from its **10-minute
   runs** (`rw_10min`, see "RW 10-minute runs"): the reset shows up to an hour
-  sooner than with the hourly run alone, at the same adjustment. Scalar
-  payload; the reset time is `metadata.source_timestamp`, the end of that
+  sooner than with the hourly run alone, at the same adjustment. The reading
+  is `amount`; the reset time is its `source_timestamp`, the end of that
   sliding hour.
-- `rs` — RS `_000`, radar only, a rolling hour every 5 min. List payload; the
-  reading is `data[0]` / `metadata[0]`.
+- `rs` — RS `_000`, radar only, a rolling hour every 5 min. The reading is
+  `last_60`.
 
 Both are 60-minute totals in mm, so the threshold means the same either way.
 The unique id does not depend on the source, so the entity and its `dry_since`
@@ -666,8 +680,11 @@ The options form nests rarely needed options in a collapsed `advanced_options`
 section (`data_entry_flow.section`): `rain_events`, `rain_event_threshold`,
 `precipitation_end_algorithm`, `full_rolling_series`, `unavailable_when_stale`.
 Only the *form* is nested: `async_step_init` flattens the section before
-saving, so every key stays where `entry.options.get(...)` looks for it and no
-migration is needed. Translations live under
+saving, so every key stays flat in `entry.options` and no migration is
+needed. A new option gets its key and default in `DEFAULT_OPTIONS` and a field
+on `DwdOptions` (a test checks they match); the form and every consumer take
+the default from there. `DwdOptions` is a snapshot, which is enough because
+saving the options reloads the entry. Translations live under
 `options.step.init.sections.advanced_options`. HA 2026.10 installs `probatio`
 as `voluptuous` at import time, which is why `vol.Schema` inside `section`
 serializes; a script importing `voluptuous` before `homeassistant` sees the

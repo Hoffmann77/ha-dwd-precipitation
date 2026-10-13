@@ -90,12 +90,14 @@ async def test_entry_setup_creates_sensors_with_correct_values(
     peaks (in reality they agree).
     """
     ts = datetime(2025, 6, 1, 12, 0, tzinfo=timezone.utc)
-    rs_data = [1.5, 2.0, 0.5, 6.5, 2.5]
-    rs_meta = [
-        {"product": "ACRR", "datetime": ts, "lead_time_minutes": 0},
-        {"product": "ACRR", "datetime": ts, "lead_time_minutes": 60},
-        {},
-        ProductMetadata(
+    rs_data = {
+        "last_60": 1.5, "next_60": 2.0, "next_60_120": 0.5, "peak_1h": 6.5, "next_120": 2.5,
+    }
+    rs_meta = {
+        "last_60": ProductMetadata("RS", ts, lead_time_minutes=0),
+        "next_60": ProductMetadata("RS", ts, lead_time_minutes=60),
+        "next_60_120": None,
+        "peak_1h": ProductMetadata(
             source_product="RS",
             source_timestamp=ts,
             lead_time_minutes=75,
@@ -103,9 +105,9 @@ async def test_entry_setup_creates_sensors_with_correct_values(
             data_end=ts + timedelta(minutes=75),
             rolling_1h=[{"lead": 75, "start": None, "end": None, "value": 6.5}],
         ),
-        {},
-    ]
-    rw_meta = {"producttype": "RW", "datetime": datetime(2025, 6, 1, 12, 0)}
+        "next_120": None,
+    }
+    rw_meta = ProductMetadata("RW", datetime(2025, 6, 1, 12, 0, tzinfo=timezone.utc))
     rv_timing = ProductMetadata(source_product="RV", source_timestamp=ts)
     rv_data = {
         "intensity_000": 2.4,
@@ -159,22 +161,26 @@ async def test_entry_setup_creates_sensors_with_correct_values(
         patch.object(
             HymecNG,
             "_fetch_and_parse",
-            new=AsyncMock(return_value=("snow", hymec_meta)),
+            new=AsyncMock(
+                return_value=(
+                    {"precipitation_type": "snow"}, {"precipitation_type": hymec_meta}
+                )
+            ),
         ),
         patch.object(
             RadolanRW,
             "_fetch_and_parse",
-            new=AsyncMock(return_value=(3.2, rw_meta)),
+            new=AsyncMock(return_value=({"amount": 3.2}, {"amount": rw_meta})),
         ),
         patch.object(
             RadolanSF,
             "_fetch_and_parse",
-            new=AsyncMock(return_value=(12.5, {})),
+            new=AsyncMock(return_value=({"amount": 12.5}, {})),
         ),
         patch.object(
             RadolanSFLastYesterday,
             "_fetch_and_parse",
-            new=AsyncMock(return_value=(24.0, {})),
+            new=AsyncMock(return_value=({"amount": 24.0}, {})),
         ),
     ):
         assert await hass.config_entries.async_setup(entry.entry_id)
@@ -182,10 +188,10 @@ async def test_entry_setup_creates_sensors_with_correct_values(
 
     coordinators = entry.runtime_data.coordinators
     assert set(coordinators) == {"rs", "rv", "hymecng", "rw", "sf", "sf_2350"}
-    assert coordinators["rw"].data.data == approx(3.2)
-    assert coordinators["rs"].data.data == [1.5, 2.0, 0.5, 6.5, 2.5]
+    assert coordinators["rw"].data.data["amount"] == approx(3.2)
+    assert coordinators["rs"].data.data == rs_data
     assert coordinators["rv"].data.data["max_060"] == approx(48.0)
-    assert coordinators["hymecng"].data.data == "snow"
+    assert coordinators["hymecng"].data.data["precipitation_type"] == "snow"
 
     # Resolve entity_id via unique_id (avoids relying on HA's slug logic)
     ent_reg = er.async_get(hass)
@@ -322,15 +328,21 @@ RV_META = {
 # What each product's _fetch_and_parse returns when it is meant to succeed.
 WORKING_PRODUCTS = {
     RadvorRS: (
-        [1.5, 2.0, None, 6.5, None],
-        [{}, {}, {}, ProductMetadata(source_product="RS", source_timestamp=RV_TS), None],
+        {"last_60": 1.5, "next_60": 2.0, "next_60_120": None, "peak_1h": 6.5, "next_120": None},
+        {
+            "last_60": None,
+            "next_60": None,
+            "next_60_120": None,
+            "peak_1h": ProductMetadata(source_product="RS", source_timestamp=RV_TS),
+            "next_120": None,
+        },
     ),
     RadvorRV: (RV_DATA, RV_META),
-    HymecNG: ("snow", {}),
-    RadolanRW: (3.2, {}),
-    RadolanRW10: (2.7, {}),
-    RadolanSF: (12.5, {}),
-    RadolanSFLastYesterday: (24.0, {}),
+    HymecNG: ({"precipitation_type": "snow"}, {}),
+    RadolanRW: ({"amount": 3.2}, {}),
+    RadolanRW10: ({"amount": 2.7}, {}),
+    RadolanSF: ({"amount": 12.5}, {}),
+    RadolanSFLastYesterday: ({"amount": 24.0}, {}),
 }
 
 # Adding a product to PRODUCT_CLASSES without a payload here would leave it
@@ -725,3 +737,50 @@ async def test_the_entrys_products_share_one_download_cache(hass: HomeAssistant)
     assert "rw_10min" in coordinators
     caches = {id(c.download_cache) for c in coordinators.values()}
     assert len(caches) == 1 and None not in {c.download_cache for c in coordinators.values()}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("threshold", "moved"),
+    [
+        (2.0, True),    # RW's 3.2 mm in the last hour: it rained while HA was down
+        (30.0, False),  # neither RW (3.2) nor SF (12.5) reaches it
+    ],
+)
+async def test_restored_dry_streak_is_corrected_for_rain_during_downtime(
+    hass: HomeAssistant, freezer, threshold: float, moved: bool
+) -> None:
+    """The anchor restored from days ago moves forward if RW/SF saw rain since."""
+    from homeassistant.core import State
+    from pytest_homeassistant_custom_component.common import (
+        mock_restore_cache_with_extra_data,
+    )
+
+    now = datetime(2025, 6, 1, 12, 35, tzinfo=timezone.utc)
+    freezer.move_to(now)
+    restored = datetime(2025, 5, 28, 8, 0, tzinfo=timezone.utc)
+    mock_restore_cache_with_extra_data(
+        hass,
+        [
+            (
+                State("sensor.mock_title_timespan_without_precipitation", "4.2"),
+                {"dry_since": restored.isoformat()},
+            )
+        ],
+    )
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"name": "Home", "latitude": 51.05, "longitude": 13.73},
+        # RS counts (1.5 mm, below both thresholds), so only the correction
+        # can move the anchor.
+        options={CONF_DRY_STREAK_SOURCE: "rs", "precipitation_reset_threshold": threshold},
+        version=1,
+        minor_version=2,
+    )
+    entry.add_to_hass(hass)
+    with _patched_products():
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    anchor = _dry_streak_sensor(hass)._dry_since
+    assert anchor == (now if moved else restored)

@@ -2,12 +2,44 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any
+
 from homeassistant.helpers.entity import EntityDescription
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
-from .coordinator import BaseProductUpdateCoordinator
+from .coordinator import BaseProductUpdateCoordinator, ProductMetadata
+
+
+@dataclass(frozen=True, kw_only=True)
+class DwdEntityDescriptionMixin:
+    """What a DWD entity reads, for every platform's entity description."""
+
+    product_key: str
+    # The key of this entity's value in the coordinator's data, and of its
+    # ProductMetadata in the metadata (see CoordinatorData).
+    sub_key: str
+    # Companion attributes computed from the data payload. Always exposed
+    # (not gated behind the diagnostic-attributes option).
+    attrs_fn: Callable[[Any], dict[str, Any]] | None = None
+    # Like attrs_fn, but computed from this entity's ProductMetadata. Also
+    # always exposed.
+    metadata_attrs_fn: Callable[[ProductMetadata], dict[str, Any]] | None = None
+
+
+def plain_value(value: Any) -> Any:
+    """Return values suitable for Home Assistant state attributes."""
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if hasattr(value, "decode"):
+        return value.decode()
+    if hasattr(value, "item"):
+        return value.item()
+    return value
 
 
 def unique_id_for(entry_id: str, key: str) -> str:
@@ -52,3 +84,37 @@ class DwdCoordinatorEntity(CoordinatorEntity[BaseProductUpdateCoordinator]):
         answer this question differently.
         """
         return self.coordinator.data_is_reportable
+
+    def _value(self) -> Any:
+        """Return what the description picks from the data, None without data."""
+        if self.coordinator.data is None:
+            return None
+        return self.coordinator.data.data.get(self.entity_description.sub_key)
+
+    def _metadata(self) -> ProductMetadata | None:
+        """Return this entity's ProductMetadata, if the coordinator has it."""
+        if self.coordinator.data is None:
+            return None
+        return self.coordinator.data.metadata.get(self.entity_description.sub_key)
+
+    def _described_attributes(self) -> dict[str, Any]:
+        """Return the description's companion and metadata attributes."""
+        attrs: dict[str, Any] = {}
+        if self.coordinator.data is None:
+            return attrs
+
+        description = self.entity_description
+        data = self.coordinator.data.data
+        if description.attrs_fn is not None:
+            attrs.update(
+                {k: plain_value(v) for k, v in description.attrs_fn(data).items()}
+            )
+        metadata = self._metadata()
+        if description.metadata_attrs_fn is not None and metadata is not None:
+            attrs.update(
+                {
+                    k: plain_value(v)
+                    for k, v in description.metadata_attrs_fn(metadata).items()
+                }
+            )
+        return attrs

@@ -15,31 +15,23 @@ from .const import (
     DOMAIN,
     CONF_COORDS,
     CONF_EXTRA_ATTRIBUTES,
-    DEFAULT_EXTRA_ATTRIBUTES,
     CONF_UNAVAILABLE_WHEN_STALE,
-    DEFAULT_UNAVAILABLE_WHEN_STALE,
     CONF_PRECIPITATION_THRESHOLD,
-    DEFAULT_PRECIPITATION_THRESHOLD,
     CONF_START_END_MODE,
-    DEFAULT_START_END_MODE,
     START_END_MODE_TIMESTAMP,
     START_END_MODE_DURATION,
     CONF_PRECIPITATION_END_ALGORITHM,
-    DEFAULT_PRECIPITATION_END_ALGORITHM,
     RAIN_END_ALGO_EPISODE,
     RAIN_END_ALGO_CLEARING,
     CONF_PRECIPITATION_RESET_THRESHOLD,
-    DEFAULT_PRECIPITATION_RESET_THRESHOLD,
     CONF_DRY_STREAK_SOURCE,
     DEFAULT_DRY_STREAK_SOURCE,
     DRY_STREAK_SOURCES,
     CONF_FULL_ROLLING_SERIES,
-    DEFAULT_FULL_ROLLING_SERIES,
     CONF_RAIN_EVENTS,
-    DEFAULT_RAIN_EVENTS,
     CONF_RAIN_EVENT_THRESHOLD,
-    DEFAULT_RAIN_EVENT_THRESHOLD,
 )
+from .options import DEFAULT_OPTIONS
 from .radar import rs_grid_contains
 
 # The collapsed part of the options form. Only the form is nested: its values
@@ -88,46 +80,34 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
         options = self.config_entry.options
 
-        def current(key: str, default) -> vol.Optional:
+        def current(key: str) -> vol.Optional:
             """An optional field that shows the entry's value, else the default."""
-            return vol.Optional(key, default=options.get(key, default))
+            return vol.Optional(key, default=options.get(key, DEFAULT_OPTIONS[key]))
 
         advanced = vol.Schema(
             {
-                current(CONF_RAIN_EVENTS, DEFAULT_RAIN_EVENTS): selector.BooleanSelector(),
-                current(CONF_RAIN_EVENT_THRESHOLD, DEFAULT_RAIN_EVENT_THRESHOLD): _number(
+                current(CONF_RAIN_EVENTS): selector.BooleanSelector(),
+                current(CONF_RAIN_EVENT_THRESHOLD): _number(
                     "mm/h"
                 ),
-                current(
-                    CONF_PRECIPITATION_END_ALGORITHM, DEFAULT_PRECIPITATION_END_ALGORITHM
-                ): _dropdown(
+                current(CONF_PRECIPITATION_END_ALGORITHM): _dropdown(
                     [RAIN_END_ALGO_EPISODE, RAIN_END_ALGO_CLEARING],
                     CONF_PRECIPITATION_END_ALGORITHM,
                 ),
-                current(
-                    CONF_FULL_ROLLING_SERIES, DEFAULT_FULL_ROLLING_SERIES
-                ): selector.BooleanSelector(),
-                current(
-                    CONF_UNAVAILABLE_WHEN_STALE, DEFAULT_UNAVAILABLE_WHEN_STALE
-                ): selector.BooleanSelector(),
+                current(CONF_FULL_ROLLING_SERIES): selector.BooleanSelector(),
+                current(CONF_UNAVAILABLE_WHEN_STALE): selector.BooleanSelector(),
             }
         )
         schema = vol.Schema(
             {
-                current(
-                    CONF_EXTRA_ATTRIBUTES, DEFAULT_EXTRA_ATTRIBUTES
-                ): selector.BooleanSelector(),
-                current(
-                    CONF_PRECIPITATION_THRESHOLD, DEFAULT_PRECIPITATION_THRESHOLD
-                ): _number("mm/h"),
-                current(CONF_START_END_MODE, DEFAULT_START_END_MODE): _dropdown(
+                current(CONF_EXTRA_ATTRIBUTES): selector.BooleanSelector(),
+                current(CONF_PRECIPITATION_THRESHOLD): _number("mm/h"),
+                current(CONF_START_END_MODE): _dropdown(
                     [START_END_MODE_TIMESTAMP, START_END_MODE_DURATION],
                     CONF_START_END_MODE,
                 ),
-                current(
-                    CONF_PRECIPITATION_RESET_THRESHOLD, DEFAULT_PRECIPITATION_RESET_THRESHOLD
-                ): _number("mm"),
-                current(CONF_DRY_STREAK_SOURCE, DEFAULT_DRY_STREAK_SOURCE): _dropdown(
+                current(CONF_PRECIPITATION_RESET_THRESHOLD): _number("mm"),
+                current(CONF_DRY_STREAK_SOURCE): _dropdown(
                     list(DRY_STREAK_SOURCES), CONF_DRY_STREAK_SOURCE
                 ),
                 vol.Required(SECTION_ADVANCED): section(advanced, {"collapsed": True}),

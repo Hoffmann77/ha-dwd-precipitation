@@ -7,7 +7,6 @@ import logging
 import random
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from functools import cached_property
@@ -29,7 +28,7 @@ from homeassistant.helpers.event import (
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
-from .const import CONF_UNAVAILABLE_WHEN_STALE, DEFAULT_UNAVAILABLE_WHEN_STALE
+from .options import DwdOptions
 from .radar import get_rs_grid_index
 from .release_grid import ReleaseGrid
 
@@ -171,14 +170,21 @@ class ProductMetadata:
 
 @dataclass
 class CoordinatorData:
-    """Single-product coordinator payload.
+    """One release of a product: its values and their metadata, by sub-key.
 
-    ``data``/``metadata`` are a scalar+``ProductMetadata`` for RADOLAN products,
-    parallel lists for RS, or parallel dicts keyed by entity sub-key for RV.
+    Every product keys both dicts the same way (const.KEY_*: RS ``last_60``,
+    ``next_60``, ...; RADOLAN ``amount``; HymecNG ``precipitation_type``; RV's
+    own keys), and every entity description names the sub-key it shows. A
+    value may come without metadata (RV's ``rain_events``), and either may be
+    None (no data for the cell).
     """
 
-    data: float | None | list[float | None] | dict[str, Any]
-    metadata: ProductMetadata | list[ProductMetadata] | dict[str, ProductMetadata]
+    data: dict[str, Any]
+    metadata: dict[str, ProductMetadata | None]
+
+
+# What a product's fetch returns: CoordinatorData's two dicts.
+type Payload = tuple[dict[str, Any], dict[str, ProductMetadata | None]]
 
 
 class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
@@ -219,7 +225,7 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
     USE_LOCAL_TIME: ClassVar[bool] = False
 
     @classmethod
-    def is_needed(cls, options: Mapping[str, Any]) -> bool:
+    def is_needed(cls, options: DwdOptions) -> bool:
         """Whether an entry with these options uses this product at all.
 
         Every product is, except those that exist for one option; skipping
@@ -337,12 +343,15 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
 
         return deadline is None or now > deadline
 
+    @cached_property
+    def options(self) -> DwdOptions:
+        """Return the entry's options (a snapshot: a change reloads the entry)."""
+        return DwdOptions.from_options(self.config_entry.options)
+
     @property
     def unavailable_when_stale(self) -> bool:
         """Return whether a value past its deadline should be hidden."""
-        return self.config_entry.options.get(
-            CONF_UNAVAILABLE_WHEN_STALE, DEFAULT_UNAVAILABLE_WHEN_STALE
-        )
+        return self.options.unavailable_when_stale
 
     def _data_is_reportable(self, now: datetime) -> bool:
         """Return True if what we hold may still be shown to the user.
@@ -567,10 +576,11 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
         return get_rs_grid_index(*self.coords)
 
     @abstractmethod
-    async def _fetch_and_parse(self, ts: datetime) -> tuple[Any, Any]:
+    async def _fetch_and_parse(self, ts: datetime) -> Payload:
         """Fetch and parse the product for release timestamp ts.
 
-        Return (precipitation, metadata). Must raise on any failure — the
+        Return (data, metadata), two dicts keyed by the same sub-keys (see
+        CoordinatorData). Must raise on any failure — the
         base class owns the stale/retry logic in _async_update_data. Must
         have no side effects: the totals' backfill fetches past releases
         through it (async_fetch_release). What a newly adopted release should

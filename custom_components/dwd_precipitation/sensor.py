@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -27,18 +26,14 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.util import dt as dt_util
 
 from .const import (
-    CONF_EXTRA_ATTRIBUTES,
-    DEFAULT_EXTRA_ATTRIBUTES,
-    CONF_FULL_ROLLING_SERIES,
-    DEFAULT_FULL_ROLLING_SERIES,
-    CONF_PRECIPITATION_RESET_THRESHOLD,
-    DEFAULT_PRECIPITATION_RESET_THRESHOLD,
-    CONF_DRY_STREAK_SOURCE,
-    DEFAULT_DRY_STREAK_SOURCE,
-    DRY_STREAK_SOURCE_RS,
-    DRY_STREAK_SOURCES,
-    CONF_START_END_MODE,
-    DEFAULT_START_END_MODE,
+    KEY_AMOUNT,
+    KEY_LAST_60,
+    KEY_NEXT_60,
+    KEY_NEXT_60_120,
+    KEY_NEXT_120,
+    KEY_PEAK_1H,
+    KEY_PRECIPITATION_TYPE,
+    RW_SLIDING_KEY,
     START_END_MODE_DURATION,
     PRECIP_TYPE_OPTIONS,
     DOMAIN,
@@ -48,10 +43,9 @@ from .dry_streak import (
     DryStreakExtraData,
     downtime_correction,
     fresh_anchor,
-    scalar_reading,
+    amount_reading,
 )
-from .entity import DwdCoordinatorEntity, unique_id_for
-from .products import dry_streak_coordinator_key, rain_events_enabled
+from .entity import DwdCoordinatorEntity, DwdEntityDescriptionMixin, unique_id_for
 from .radar.isotime import iso
 from .radar.rain_events import NO_EVENT, ONGOING, UPCOMING, VIEW_KEYS, overall_status
 from .precipitation_total import (
@@ -66,17 +60,10 @@ _LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, kw_only=True)
-class PrecipitationSensorEntityDescription(SensorEntityDescription):
+class PrecipitationSensorEntityDescription(
+    SensorEntityDescription, DwdEntityDescriptionMixin
+):
     """Provide a description for a precipitation sensor."""
-
-    product_key: str
-    access_fn: Callable[[Any], Any]
-    # Optional companion attributes, computed from the coordinator data payload.
-    # Always exposed (not gated behind the diagnostic-attributes option).
-    attrs_fn: Callable[[Any], dict[str, Any]] | None = None
-    # Like attrs_fn, but computed from this entity's ProductMetadata (as picked
-    # by access_fn). Also always exposed.
-    metadata_attrs_fn: Callable[[ProductMetadata], dict[str, Any]] | None = None
 
 
 # What every amount (mm) and every intensity (mm/h) sensor shares.
@@ -104,21 +91,21 @@ RADOLAN_SENSORS = (
         translation_key="precipitation_previous_hour",
         **_MM,
         product_key="rw",
-        access_fn=lambda d: d,
+        sub_key=KEY_AMOUNT,
     ),
     PrecipitationSensorEntityDescription(
         key="radolan_sf",
         translation_key="precipitation_last_24h",
         **_MM,
         product_key="sf",
-        access_fn=lambda d: d,
+        sub_key=KEY_AMOUNT,
     ),
     PrecipitationSensorEntityDescription(
         key="radolan_sf_yesterday",
         translation_key="precipitation_yesterday",
         **_MM,
         product_key="sf_2350",
-        access_fn=lambda d: d,
+        sub_key=KEY_AMOUNT,
     ),
 )
 
@@ -164,28 +151,28 @@ RADVOR_SENSORS = (
         translation_key="precipitation_last_60_min",
         **_MM,
         product_key="rs",
-        access_fn=lambda _list: _list[0],
+        sub_key=KEY_LAST_60,
     ),
     PrecipitationSensorEntityDescription(
         key="radvor_rs_060",
         translation_key="precipitation_next_60_min",
         **_MM,
         product_key="rs",
-        access_fn=lambda _list: _list[1],
+        sub_key=KEY_NEXT_60,
     ),
     PrecipitationSensorEntityDescription(
         key="radvor_rs_120",
         translation_key="precipitation_next_60_120_min",
         **_MM,
         product_key="rs",
-        access_fn=lambda _list: _list[2],
+        sub_key=KEY_NEXT_60_120,
     ),
     PrecipitationSensorEntityDescription(
         key="radvor_rs_000_120",
         translation_key="precipitation_next_120_min",
         **_MM,
         product_key="rs",
-        access_fn=lambda _list: _list[4],
+        sub_key=KEY_NEXT_120,
     ),
 )
 
@@ -216,10 +203,10 @@ def _peak_hour_sensor(full_rolling_series: bool) -> PrecipitationSensorEntityDes
     )
     if full_rolling_series:
         return PrecipitationSensorEntityDescription(
-            product_key="rs", access_fn=lambda _list: _list[3], **common
+            product_key="rs", sub_key=KEY_PEAK_1H, **common
         )
     return PrecipitationSensorEntityDescription(
-        product_key="rv", access_fn=lambda d: d["peak_1h"], **common
+        product_key="rv", sub_key="peak_1h", **common
     )
 
 
@@ -231,7 +218,7 @@ RADVOR_RV_SENSORS = (
         translation_key="precipitation_intensity_now",
         **_MMH,
         product_key="rv",
-        access_fn=lambda d: d["intensity_000"],
+        sub_key="intensity_000",
         # "Now" is the latest analysis, the 5 minutes ending at the release
         # time; the window and the unscaled amount say so.
         attrs_fn=lambda d: {"amount_5min": d["amount_000"]},
@@ -245,21 +232,21 @@ RADVOR_RV_SENSORS = (
         translation_key="peak_intensity_next_60_min",
         **_MMH,
         product_key="rv",
-        access_fn=lambda d: d["max_060"],
+        sub_key="max_060",
     ),
     PrecipitationSensorEntityDescription(
         key="radvor_rv_max_intensity_120",
         translation_key="peak_intensity_next_60_120_min",
         **_MMH,
         product_key="rv",
-        access_fn=lambda d: d["max_120"],
+        sub_key="max_120",
     ),
     PrecipitationSensorEntityDescription(
         key="radvor_rv_max_intensity_000_120",
         translation_key="peak_intensity_next_120_min",
         **_MMH,
         product_key="rv",
-        access_fn=lambda d: d["max_000_120"],
+        sub_key="max_000_120",
     ),
 )
 
@@ -272,7 +259,7 @@ HYMECNG_SENSORS = (
         device_class=SensorDeviceClass.ENUM,
         options=PRECIP_TYPE_OPTIONS,
         product_key="hymecng",
-        access_fn=lambda d: d,
+        sub_key=KEY_PRECIPITATION_TYPE,
     ),
 )
 
@@ -306,7 +293,7 @@ def _rv_timing_sensors(
                 device_class=SensorDeviceClass.DURATION,
                 state_class=SensorStateClass.MEASUREMENT,
                 product_key="rv",
-                access_fn=lambda d: d["start_in"],
+                sub_key="start_in",
                 attrs_fn=lambda d: {"at": d["start_at"]},
             ),
             PrecipitationSensorEntityDescription(
@@ -316,7 +303,7 @@ def _rv_timing_sensors(
                 device_class=SensorDeviceClass.DURATION,
                 state_class=SensorStateClass.MEASUREMENT,
                 product_key="rv",
-                access_fn=lambda d: d["end_in"],
+                sub_key="end_in",
                 attrs_fn=lambda d: {"at": d["end_at"]},
             ),
         )
@@ -328,7 +315,7 @@ def _rv_timing_sensors(
             translation_key="precipitation_start",
             device_class=SensorDeviceClass.TIMESTAMP,
             product_key="rv",
-            access_fn=lambda d: d["start_at"],
+            sub_key="start_at",
             attrs_fn=lambda d: {"minutes_until": d["start_in"]},
         ),
         PrecipitationSensorEntityDescription(
@@ -336,21 +323,10 @@ def _rv_timing_sensors(
             translation_key="precipitation_end",
             device_class=SensorDeviceClass.TIMESTAMP,
             product_key="rv",
-            access_fn=lambda d: d["end_at"],
+            sub_key="end_at",
             attrs_fn=lambda d: {"minutes_until": d["end_in"]},
         ),
     )
-
-
-def _plain_value(value: Any) -> Any:
-    """Return values suitable for Home Assistant state attributes."""
-    if isinstance(value, datetime):
-        return value.isoformat()
-    if hasattr(value, "decode"):
-        return value.decode()
-    if hasattr(value, "item"):
-        return value.item()
-    return value
 
 
 async def async_setup_entry(
@@ -360,17 +336,13 @@ async def async_setup_entry(
 ) -> None:
     """Set up the sensor platform."""
     coordinators = entry.runtime_data.coordinators
-
-    mode = entry.options.get(CONF_START_END_MODE, DEFAULT_START_END_MODE)
-    full_rolling_series = entry.options.get(
-        CONF_FULL_ROLLING_SERIES, DEFAULT_FULL_ROLLING_SERIES
-    )
+    options = entry.runtime_data.options
 
     entity_descriptions = (
         RADVOR_SENSORS
-        + (_peak_hour_sensor(full_rolling_series),)
+        + (_peak_hour_sensor(options.full_rolling_series),)
         + RADVOR_RV_SENSORS
-        + _rv_timing_sensors(mode)
+        + _rv_timing_sensors(options.start_end_mode)
         + HYMECNG_SENSORS
         + RADOLAN_SENSORS
     )
@@ -388,7 +360,7 @@ async def async_setup_entry(
     )
     # Rain events are opt-in. With the option off there is no tracker, so the
     # entity goes too, rather than lingering as "no longer provided".
-    if rain_events_enabled(entry.options):
+    if options.rain_events:
         entities.append(RainEventsSensor(coordinators["rv"], RAIN_EVENTS_SENSOR))
     else:
         registry = er.async_get(hass)
@@ -401,20 +373,20 @@ async def async_setup_entry(
     # The unique id does not depend on it, so the entity and its persisted
     # dry_since survive a switch. RW counts its 10-minute runs: as strongly
     # gauge-adjusted as the hourly run, and a reset shows up to an hour sooner.
-    dry_streak_source = entry.options.get(
-        CONF_DRY_STREAK_SOURCE, DEFAULT_DRY_STREAK_SOURCE
-    )
-    if dry_streak_source not in DRY_STREAK_SOURCES:
+    if options.unknown_dry_streak_source is not None:
         _LOGGER.warning(
             "Unknown dry streak source %r in the options of %s; counting %r "
             "instead. Saving the options again fixes it",
-            dry_streak_source,
+            options.unknown_dry_streak_source,
             entry.title,
-            DEFAULT_DRY_STREAK_SOURCE,
+            options.dry_streak_source,
         )
     entities.append(
         TimespanWithoutPrecipitationSensor(
-            coordinators[dry_streak_coordinator_key(entry.options)]
+            coordinators[options.dry_streak_coordinator_key],
+            _PAST_HOUR_KEY[options.dry_streak_coordinator_key],
+            hourly=coordinators.get("rw"),
+            daily=coordinators.get("sf"),
         )
     )
 
@@ -436,13 +408,7 @@ class PrecipitationSensorEntity(DwdCoordinatorEntity, SensorEntity):
     @property
     def native_value(self) -> float | datetime | str | None:
         """Return the state of the sensor."""
-        if self.coordinator.data is None:
-            return None
-
-        if (data := self.coordinator.data.data) is None:
-            return None
-
-        return self.entity_description.access_fn(data)
+        return self._value()
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -450,40 +416,15 @@ class PrecipitationSensorEntity(DwdCoordinatorEntity, SensorEntity):
         if self.coordinator.data is None:
             return {}
 
-        attrs: dict[str, Any] = {}
-
-        # Companion attributes (e.g. the start/end representation not used as the
-        # state) are a feature, so they are always exposed.
-        attrs_fn = self.entity_description.attrs_fn
-        if attrs_fn is not None and self.coordinator.data.data is not None:
-            attrs.update(
-                {
-                    key: _plain_value(value)
-                    for key, value in attrs_fn(self.coordinator.data.data).items()
-                }
-            )
-
-        metadata: ProductMetadata | None = (
-            self.entity_description.access_fn(self.coordinator.data.metadata)
-            if self.coordinator.data.metadata
-            else None
-        )
-        metadata_attrs_fn = self.entity_description.metadata_attrs_fn
-        if metadata_attrs_fn is not None and metadata is not None:
-            attrs.update(
-                {
-                    key: _plain_value(value)
-                    for key, value in metadata_attrs_fn(metadata).items()
-                }
-            )
+        # Companion attributes (e.g. the start/end representation not used as
+        # the state) are a feature, so they are always exposed.
+        attrs = self._described_attributes()
 
         # Diagnostic metadata is opt-in via the integration options.
-        if not self.coordinator.config_entry.options.get(
-            CONF_EXTRA_ATTRIBUTES, DEFAULT_EXTRA_ATTRIBUTES
-        ):
+        if not self.coordinator.options.extra_attributes:
             return attrs
 
-        if metadata is None:
+        if (metadata := self._metadata()) is None:
             return attrs
 
         attrs["source_product"] = metadata.source_product
@@ -650,7 +591,7 @@ class PrecipitationTotalSensor(DwdCoordinatorEntity, RestoreEntity, SensorEntity
                 lost[1].isoformat(),
             )
 
-        if (value := countable(cdata.data)) is not None:
+        if (value := countable(cdata.data.get(KEY_AMOUNT))) is not None:
             self._total += value
         self._last_release = release
         self._pending = sorted(set(self._pending) | set(missed))
@@ -706,7 +647,8 @@ class PrecipitationTotalSensor(DwdCoordinatorEntity, RestoreEntity, SensorEntity
                 release = todo[0]
                 tried.add(release)
                 try:
-                    value = (await self.coordinator.async_fetch_release(release)).data
+                    fetched = await self.coordinator.async_fetch_release(release)
+                    value = fetched.data.get(KEY_AMOUNT)
                 except Exception as err:  # noqa: BLE001 - retried next round
                     _LOGGER.debug(
                         "%s: could not backfill %s: %s",
@@ -739,6 +681,10 @@ class PrecipitationTotalSensor(DwdCoordinatorEntity, RestoreEntity, SensorEntity
             )
 
 
+# Where each dry-streak source keeps its past-hour total.
+_PAST_HOUR_KEY = {"rs": KEY_LAST_60, RW_SLIDING_KEY: KEY_AMOUNT}
+
+
 DRY_STREAK_SENSOR = SensorEntityDescription(
     key="timespan_without_precipitation",
     translation_key="timespan_without_precipitation",
@@ -764,7 +710,13 @@ class TimespanWithoutPrecipitationSensor(
     during downtime.
     """
 
-    def __init__(self, coordinator: BaseProductUpdateCoordinator) -> None:
+    def __init__(
+        self,
+        coordinator: BaseProductUpdateCoordinator,
+        sub_key: str,
+        hourly: BaseProductUpdateCoordinator | None = None,
+        daily: BaseProductUpdateCoordinator | None = None,
+    ) -> None:
         """Initialize the sensor, bound to the dry-streak source's coordinator.
 
         Availability follows the source's staleness deadline, like every other
@@ -772,28 +724,28 @@ class TimespanWithoutPrecipitationSensor(
         """
         super().__init__(coordinator, DRY_STREAK_SENSOR)
         self._dry_since: datetime | None = None
+        # Where the source keeps its past-hour total (see _PAST_HOUR_KEY).
+        self._sub_key = sub_key
+        # The analyses that correct the anchor for rain during downtime:
+        # RW's last clock hour and SF's last 24 h, whatever the source.
+        self._hourly = hourly
+        self._daily = daily
 
     @property
     def _threshold(self) -> float:
         """Return the configured rain reset threshold in mm."""
-        return self.coordinator.config_entry.options.get(
-            CONF_PRECIPITATION_RESET_THRESHOLD, DEFAULT_PRECIPITATION_RESET_THRESHOLD
-        )
+        return self.coordinator.options.precipitation_reset_threshold
 
     def _reading(self) -> tuple[Any, ProductMetadata | None]:
         """Return the source's past-hour total and its metadata, unconverted.
 
-        RS carries parallel lists whose [0] is the past hour (``_000``); RW is a
-        scalar payload. Either part is None when the coordinator has nothing.
+        Either part is None when the coordinator has nothing.
         """
         cdata = self.coordinator.data
-        if cdata is None or cdata.data is None:
+        if cdata is None:
             return None, None
 
-        if self.coordinator.PRODUCT_KEY == DRY_STREAK_SOURCE_RS:
-            return cdata.data[0], cdata.metadata[0] if cdata.metadata else None
-
-        return cdata.data, cdata.metadata or None
+        return cdata.data.get(self._sub_key), cdata.metadata.get(self._sub_key)
 
     def _precip_now(self) -> float | None:
         """Return the source's latest past-hour total (mm), or None if unavailable."""
@@ -837,9 +789,8 @@ class TimespanWithoutPrecipitationSensor(
             ).dry_since
 
         now = dt_util.utcnow()
-        siblings = self.coordinator.config_entry.runtime_data.coordinators
-        rw = scalar_reading(siblings.get("rw"))
-        sf = scalar_reading(siblings.get("sf"))
+        rw = amount_reading(self._hourly)
+        sf = amount_reading(self._daily)
 
         if self._dry_since is not None:
             # Clamp a stale restored anchor forward if RW/SF show recent rain.
