@@ -22,7 +22,7 @@ from .utils import async_get
 from .radar.tar_range import fetch_tar_members, member_names, members_from_archive
 from .radar import (
     read_odim_composite_cell,
-    read_odim_classification,
+    read_odim_classification_cell,
     get_rs_grid_index,
     RS_GRID_SHAPE,
 )
@@ -888,11 +888,9 @@ class HymecNG(BaseProductUpdateCoordinator):
 
     def _parse(self, content: bytes) -> tuple[str | None, ProductMetadata]:
         """Return the cell's precipitation-type label (blocking)."""
-        raw, dataset_what, moment_what = read_odim_classification(
-            BytesIO(content), expected_shape=RS_GRID_SHAPE
+        value, dataset_what, moment_what = read_odim_classification_cell(
+            BytesIO(content), *self.index, expected_shape=RS_GRID_SHAPE
         )
-        row, col = self.index
-        value = int(raw[row, col])
 
         nodata = int(round(float(moment_what.get("nodata", 255))))
         undetect = int(round(float(moment_what.get("undetect", 254))))

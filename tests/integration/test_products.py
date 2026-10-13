@@ -397,8 +397,7 @@ async def test_rv_end_algorithm_option_selects_clearing() -> None:
 
 
 def _hymecng_reader(class_value: int, nodata: int = 255, undetect: int = 254):
-    """Return a fake read_odim_classification yielding a uniform class grid."""
-    raw = np.full(RS_GRID_SHAPE, class_value, dtype=np.uint8)
+    """Return a fake read_odim_classification_cell yielding ``class_value``."""
     dataset_what = {
         "prodname": "HymecNG_top_view",
         "product": "COMP",
@@ -406,7 +405,7 @@ def _hymecng_reader(class_value: int, nodata: int = 255, undetect: int = 254):
         "enddate": "20260729", "endtime": "173000",
     }
     moment_what = {"quantity": "CLASS", "nodata": float(nodata), "undetect": float(undetect)}
-    return lambda _f, **_kw: (raw, dataset_what, moment_what)
+    return lambda _f, _row, _col, **_kw: (class_value, dataset_what, moment_what)
 
 
 @pytest.mark.asyncio
@@ -457,7 +456,9 @@ async def test_hymecng_class_and_sentinel_mapping(class_value, expected) -> None
             new=AsyncMock(return_value=AsyncResponse(content=b"x")),
         ),
         patch.object(
-            products, "read_odim_classification", side_effect=_hymecng_reader(class_value)
+            products,
+            "read_odim_classification_cell",
+            side_effect=_hymecng_reader(class_value),
         ),
     ):
         data, _meta = await coord._fetch_and_parse(ts)
