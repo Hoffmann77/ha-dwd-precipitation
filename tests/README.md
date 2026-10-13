@@ -18,24 +18,25 @@ tracking issue on failure instead of blocking merges.**
 
 ## What each tier covers
 
-- **`parser/`** — the vendored radar parsers and pure helpers, no HA/network:
-  `test_odim.py` (ODIM_H5 read + DE1200 grid), `test_tar_range.py` (range reads
-  of tar members), `test_rain_events.py` (the rain-event tracker),
-  `test_translations.py` (en/de key parity), `test_utils.py` (release-timing math
-  and the HTTP helper).
+Files are named for what they test, so the pattern says where a test belongs:
+
+- **`parser/`** — the HA-free code, no HA, no network: `test_<module>.py` for
+  each module of `radar/` and for `release_grid`, `utils` and the like, plus
+  `test_translations.py` (en/de key parity) and `test_docs.py` (what CLAUDE.md
+  and the README state, against the code and `entity_ids.py`).
 - **`integration/`** — the HA-facing layer (imports `homeassistant`):
-  `test_config_flow.py`, `test_setup_entry.py` (entry → coordinators → sensor states),
-  `test_product_<rs|rv|hymecng|radolan>.py` (each product's fetch and parse, helpers
-  in `product_helpers.py`), `test_product_rv_rain_events.py` (RV's tracker glue),
-  `test_products.py` (URLs and shared downloads), `test_coordinator_timing.py`,
-  `test_sensor.py`. `conftest.py` has the `make_entry` / `make_coordinator`
-  factories, which build through the real constructors.
-- **`reference/`** — golden comparison of our extracted parsers and grid lookups
-  against pure `wradlib` (RS on the DE1200 grid), on the committed fixtures. Skips if
-  `wradlib` or the fixture is missing. The wradlib side lives in
-  `tests/wradlib_ref.py` and never imports our `radar/` code.
-- **`live/`** — downloads and parses the **real** DWD files for every product, walking
-  back several releases (OpenData publishes with a delay). Catches URL/format/archive
+  `test_product_<key>.py` for each product's fetch and parse (shared helpers in
+  `product_helpers.py`), `test_products.py` for what every product shares, and
+  `test_<module>.py` for the rest (`setup_entry`, `coordinator_timing`,
+  `sensor`, ...). `conftest.py` has the `make_entry` / `make_coordinator`
+  factories, which build through the real constructors on the real `hass`.
+- **`reference/`** — golden comparison of our parsers and grid lookup against pure
+  `wradlib`, on the committed real files (RS, RV, HymecNG). Skips if `wradlib`
+  or a fixture is missing. The wradlib side lives in `tests/wradlib_ref.py` and
+  never imports our `radar/` code.
+- **`live/`** — downloads and parses the **real** RS, RW and SF files, walking
+  back several releases (OpenData publishes with a delay; the walk is in
+  `tests/live_common.py`, shared with `live_wradlib/`). Catches URL/format/archive
   drift at the source, and reads RS by range as the integration does, so a lost
   range support or a changed tar layout fails here rather than as a silent
   fallback. Marked `@pytest.mark.live`; HA-free by design: the URLs come from the
@@ -93,12 +94,17 @@ uv run --group unit-test pytest tests
   a `.json` naming the cells each pins down) come from `--product rv` /
   `--product hymecng`, which wait for a release with rain. All three tiers read
   them through `tests/factories/real.py`.
-- `factories/` holds shared synthetic builders (e.g. `make_odim_h5`, `make_radvor_tar`, `RangeServer`),
-  imported as `from tests.factories.odim import make_odim_h5`.
+- `factories/` holds shared builders, HA-free for every tier: `odim.py`
+  (synthetic ODIM_H5 files), `radvor.py` (RADVOR tars and `RangeServer`, a
+  range-capable fake server), `real.py` (the real fixtures above). Imported as
+  `from tests.factories.odim import make_odim_h5`.
+- `entity_ids.py` is the record of entity ids by release: what 2026.10.0 gave,
+  what was renamed and what is new since.
 
 ## CI workflows
 
-- `tests.yml` — PR-gating: `parser` / `integration` / `reference` jobs (by directory).
+- `tests.yml` — PR-gating: `parser` / `integration` / `reference` jobs (by
+  directory), plus `lint` (ruff) and `typecheck` (pyright on the component).
 - `live.yml` — daily; live download+parse; opens/updates an issue on failure.
 - `live-wradlib.yml` — daily; our parser vs. wradlib on live files; opens/updates
   an issue on failure.
@@ -106,6 +112,9 @@ uv run --group unit-test pytest tests
   `pytest-homeassistant-custom-component`; opens an issue on failure (dev is
   experimental / non-blocking).
 - `hassfest.yaml`, `validate.yaml` — daily HA manifest + HACS structural validation.
+- `release-delay.yml` — scheduled; checks each product's `RELEASE_DELAY` against
+  when DWD actually publishes (see CLAUDE.md "Release timing").
+- `release-drafter.yml` — drafts the next release's notes from merged PRs.
 
 ## Adding a test
 
