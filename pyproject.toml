@@ -28,7 +28,10 @@ conflicts = [
 # numpy/aiohttp are pulled so radar/* and utils.py import without HA installed.
 unit-test = [
     "pytest",
-    "numpy",
+    # HA's own pin, so the parser tier decodes with the numpy users run.
+    # Renovate leaves it alone; tests/integration/test_dependencies.py fails
+    # when a HA bump moves numpy, which is the cue to update it here.
+    "numpy==2.3.2",
     "aiohttp",
     "requests==2.34.2",
     "h5py==3.16.0",

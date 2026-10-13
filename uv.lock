@@ -1217,8 +1217,8 @@ name = "h5py"
 version = "3.16.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy", version = "2.3.2", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-20-ha-dwd-precipitation-ha-test' or (extra == 'group-20-ha-dwd-precipitation-unit-test' and extra == 'group-20-ha-dwd-precipitation-wradlib-comparison')" },
-    { name = "numpy", version = "2.5.4", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-20-ha-dwd-precipitation-unit-test' or extra == 'group-20-ha-dwd-precipitation-wradlib-comparison'" },
+    { name = "numpy", version = "2.3.2", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-20-ha-dwd-precipitation-ha-test' or extra == 'group-20-ha-dwd-precipitation-unit-test'" },
+    { name = "numpy", version = "2.5.4", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'group-20-ha-dwd-precipitation-ha-test' and extra == 'group-20-ha-dwd-precipitation-unit-test') or (extra != 'group-20-ha-dwd-precipitation-unit-test' and extra == 'group-20-ha-dwd-precipitation-wradlib-comparison') or (extra != 'group-20-ha-dwd-precipitation-ha-test' and extra == 'group-20-ha-dwd-precipitation-wradlib-comparison')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/db/33/acd0ce6863b6c0d7735007df01815403f5589a21ff8c2e1ee2587a38f548/h5py-3.16.0.tar.gz", hash = "sha256:a0dbaad796840ccaa67a4c144a0d0c8080073c34c76d5a6941d6818678ef2738", size = 446526, upload-time = "2026-03-06T13:49:08.07Z" }
 wheels = [
@@ -1256,7 +1256,7 @@ lint = [
 unit-test = [
     { name = "aiohttp", version = "3.14.5", source = { registry = "https://pypi.org/simple" } },
     { name = "h5py" },
-    { name = "numpy", version = "2.5.4", source = { registry = "https://pypi.org/simple" } },
+    { name = "numpy", version = "2.3.2", source = { registry = "https://pypi.org/simple" } },
     { name = "pytest", version = "9.1.1", source = { registry = "https://pypi.org/simple" } },
     { name = "requests" },
 ]
@@ -1278,7 +1278,7 @@ lint = [{ name = "ruff", specifier = "==0.17.0" }]
 unit-test = [
     { name = "aiohttp" },
     { name = "h5py", specifier = "==3.16.0" },
-    { name = "numpy" },
+    { name = "numpy", specifier = "==2.3.2" },
     { name = "pytest" },
     { name = "requests", specifier = "==2.34.2" },
 ]
