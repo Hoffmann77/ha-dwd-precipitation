@@ -51,6 +51,7 @@ from .dry_streak import (
 )
 from .entity import DwdCoordinatorEntity
 from .products import dry_streak_coordinator_key, rain_events_enabled
+from .utils import iso
 from .rain_events import NO_EVENT, ONGOING, UPCOMING, VIEW_KEYS, overall_status
 from .precipitation_total import (
     PrecipitationTotalExtraData,
@@ -572,6 +573,9 @@ class PrecipitationTotalSensor(DwdCoordinatorEntity, RestoreEntity, SensorEntity
     ) -> None:
         """Initialize the sensor."""
         super().__init__(coordinator, description)
+        # A counted release always has a total: _last_release is set only
+        # together with _total (async_added_to_hass keeps that for a damaged
+        # restore payload too).
         self._total: float | None = None
         self._last_release: datetime | None = None
         self._pending: list[datetime] = []
@@ -595,11 +599,7 @@ class PrecipitationTotalSensor(DwdCoordinatorEntity, RestoreEntity, SensorEntity
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return the end of the newest window included in the total."""
-        return {
-            "counted_until": (
-                self._last_release.isoformat() if self._last_release else None
-            )
-        }
+        return {"counted_until": iso(self._last_release)}
 
     @property
     def extra_restore_state_data(self) -> PrecipitationTotalExtraData:
@@ -617,8 +617,10 @@ class PrecipitationTotalSensor(DwdCoordinatorEntity, RestoreEntity, SensorEntity
         if (restored := await self.async_get_last_extra_data()) is not None:
             data = PrecipitationTotalExtraData.from_dict(restored.as_dict())
             self._total = data.total
-            self._last_release = data.last_release
-            self._pending = data.pending
+            if data.total is not None:
+                # Without a total, nothing was counted: start over.
+                self._last_release = data.last_release
+                self._pending = data.pending
 
         # coordinator.data is already populated by the first refresh.
         self._count_new_release()
@@ -642,7 +644,7 @@ class PrecipitationTotalSensor(DwdCoordinatorEntity, RestoreEntity, SensorEntity
         if self._last_release is not None and release <= self._last_release:
             return
 
-        if self._last_release is None or self._total is None:
+        if self._last_release is None:
             # First release ever seen: it fixes the starting point only.
             self._total = self._total or 0.0
             self._last_release = release
@@ -733,7 +735,7 @@ class PrecipitationTotalSensor(DwdCoordinatorEntity, RestoreEntity, SensorEntity
                     continue  # given up on while it was being fetched
                 self._pending.remove(release)
                 if (mm := countable(value)) is not None:
-                    self._total = (self._total or 0.0) + mm
+                    self._total += mm
                     self.async_write_ha_state()
         finally:
             self._backfilling = False
