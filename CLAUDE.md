@@ -31,6 +31,9 @@ config_flow.py        UI config flow: collects name + lat/lon; options form
 const.py              DWD OpenData base URLs and HA constants.
 utils.py              async_get() HTTP helper (headers, status, separate 206
                       cap, stall timeout); FailureLatch. HA-free.
+rain_events_tracker.py
+                      RainEventsTracker: one entry's rain events in HA
+                      (store, background fill, save policy).
 release_grid.py       ReleaseGrid: a product's release times on its own
                       clock (see "Release timing"). HA-free, no relative
                       imports: scripts/check_release_delay.py uses it too.
@@ -45,7 +48,7 @@ radar/                The HA-free core: parsers and pure domain logic (no
                       requests (see "Range reads").
   nowcast.py          RV lead grid and the nowcast logic: start/end
                       detection, peak intensities, rolling-hour sums.
-  rain_events.py      Rain-event tracker behind the Rain events sensor
+  rain_events.py      Rain-event logic behind the Rain events sensor
                       (see "Rain events").
   isotime.py          iso()/parse_utc() for attributes and stored payloads.
 ```
@@ -581,12 +584,15 @@ of the bytes (archives are 3.5-17.5 MB), an RV analysis 1-2 requests and 4-7 %.
 The `Rain events` sensor (`sensor.<device>_rain_events`, key
 `radvor_rv_rain_events`) publishes the tracker's view (schema 1) as its
 attributes, a contract with blueprints: field names and semantics in the
-README section "Rain events". `radar/rain_events.py` holds the logic; `RadvorRV` the
-glue; `RainEventsSensor` in sensor.py the entity.
+README section "Rain events". `radar/rain_events.py` holds the logic;
+`RainEventsTracker` (`rain_events_tracker.py`) its life in HA (store, fill,
+save policy, warnings); `RadvorRV` only hands it each adopted release in
+`_async_on_new_release` and lends it an analysis fetch and a publish
+callback; `RainEventsSensor` in sensor.py is the entity.
 
 - **Opt-in.** The `rain_events` option (Advanced, default off) gates all of it:
-  `rain_events_enabled()` decides whether `RadvorRV` gets a `Store`, and with
-  none it skips the tracker, so an entry that does not use it makes no fill
+  `rain_events_enabled()` decides whether `RadvorRV` gets a tracker, and
+  without one there is nothing to track, so an entry that does not use it makes no fill
   requests and writes nothing. Turning it off removes the entity from the
   registry (rather than leaving "no longer provided") and deletes the store,
   so turning it on again starts clean. Nothing on 2026.10.0 had it, so it is
@@ -619,7 +625,7 @@ glue; `RainEventsSensor` in sensor.py the entity.
   rain onto an old event.
 - **Ended events** move to `last_ended` and are final; their span is kept in
   `ended_spans` while it is in view, so their rain is not picked up again.
-- **Fill before matching.** `RadvorRV._async_fill_missed` fetches each unknown
+- **Fill before matching.** `RainEventsTracker._async_fill_missed` fetches each unknown
   measured step in the window (analysis only, by range), newest first,
   sequentially, within `RAIN_FILL_BUDGET`; the first failure ends the round,
   with one warning per run of failures (running out of budget is not one).
@@ -631,11 +637,12 @@ glue; `RainEventsSensor` in sensor.py the entity.
   (`_async_fill_and_track`), and the sensor keeps the view it showed before
   (none right after a restart). Later releases queue behind a running round,
   so the tracker always sees releases in order.
-- **Persistence.** One `Store` per entry (`rain_events_store_key`). Written
+- **Persistence.** One `Store` per entry (`rain_events_store()`). Written
   `RAIN_SAVE_DELAY` after a release while something is at stake (an event, a
   wet or unknown step, a new `last_ended`); otherwise the delayed save is
   pushed back by every release and happens at shutdown, so a dry day costs no
-  writes. Unload writes it at once (an options reload must read it back),
+  writes. Unload writes it at once (the tracker's own `entry.async_on_unload`;
+  an options reload must read it back),
   `async_remove_entry` deletes it. A store that cannot be loaded (damaged, or
   another version's) or whose records `RainEventsState.from_dict` rejects
   (every field `update()` reads is checked) is discarded once with a warning:

@@ -13,9 +13,9 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .coordinator import BaseProductUpdateCoordinator
 from .const import CONF_DRY_STREAK_SOURCE, LEGACY_DRY_STREAK_SOURCE, PLATFORMS
+from .rain_events_tracker import RainEventsTracker
 from .products import (
     rain_events_enabled,
-    rain_events_store,
     RadvorRS,
     RadvorRV,
     HymecNG,
@@ -99,7 +99,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: MyConfigEntry) -> bool:
     if not rain_events_enabled(entry.options):
         # Turned off: drop what the tracker stored, so turning it on again
         # starts clean rather than from a state days out of date.
-        await rain_events_store(hass, entry.entry_id).async_remove()
+        await RainEventsTracker.async_remove(hass, entry.entry_id)
 
     entry.runtime_data = MyData({c.PRODUCT_KEY: c for c in product_coordinators})
     entry.async_on_unload(entry.add_update_listener(update_listener))
@@ -134,16 +134,9 @@ async def update_listener(hass: HomeAssistant, entry: MyConfigEntry) -> None:
 
 async def async_unload_entry(hass: HomeAssistant, entry: MyConfigEntry) -> bool:
     """Unload a config entry."""
-    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-    # Write rain_events now: an options change reloads the entry, and the new
-    # coordinator must read the current state, not one a pending save still
-    # holds.
-    rv = entry.runtime_data.coordinators.get(RadvorRV.PRODUCT_KEY)
-    if isinstance(rv, RadvorRV):
-        await rv.async_save_rain_events()
-    return unloaded
+    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Delete what the entry stored when it is removed."""
-    await rain_events_store(hass, entry.entry_id).async_remove()
+    await RainEventsTracker.async_remove(hass, entry.entry_id)
