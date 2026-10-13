@@ -52,8 +52,8 @@ from .dry_streak import (
 )
 from .entity import DwdCoordinatorEntity, unique_id_for
 from .products import dry_streak_coordinator_key, rain_events_enabled
-from .utils import iso
-from .rain_events import NO_EVENT, ONGOING, UPCOMING, VIEW_KEYS, overall_status
+from .radar.isotime import iso
+from .radar.rain_events import NO_EVENT, ONGOING, UPCOMING, VIEW_KEYS, overall_status
 from .precipitation_total import (
     PrecipitationTotalExtraData,
     counted_on_grid,

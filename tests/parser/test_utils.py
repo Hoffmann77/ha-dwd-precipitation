@@ -1,7 +1,7 @@
 """Unit tests for utils.py: fetch hardening and timestamps — no HA, no network."""
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import timezone
 
 import pytest
 
@@ -10,8 +10,6 @@ from utils import (
     DEFAULT_MAX_BYTES,
     FailureLatch,
     async_get,
-    iso,
-    parse_utc,
 )
 
 UTC = timezone.utc
@@ -155,25 +153,6 @@ def test_partial_cap_applies_to_206_only():
         )
     )
     assert len(result.content) == 100
-
-
-# ===========================================================================
-# iso / parse_utc (restore payloads)
-# ===========================================================================
-
-def test_iso_round_trips_through_parse_utc():
-    ts = datetime(2026, 10, 13, 11, 50, tzinfo=UTC)
-    assert parse_utc(iso(ts)) == ts
-    assert iso(None) is None
-
-
-def test_parse_utc_reads_naive_as_utc():
-    assert parse_utc("2026-10-13T11:50:00") == datetime(2026, 10, 13, 11, 50, tzinfo=UTC)
-
-
-@pytest.mark.parametrize("raw", [None, "", "not a time", 17, ["2026-10-13"]])
-def test_parse_utc_rejects_what_is_not_a_timestamp(raw):
-    assert parse_utc(raw) is None
 
 
 # ===========================================================================

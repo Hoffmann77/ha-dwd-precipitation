@@ -25,6 +25,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.dwd_precipitation import PRODUCT_CLASSES
 from custom_components.dwd_precipitation.const import CONF_DRY_STREAK_SOURCE, DOMAIN
 from custom_components.dwd_precipitation.coordinator import ProductMetadata
+from custom_components.dwd_precipitation.rain_events_tracker import RainEventsTracker
 from custom_components.dwd_precipitation.products import (
     HymecNG,
     RadolanRW,
@@ -620,6 +621,32 @@ async def test_removing_the_entry_deletes_its_rain_events_store(
     assert key not in hass_storage
 
 
+@pytest.mark.asyncio
+async def test_unloading_writes_the_rain_events_state(
+    hass: HomeAssistant, hass_storage
+) -> None:
+    """An options change reloads the entry; the new tracker must read today's state."""
+    from custom_components.dwd_precipitation.radar.rain_events import RainEventsState
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"name": "Home", "latitude": 51.05, "longitude": 13.73},
+        options={"rain_events": True},
+    )
+    entry.add_to_hass(hass)
+    with _patched_products():
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+    tracker = entry.runtime_data.coordinators["rv"]._rain_tracker
+    tracker.state = RainEventsState(base=datetime(2025, 6, 1, 12, 0, tzinfo=timezone.utc))
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+    stored = hass_storage[f"dwd_precipitation.{entry.entry_id}.rain_events"]["data"]
+    assert stored["base"] == "2025-06-01T12:00:00+00:00"
+
+
 RAIN_VIEW = {
     "schema": 1,
     "base": "2025-06-01T12:00:00+00:00",
@@ -643,7 +670,7 @@ async def test_rain_events_sensor_with_the_option(hass: HomeAssistant) -> None:
     entry.add_to_hass(hass)
 
     tracker = AsyncMock(return_value=RAIN_VIEW)
-    with _patched_products(), patch.object(RadvorRV, "_async_rain_events", new=tracker):
+    with _patched_products(), patch.object(RainEventsTracker, "async_track", new=tracker):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
@@ -653,7 +680,7 @@ async def test_rain_events_sensor_with_the_option(hass: HomeAssistant) -> None:
     assert state.attributes["schema"] == 1
     assert state.attributes["events"] == RAIN_VIEW["events"]
     assert state.attributes["options"] == ["none", "upcoming", "ongoing"]
-    assert entry.runtime_data.coordinators["rv"]._rain_store is not None
+    assert entry.runtime_data.coordinators["rv"]._rain_tracker is not None
 
     flag = _state_for(hass, "radvor_rv_precipitation_expected_120", "binary_sensor")
     assert "rain_events" not in flag.attributes
@@ -676,6 +703,6 @@ async def test_rain_events_off_runs_no_tracker_and_leaves_nothing(
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
-    assert entry.runtime_data.coordinators["rv"]._rain_store is None
+    assert entry.runtime_data.coordinators["rv"]._rain_tracker is None
     assert er.async_get(hass).async_get_entity_id("sensor", DOMAIN, unique_id) is None
     assert key not in hass_storage
