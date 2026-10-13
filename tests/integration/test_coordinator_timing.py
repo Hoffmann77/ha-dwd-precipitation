@@ -357,6 +357,33 @@ async def test_first_ever_failure_starts_fast_polling():
     assert coord._fast_poll_unsub is not None
 
 
+@pytest.mark.asyncio
+async def test_a_file_that_cannot_be_read_leaves_its_traceback_once(caplog):
+    """Debug traceback on the first failure of a run; none for a late file."""
+    now = datetime(2025, 6, 1, 13, 0, tzinfo=UTC)
+    coord = _make_coordinator(RadolanRW)
+    caplog.set_level("DEBUG", logger=coordinator_mod.__name__)
+
+    with (
+        patch.object(coordinator_mod.dt_util, "utcnow", return_value=now),
+        _capture_scheduled_delays(),
+    ):
+        coord._fetch_and_parse = AsyncMock(side_effect=ValueError("bad grid"))
+        for _ in range(3):
+            with pytest.raises(UpdateFailed):
+                await coord._async_update_data()
+        traces = [r for r in caplog.records if r.exc_info]
+        assert len(traces) == 1
+        assert "ValueError: bad grid" in caplog.text
+
+        coord._stop_fast_polling()  # a new run of failures
+        caplog.clear()
+        coord._fetch_and_parse = AsyncMock(side_effect=_response_error(404, "Not Found"))
+        with pytest.raises(UpdateFailed):
+            await coord._async_update_data()
+        assert not [r for r in caplog.records if r.exc_info]
+
+
 
 # ----------------------------------------------------------------------
 # Fetch-error messages
@@ -406,7 +433,7 @@ def test_not_found_message_does_not_blame_the_user():
     [
         (_response_error(503, "Service Unavailable"), "HTTP 503"),
         (aiohttp.ClientConnectionError("DNS failure"), "internet access"),
-        (ValueError("Unexpected RADOLAN grid shape"), "Could not read"),
+        (ValueError("Unexpected RADOLAN grid shape"), "please report it"),
     ],
 )
 def test_every_message_states_the_retry(err, expected):

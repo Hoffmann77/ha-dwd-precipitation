@@ -136,9 +136,14 @@ def _describe_fetch_error(
             "Check this machine's internet access."
         )
     else:
+        # Not a transport error: DWD served something this version cannot
+        # read. That is a format change or a bug, not a late file, and only a
+        # report gets it fixed; the traceback goes to the debug log.
         cause = (
-            f"Could not read the {release_str} release ({err}). The download was "
-            "probably incomplete."
+            f"Could not read the {release_str} release "
+            f"({type(err).__name__}: {err}). This is likely a change on DWD's "
+            "side or a bug in the integration; please report it if it keeps "
+            "happening."
         )
 
     return f"{cause} Retrying in {_format_duration(next_retry)}."
@@ -597,6 +602,17 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
         try:
             data, metadata = await self._fetch_and_parse(latest_release)
         except Exception as err:
+            if self._fast_poll_failures == 0 and not isinstance(
+                err, aiohttp.ClientError
+            ):
+                # Once per run of failures: what a report needs, and the only
+                # trace of it while the cached value still covers the gap.
+                _LOGGER.debug(
+                    "%s: reading the %s release failed",
+                    self.PRODUCT_KEY,
+                    latest_release,
+                    exc_info=True,
+                )
             # Keep retrying regardless of availability: the backoff governs the
             # retry cadence, _data_is_reportable() governs what HA shows.
             next_retry = self._schedule_fast_poll()
