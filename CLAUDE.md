@@ -39,9 +39,11 @@ options.py            DwdOptions: the entry's options as one typed snapshot,
                       with every option's default in DEFAULT_OPTIONS. Read as
                       coordinator.options / entry.runtime_data.options; never
                       entry.options.get() elsewhere.
-const.py              DWD OpenData base URLs and HA constants.
+const.py              Option keys and defaults, payload sub-keys (KEY_*),
+                      HymecNG's class labels, and other HA constants.
 utils.py              async_get() HTTP helper (headers, status, separate 206
-                      cap, stall timeout); FailureLatch. HA-free.
+                      cap, stall timeout); DownloadCache (one download per
+                      URL for an entry's products); FailureLatch. HA-free.
 rain_events_tracker.py
                       RainEventsTracker: one entry's rain events in HA
                       (store, background fill, save policy).
@@ -52,6 +54,12 @@ radar/                The HA-free core: parsers and pure domain logic (no
                       heavy external deps). Its modules import each other
                       relatively, which works both inside HA and in the
                       parser tier (which imports it as `radar`).
+  __init__.py         Exports what the integration reads (the cell readers
+                      and the DE1200 lookup); the whole-grid readers are for
+                      the test tiers and scripts/, from radar.odim.
+  urls.py             Every product's OpenData URL pattern (product_url,
+                      radvor_prefix), for the products, scripts/ and the
+                      live tiers alike.
   odim.py             ODIM_H5 (HDF5) reader for every product (RS, RV,
                       HymecNG, RW/SF in their HDF5 edition) and the DE1200
                       grid lookup.
