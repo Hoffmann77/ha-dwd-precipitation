@@ -26,7 +26,7 @@ from custom_components.dwd_precipitation.products import (
     RadvorRS,
     RadvorRV,
 )
-from custom_components.dwd_precipitation.radar import RS_GRID_SHAPE
+from custom_components.dwd_precipitation.radar import RS_GRID_SHAPE, get_rs_grid_index
 from custom_components.dwd_precipitation.utils import AsyncResponse
 
 from tests.factories.odim import make_hymecng_h5, make_rs_tar, make_rv_tar
@@ -495,7 +495,7 @@ async def test_radolan_reads_the_hdf5_edition_and_its_window(cls, product, hours
     assert url.endswith(f"/{product.lower()}/raa01-{product.lower()}_10000-2506011250-dwd---bin.hdf5")
     assert reader.call_args.args[1:] == coord.index
     assert reader.call_args.kwargs["expected_shape"] == RS_GRID_SHAPE
-    assert coord.index == products.get_rs_grid_index(*coord.coords)
+    assert coord.index == get_rs_grid_index(*coord.coords)
     assert value == pytest.approx(1.7)
     assert meta.source_product == product
     assert meta.source_timestamp == meta.data_end == ts

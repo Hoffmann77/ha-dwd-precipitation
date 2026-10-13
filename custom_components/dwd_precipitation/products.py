@@ -6,7 +6,7 @@ import asyncio
 import logging
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
-from functools import cached_property
+from typing import Any
 from io import BytesIO
 
 import aiohttp
@@ -23,7 +23,6 @@ from .radar.tar_range import fetch_tar_members, member_names, members_from_archi
 from .radar import (
     read_odim_composite_cell,
     read_odim_classification_cell,
-    get_rs_grid_index,
     RS_GRID_SHAPE,
 )
 from .radar.nowcast import (
@@ -321,7 +320,46 @@ def _next_120(
     )
 
 
-class RadvorRS(BaseProductUpdateCoordinator):
+class WholeFileProduct(BaseProductUpdateCoordinator, ABC):
+    """A product published as one file per release, decoded whole.
+
+    Fetching is the same for all of them: download ``_get_url(ts)`` on the
+    event loop, decode it with ``_parse(content, ts)`` in the executor.
+    """
+
+    @abstractmethod
+    def _get_url(self, ts: datetime) -> str:
+        """Return the URL of release ``ts``."""
+
+    @abstractmethod
+    def _parse(self, content: bytes, ts: datetime) -> tuple[Any, Any]:
+        """Return (data, metadata) from the file's bytes (blocking)."""
+
+    async def _fetch_and_parse(self, ts: datetime) -> tuple[Any, Any]:
+        """Fetch the release's file and decode it off the event loop."""
+        response = await async_get(self._get_url(ts), self.async_client)
+        return await self.hass.async_add_executor_job(
+            self._parse, response.content, ts
+        )
+
+
+class RadvorProduct(WholeFileProduct, ABC):
+    """A RADVOR nowcast (RS, RV): one tar of 25 ODIM_H5 members per release.
+
+    The tar is ``<prefix>.tar`` under the product's key, its members
+    ``<prefix>_<lead>-hd5``.
+    """
+
+    def _prefix(self, ts: datetime) -> str:
+        """Return release ``ts``'s name stem (``composite_rs_<ts>``)."""
+        return _radvor_prefix(self.PRODUCT_KEY, ts)
+
+    def _get_url(self, ts: datetime) -> str:
+        """Return the URL for the tar archive."""
+        return f"{DWD_COMPOSITE_URL}/{self.PRODUCT_KEY}/{self._prefix(ts)}.tar"
+
+
+class RadvorRS(RadvorProduct):
     """DWD RS precipitation nowcast (RADVOR, ODIM_H5 format).
 
     RS is published every 5 minutes as one tar of 25 ODIM_H5 members (leads
@@ -356,11 +394,6 @@ class RadvorRS(BaseProductUpdateCoordinator):
     # "how much fell in the last hour".
     OVERDUE_GRACE = DEFAULT_OVERDUE_GRACE
 
-    @cached_property
-    def index(self) -> tuple[int, int]:
-        """Return (row, col) in the RS composite grid."""
-        return get_rs_grid_index(*self.coords)
-
     @property
     def full_rolling_series(self) -> bool:
         """Whether this entry decodes every member for the rolling-hour series."""
@@ -368,37 +401,32 @@ class RadvorRS(BaseProductUpdateCoordinator):
             CONF_FULL_ROLLING_SERIES, DEFAULT_FULL_ROLLING_SERIES
         )
 
-    def _get_url(self, ts: datetime) -> str:
-        """Return the URL for the tar archive."""
-        return f"{DWD_COMPOSITE_URL}/rs/{_radvor_prefix('rs', ts)}.tar"
-
     async def _fetch_and_parse(self, ts: datetime) -> tuple[list, list]:
         """Fetch the members this entry decodes, then decode them off the loop.
 
         All 25 for the full rolling series, so the whole archive; otherwise
         only the three fixed hours, read by range (~20 % of the bytes).
         """
-        prefix = _radvor_prefix("rs", ts)
         if self.full_rolling_series:
-            response = await async_get(self._get_url(ts), self.async_client)
-            return await self.hass.async_add_executor_job(
-                self._parse_archive, response.content, ts
-            )
+            return await super()._fetch_and_parse(ts)
         members = await async_read_tar_members(
-            self.hass, self.async_client, self._get_url(ts), prefix, RS_HOURLY_LEADS
+            self.hass, self.async_client, self._get_url(ts), self._prefix(ts),
+            RS_HOURLY_LEADS,
         )
-        return await self.hass.async_add_executor_job(self._parse, members, ts)
+        return await self.hass.async_add_executor_job(self._parse_members, members, ts)
 
-    def _parse_archive(self, content: bytes, ts: datetime) -> tuple[list, list]:
+    def _parse(self, content: bytes, ts: datetime) -> tuple[list, list]:
         """Derive the RS entity payloads from a whole tar (blocking)."""
-        return self._parse(_tar_members(content, _radvor_prefix("rs", ts), LEADS), ts)
+        return self._parse_members(_tar_members(content, self._prefix(ts), LEADS), ts)
 
-    def _parse(self, members: dict[str, bytes], ts: datetime) -> tuple[list, list]:
+    def _parse_members(
+        self, members: dict[str, bytes], ts: datetime
+    ) -> tuple[list, list]:
         """Derive the RS entity payloads from its members' bytes (blocking)."""
         full = self.full_rolling_series
         cells = _decode_cells(
             members,
-            _radvor_prefix("rs", ts),
+            self._prefix(ts),
             LEADS if full else RS_HOURLY_LEADS,
             self.index,
             "RS",
@@ -426,7 +454,7 @@ class RadvorRS(BaseProductUpdateCoordinator):
         return data + [peak, next_120[0]], metadata + [peak_meta, next_120[1]]
 
 
-class RadvorRV(BaseProductUpdateCoordinator):
+class RadvorRV(RadvorProduct):
     """DWD RV precipitation nowcast (RADVOR, ODIM_H5 format).
 
     RV is published every 5 minutes as one tar of 25 ODIM_H5 members
@@ -483,22 +511,6 @@ class RadvorRV(BaseProductUpdateCoordinator):
         super().__init__(hass, entry, async_client, lat, lon)
         if rain_events_enabled(entry.options):
             self._rain_store = rain_events_store(hass, entry.entry_id)
-
-    @cached_property
-    def index(self) -> tuple[int, int]:
-        """Return (row, col) in the RV composite grid (identical to RS)."""
-        return get_rs_grid_index(*self.coords)
-
-    def _get_url(self, ts: datetime) -> str:
-        """Return the URL for the tar archive."""
-        return f"{DWD_COMPOSITE_URL}/rv/{_radvor_prefix('rv', ts)}.tar"
-
-    async def _fetch_and_parse(self, ts: datetime) -> tuple[dict, dict]:
-        """Fetch one tar archive and decode it off the event loop."""
-        response = await async_get(self._get_url(ts), self.async_client)
-        return await self.hass.async_add_executor_job(
-            self._parse, response.content, ts
-        )
 
     async def _async_on_new_release(
         self, release: datetime, data: dict, metadata: dict
@@ -666,7 +678,7 @@ class RadvorRV(BaseProductUpdateCoordinator):
 
     async def _async_fetch_analysis(self, step_end: datetime) -> float | None:
         """Return the analysis (lead 0) of release ``step_end``; None for nodata."""
-        prefix = _radvor_prefix("rv", step_end)
+        prefix = self._prefix(step_end)
         members = await async_read_tar_members(
             self.hass, self.async_client, self._get_url(step_end), prefix, [0]
         )
@@ -710,7 +722,7 @@ class RadvorRV(BaseProductUpdateCoordinator):
 
     def _parse(self, content: bytes, ts: datetime) -> tuple[dict, dict]:
         """Derive the RV entity payloads from the tar bytes (blocking)."""
-        prefix = _radvor_prefix("rv", ts)
+        prefix = self._prefix(ts)
         cells = _decode_cells(
             _tar_members(content, prefix, LEADS), prefix, LEADS, self.index, "RV"
         )
@@ -852,7 +864,7 @@ class RadvorRV(BaseProductUpdateCoordinator):
         return data, metadata
 
 
-class HymecNG(BaseProductUpdateCoordinator):
+class HymecNG(WholeFileProduct):
     """DWD HymecNG precipitation-type composite (ODIM_H5 classification).
 
     Published every 5 minutes as one ODIM_H5 file (no tar) on the same
@@ -880,11 +892,6 @@ class HymecNG(BaseProductUpdateCoordinator):
     # is still informative.
     OVERDUE_GRACE = DEFAULT_OVERDUE_GRACE
 
-    @cached_property
-    def index(self) -> tuple[int, int]:
-        """Return (row, col) in the HymecNG grid (identical to RS/RV)."""
-        return get_rs_grid_index(*self.coords)
-
     def _get_url(self, ts: datetime) -> str:
         """Return the URL for the single ODIM_H5 file."""
         return (
@@ -892,12 +899,9 @@ class HymecNG(BaseProductUpdateCoordinator):
             f"composite_HymecNG_{ts.strftime('%Y%m%d_%H%M')}_000-hd5"
         )
 
-    async def _fetch_and_parse(self, ts: datetime) -> tuple[str | None, ProductMetadata]:
-        """Fetch one ODIM_H5 file and decode it off the event loop."""
-        response = await async_get(self._get_url(ts), self.async_client)
-        return await self.hass.async_add_executor_job(self._parse, response.content)
-
-    def _parse(self, content: bytes) -> tuple[str | None, ProductMetadata]:
+    def _parse(
+        self, content: bytes, ts: datetime
+    ) -> tuple[str | None, ProductMetadata]:
         """Return the cell's precipitation-type label (blocking)."""
         value, dataset_what, moment_what = read_odim_classification_cell(
             BytesIO(content), *self.index, expected_shape=RS_GRID_SHAPE
@@ -919,7 +923,7 @@ class HymecNG(BaseProductUpdateCoordinator):
         return precip_type, _odim_metadata(dataset_what)
 
 
-class RadolanProduct(BaseProductUpdateCoordinator, ABC):
+class RadolanProduct(WholeFileProduct, ABC):
     """Abstract coordinator for the RADOLAN analyses (RW, SF), read as HDF5.
 
     DWD publishes RADOLAN both in its legacy binary format (.bz2, national
@@ -934,21 +938,9 @@ class RadolanProduct(BaseProductUpdateCoordinator, ABC):
     precipitation -> float, metadata -> ProductMetadata
     """
 
-    @cached_property
-    def index(self) -> tuple[int, int]:
-        """Return the (row, col) of the DE1200 cell holding the location."""
-        return get_rs_grid_index(*self.coords)
-
-    @abstractmethod
-    def _get_url(self, ts: datetime) -> str:
-        """Return the HDF5 file URL for the given release timestamp."""
-
-    async def _fetch_and_parse(self, ts: datetime) -> tuple[float | None, ProductMetadata]:
-        """Fetch one RADOLAN HDF5 file and decode it off the event loop."""
-        response = await async_get(self._get_url(ts), self.async_client)
-        return await self.hass.async_add_executor_job(self._parse, response.content)
-
-    def _parse(self, content: bytes) -> tuple[float | None, ProductMetadata]:
+    def _parse(
+        self, content: bytes, ts: datetime
+    ) -> tuple[float | None, ProductMetadata]:
         """Return (scalar_value, ProductMetadata) from the HDF5 bytes (blocking).
 
         The value is ``None`` where the cell holds no data (radar outage, masked

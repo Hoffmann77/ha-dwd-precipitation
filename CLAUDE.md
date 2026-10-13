@@ -299,18 +299,26 @@ once released, since renaming one orphans the user's entity.
 
 ## Adding a new DWD product
 
-1. Subclass `BaseProductUpdateCoordinator` in `products.py`
+1. Subclass a base in `products.py`: `WholeFileProduct` for one file per
+   release decoded whole (HymecNG, RADOLAN), `RadvorProduct` for a RADVOR
+   tar (RS, RV); `BaseProductUpdateCoordinator` itself only if neither fits
 2. Set `PRODUCT_KEY`, `PRODUCT_LABEL`, `RELEASE_INTERVAL`, `RELEASE_DELAY`,
    `RELEASE_OFFSET` and `OVERDUE_GRACE` (spelled out even when it is just
    `DEFAULT_OVERDUE_GRACE` — a test enforces this), plus
    `MAX_FAST_POLL_INTERVAL` if the default does not fit
-3. Implement `_get_url(ts)` and `async _fetch_and_parse(ts)`
-4. Override `index` (cached_property) if the grid differs from DE1200
+3. Implement `_get_url(ts)` and the blocking `_parse(content, ts)`; the base
+   fetches and runs `_parse` in the executor. Override `_fetch_and_parse` only
+   to read part of a file (RS's range reads), and keep it free of side
+   effects (anything else goes in `_async_on_new_release`)
+4. `index` defaults to the DE1200 lookup; override it (cached_property) only
+   for a product on another grid
 5. Add sensor descriptors in `sensor.py` (new `*_SENSORS` tuple)
 6. Register the class in `__init__.py` `PRODUCT_CLASSES` tuple
 7. Register sensors in `sensor.py` `async_setup_entry`, and add each
    `translation_key`'s name to `translations/en.json` and `translations/de.json`
    (the two files must keep identical keys)
+8. Add it to `PRODUCTS` in `scripts/check_release_delay.py`, so its
+   `RELEASE_DELAY` is checked against what DWD actually does
 
 ## Release timing
 

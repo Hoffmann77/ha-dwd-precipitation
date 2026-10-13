@@ -30,6 +30,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from homeassistant.util import dt as dt_util
 
 from .const import CONF_UNAVAILABLE_WHEN_STALE, DEFAULT_UNAVAILABLE_WHEN_STALE
+from .radar import get_rs_grid_index
 from .release_grid import ReleaseGrid
 
 _LOGGER = logging.getLogger(__name__)
@@ -179,8 +180,9 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
     """Abstract per-product data update coordinator.
 
     Each concrete subclass represents one DWD product and owns its own
-    update schedule. Subclasses must define PRODUCT_KEY, timing ClassVars,
-    and implement index() and _fetch_and_parse().
+    update schedule. Subclasses must define PRODUCT_KEY and the timing
+    ClassVars, and implement _fetch_and_parse() (products.py has a base for
+    one-file-per-release products). index defaults to the DE1200 grid.
 
     """
 
@@ -549,9 +551,15 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
     # Abstract interface — subclasses implement these
     # ------------------------------------------------------------------
 
-    @abstractmethod
-    def index(self):
-        """Grid cell index for this location. Override with @cached_property."""
+    @cached_property
+    def index(self) -> tuple[int, int]:
+        """Return the (row, col) of the grid cell holding the location.
+
+        Every product so far is on DWD's DE1200 grid (RS/RV/HymecNG, and
+        RW/SF in their HDF5 edition). Override with a cached_property for a
+        product on another grid.
+        """
+        return get_rs_grid_index(*self.coords)
 
     @abstractmethod
     async def _fetch_and_parse(self, ts: datetime) -> tuple[Any, Any]:
