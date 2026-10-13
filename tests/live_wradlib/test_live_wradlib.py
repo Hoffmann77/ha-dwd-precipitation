@@ -40,6 +40,7 @@ from radar.odim import (  # noqa: E402
     read_odim_composite_cell,
     rs_grid_contains,
 )
+from radar.urls import product_url, radvor_prefix  # noqa: E402
 from tests.live_wradlib import report  # noqa: E402
 from tests.wradlib_ref import (  # noqa: E402
     de1200_cell,
@@ -49,8 +50,6 @@ from tests.wradlib_ref import (  # noqa: E402
 
 pytestmark = [pytest.mark.live, pytest.mark.wradlib]
 
-_COMPOSITE = "https://opendata.dwd.de/weather/radar/composite"
-_RADOLAN = "https://opendata.dwd.de/weather/radar/radolan"
 
 # Spread over the whole of Germany, including the grid-edge regions where a
 # projection or orientation error shows most. Keep them fixed: a failure
@@ -97,27 +96,22 @@ def _hourly_candidates(minute: int):
     return candidates
 
 
-_URLS = {
-    "rs": (_five_minute_candidates,
-           lambda ts: f"{_COMPOSITE}/rs/composite_rs_{ts:%Y%m%d_%H%M}.tar"),
-    "rv": (_five_minute_candidates,
-           lambda ts: f"{_COMPOSITE}/rv/composite_rv_{ts:%Y%m%d_%H%M}.tar"),
-    "hymecng": (_five_minute_candidates,
-                lambda ts: f"{_COMPOSITE}/hymecng/composite_HymecNG_{ts:%Y%m%d_%H%M}_000-hd5"),
-    "rw": (_hourly_candidates(0),
-           lambda ts: f"{_RADOLAN}/rw/raa01-rw_10000-{ts:%y%m%d%H%M}-dwd---bin.hdf5"),
-    "sf": (_hourly_candidates(50),
-           lambda ts: f"{_RADOLAN}/sf/raa01-sf_10000-{ts:%y%m%d%H%M}-dwd---bin.hdf5"),
+# The files the integration fetches (radar/urls.py), newest candidate first.
+_CANDIDATES = {
+    "rs": _five_minute_candidates,
+    "rv": _five_minute_candidates,
+    "hymecng": _five_minute_candidates,
+    "rw": _hourly_candidates(0),
+    "sf": _hourly_candidates(50),
 }
 
 
 @lru_cache(maxsize=None)
 def _download(product: str) -> tuple[bytes, datetime, str]:
     """Return (content, release, url) of the newest downloadable release."""
-    candidates, url_for = _URLS[product]
     tried = []
-    for ts in candidates():
-        url = url_for(ts)
+    for ts in _CANDIDATES[product]():
+        url = product_url(product, ts)
         tried.append(url)
         try:
             resp = requests.get(url, timeout=120)
@@ -133,7 +127,7 @@ def _download(product: str) -> tuple[bytes, datetime, str]:
 def _tar_members(product: str) -> dict[int, bytes]:
     """{lead: hd5 bytes} for a RADVOR tar; every lead must be present."""
     content, ts, url = _download(product)
-    prefix = f"composite_{product}_{ts:%Y%m%d_%H%M}"
+    prefix = radvor_prefix(product, ts)
     with tarfile.open(fileobj=io.BytesIO(content)) as tf:
         names = set(tf.getnames())
         missing = [f"{prefix}_{lead:03d}-hd5" for lead in LEADS

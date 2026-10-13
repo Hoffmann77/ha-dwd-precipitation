@@ -23,8 +23,7 @@ import pytest
 import requests
 
 from radar.odim import read_odim_composite
-
-_OPENDATA = "https://opendata.dwd.de/weather/radar"
+from radar.urls import product_url, radvor_prefix
 
 
 # ---------------------------------------------------------------------------
@@ -54,7 +53,7 @@ def _radolan_candidates(minute: int):
 # ---------------------------------------------------------------------------
 
 def _parse_rs(content: bytes, ts: datetime) -> np.ndarray:
-    fname = f"composite_rs_{ts.strftime('%Y%m%d_%H%M')}"
+    fname = radvor_prefix("rs", ts)
     with tarfile.open(fileobj=io.BytesIO(content)) as tf:
         hd5 = tf.extractfile(f"{fname}_000-hd5").read()
     data, _ = read_odim_composite(io.BytesIO(hd5))
@@ -70,27 +69,19 @@ def _parse_radolan(content: bytes, _ts: datetime) -> np.ndarray:
 _PRODUCTS = {
     "rs": {
         "candidates": _rs_candidates,
-        "url": lambda ts: (
-            f"{_OPENDATA}/composite/rs/composite_rs_{ts.strftime('%Y%m%d_%H%M')}.tar"
-        ),
+        "url": lambda ts: product_url("rs", ts),
         "parse": _parse_rs,
         "shape": (1200, 1100),
     },
     "rw": {
         "candidates": _radolan_candidates(0),
-        "url": lambda ts: (
-            f"{_OPENDATA}/radolan/rw/raa01-rw_10000-"
-            f"{ts.strftime('%y%m%d%H%M')}-dwd---bin.hdf5"
-        ),
+        "url": lambda ts: product_url("rw", ts),
         "parse": _parse_radolan,
         "shape": (1200, 1100),
     },
     "sf": {
         "candidates": _radolan_candidates(50),
-        "url": lambda ts: (
-            f"{_OPENDATA}/radolan/sf/raa01-sf_10000-"
-            f"{ts.strftime('%y%m%d%H%M')}-dwd---bin.hdf5"
-        ),
+        "url": lambda ts: product_url("sf", ts),
         "parse": _parse_radolan,
         "shape": (1200, 1100),
     },

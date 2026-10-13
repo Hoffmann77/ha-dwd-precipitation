@@ -31,11 +31,13 @@ import h5py
 import numpy as np
 import requests
 
+sys.path.insert(0, str(Path(__file__).parents[1] / "custom_components/dwd_precipitation"))
+from radar.urls import product_url, radvor_prefix  # noqa: E402
+
 FIXTURES = Path(__file__).parent.parent / "tests" / "fixtures"
 HDF5_OUT = FIXTURES / "composite_rs_sample.hd5"
 META_OUT  = FIXTURES / "fixture_metadata.json"
 
-DWD_URL   = "https://opendata.dwd.de/weather/radar/composite/rs"
 MIN_MM    = 0.1   # minimum precipitation to consider a valid cell
 
 # Real RS grid parameters for the synthetic fallback
@@ -107,8 +109,8 @@ def try_download_real_file() -> tuple[bytes | None, datetime | None]:
     ts -= timedelta(minutes=ts.minute % 5 + 10)
 
     for _ in range(24):
-        fname = f"composite_rs_{ts.strftime('%Y%m%d_%H%M')}"
-        url   = f"{DWD_URL}/{fname}.tar"
+        fname = radvor_prefix("rs", ts)
+        url   = product_url("rs", ts)
         print(f"  Trying {url} …", flush=True)
         try:
             resp = requests.get(url, timeout=30)

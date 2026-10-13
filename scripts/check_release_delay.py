@@ -32,7 +32,7 @@ published fact.
 The workflow now runs once every 24h, so the sample count per product is
 sized to cover a fixed real-world window rather than a fixed file count
 (``--samples``, when passed explicitly, overrides this per-product sizing for
-every product): RS/HymecNG (5 min interval) sample ``TARGET_WINDOW_HOURS``
+every product): RS/RV/HymecNG (5 min interval) sample ``TARGET_WINDOW_HOURS``
 worth of files (12h) so a slow drift is still visible within one run; RW/SF
 (1h interval) sample 24h, unchanged from before — for those, catching a drift
 now takes two consecutive daily runs (48h) instead of two runs 12h apart.
@@ -74,9 +74,8 @@ _INTEGRATION = _REPO_ROOT / "custom_components" / "dwd_precipitation"
 # release_grid is HA-free and has no relative imports, so the integration's
 # own grid arithmetic is importable here without Home Assistant.
 sys.path.insert(0, str(_INTEGRATION))
+from radar.urls import product_url  # noqa: E402
 from release_grid import ReleaseGrid  # noqa: E402
-
-_OPENDATA = "https://opendata.dwd.de/weather/radar"
 
 RELEASE_KEYS = ("RELEASE_INTERVAL", "RELEASE_DELAY", "RELEASE_OFFSET")
 
@@ -216,33 +215,22 @@ class ProductSpec:
     url_for: Callable[[datetime], str]
 
 
+def _spec(key: str, class_name: str) -> ProductSpec:
+    """Probe the files the integration fetches for this product key."""
+    return ProductSpec(key, class_name, lambda ts: product_url(key, ts))
+
+
+# Every product with its own release grid in UTC. sf_2350 is not probed on its
+# own: it reads SF's files on a local-time grid, with SF's RELEASE_DELAY (a
+# test pins that), so "sf" measures its lag too.
 PRODUCTS: dict[str, ProductSpec] = {
-    "rs": ProductSpec(
-        "rs",
-        "RadvorRS",
-        lambda ts: f"{_OPENDATA}/composite/rs/composite_rs_{ts.strftime('%Y%m%d_%H%M')}.tar",
-    ),
-    "hymecng": ProductSpec(
-        "hymecng",
-        "HymecNG",
-        lambda ts: f"{_OPENDATA}/composite/hymecng/composite_HymecNG_{ts.strftime('%Y%m%d_%H%M')}_000-hd5",
-    ),
-    "rw": ProductSpec(
-        "rw",
-        "RadolanRW",
-        lambda ts: f"{_OPENDATA}/radolan/rw/raa01-rw_10000-{ts.strftime('%y%m%d%H%M')}-dwd---bin.hdf5",
-    ),
+    "rs": _spec("rs", "RadvorRS"),
+    "rv": _spec("rv", "RadvorRV"),
+    "hymecng": _spec("hymecng", "HymecNG"),
+    "rw": _spec("rw", "RadolanRW"),
     # RW's 10-minute runs: the same file family as "rw", on a 10-minute grid.
-    "rw_10min": ProductSpec(
-        "rw_10min",
-        "RadolanRW10",
-        lambda ts: f"{_OPENDATA}/radolan/rw/raa01-rw_10000-{ts.strftime('%y%m%d%H%M')}-dwd---bin.hdf5",
-    ),
-    "sf": ProductSpec(
-        "sf",
-        "RadolanSF",
-        lambda ts: f"{_OPENDATA}/radolan/sf/raa01-sf_10000-{ts.strftime('%y%m%d%H%M')}-dwd---bin.hdf5",
-    ),
+    "rw_10min": _spec("rw_10min", "RadolanRW10"),
+    "sf": _spec("sf", "RadolanSF"),
 }
 
 # Real-world span the rolling window should cover, per product — sized so a
@@ -251,6 +239,7 @@ PRODUCTS: dict[str, ProductSpec] = {
 # count via each product's actual RELEASE_INTERVAL in main().
 TARGET_WINDOW_HOURS: dict[str, float] = {
     "rs": 12,
+    "rv": 12,
     "hymecng": 12,
     "rw": 24,
     "rw_10min": 24,
