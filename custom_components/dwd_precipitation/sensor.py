@@ -425,8 +425,12 @@ class PrecipitationSensorEntity(DwdCoordinatorEntity, SensorEntity):
 
     entity_description: PrecipitationSensorEntityDescription
 
-    # The per-lead forecast series would bloat the recorder history.
-    _unrecorded_attributes = frozenset({"forecast_5min", "forecast_rolling_1h"})
+    # The per-lead forecast series would bloat the recorder history, and the
+    # windows move with every release: each would be a new attribute row every
+    # 5 minutes, while what they say follows from the release time.
+    _unrecorded_attributes = frozenset(
+        {"forecast_5min", "forecast_rolling_1h", "window_start", "window_end"}
+    )
 
     @property
     def native_value(self) -> float | datetime | str | None:
