@@ -412,6 +412,27 @@ reference 10 -> 12; both live tiers pass (4 and 55).
 - Release history out of CLAUDE.md into `CHANGELOG.md` + `docs/adr/`; old
   entity-id list as a constant checked by a test (single source for README too).
 
+**Step 10 outcome (done, 5 commits `5058c0f`..`9eeced6`).**
+- README: `next 1–2h` fixed; the orphan `screenshot_entities.png` removed;
+  `test_docs.py` (integration) builds the troubleshooting timings from the
+  constants and checks `sf_2350` is the only exception.
+- CLAUDE.md Architecture lists every module (`radar/urls.py`,
+  `radar/__init__.py` were missing; `const.py`/`utils.py` descriptions were
+  stale), checked both ways by `tests/parser/test_docs.py`.
+- `tests/entity_ids.py` is the one record of released ids; the setup test
+  and a README check use it.
+- `tests/README.md` describes tiers by naming pattern, and lists the
+  helpers and every workflow.
+- *Decision:* ADRs only, no `CHANGELOG.md` — Release Drafter writes the
+  release notes from PRs. Eight records in `docs/adr/`; CLAUDE.md keeps the
+  rules and cites them (40 lines shorter); a test checks the citations.
+- *Not done:* a new entities screenshot. It needs a running HA on this
+  branch; the README still shows the 2026.8.0 entity list.
+- *Not done, deliberately:* "one place for each figure" beyond the README
+  timings. The remaining figures (archive sizes, measured delays) are
+  measurements, now each in one ADR or CLAUDE.md section rather than
+  repeated.
+
 ---
 
 ## Decisions needed before the affected PR
