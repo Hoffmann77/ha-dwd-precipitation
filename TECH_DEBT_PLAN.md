@@ -200,6 +200,28 @@ The base the next three PRs stand on. *(TD 1, 3, 6, 10, 18; S-altitude 2, 6, 9, 
   (warn once per run — TD 6), tar-member-missing warning, backfill, and the
   tracker in PR 6.
 
+**Step 4 outcome (done, 6 commits `162f4b7`..`9d4e25c`).**
+- `ReleaseGrid` (`release_grid.py`, HA-free) replaces `mydatetime` /
+  `get_previous_multiple` and the coordinator's three grid methods; the
+  release-delay script imports it. Checked against the old arithmetic on 345k
+  instants (every product, UTC and Berlin, both 2026 changeovers): identical.
+- Totals walk the grid with one cutoff (`grid.back(current, limit)`); a gap
+  older than the window is logged at INFO; the HH:50 grid move is mapped once
+  at restore (`counted_on_grid`). Checked against the old walk on 8000 random
+  cases: identical. A year's gap now walks <100 steps instead of 8760.
+- `_fetch_and_parse` is side-effect free; RV's tracker runs in the new
+  `_async_on_new_release` hook; `async_fetch_release` serves the backfill.
+- `index` defaults to DE1200; `WholeFileProduct` / `RadvorProduct` bases;
+  `_parse(content, ts)` everywhere; CLAUDE.md's add-a-product steps updated.
+- Decode failures: own message ("please report it"), traceback at DEBUG once.
+- `FailureLatch`: range-read fallback (WARNING once / INFO on recovery) and
+  RV's two fill/tracker flags.
+- *Not done:* the latch for the per-release "tar member not found" warning
+  (raised inside the executor decode; needs the missing names passed back)
+  and for the backfill (it stays at DEBUG: the coordinator already reports a
+  DWD outage). `RadvorRV._async_fetch_analysis` stays: a one-member range
+  read, not a full release fetch.
+
 ## PR 5 — Options & entry composition
 
 *(TD 7; S-altitude 4, 7, 8; S-reuse 7, 8; S-simplification 5)*
