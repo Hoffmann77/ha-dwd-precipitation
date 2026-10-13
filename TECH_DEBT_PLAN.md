@@ -240,9 +240,8 @@ The base the next three PRs stand on. *(TD 1, 3, 6, 10, 18; S-altitude 2, 6, 9, 
 - Dry streak gets its correction sources (`rw`/`sf`) injected instead of
   reaching into `runtime_data`.
 - Binary sensor uses the shared description mechanism (`attrs_fn` /
-  `metadata_attrs_fn` moved into `DwdCoordinatorEntity`).
-  **Decision D5** below: whether `forecast_5min` then follows the
-  extra-attributes option like the other sensors.
+  `metadata_attrs_fn` moved into `DwdCoordinatorEntity`). Per D5,
+  `forecast_5min` stays always on there, as an explicit exception.
 
 ## PR 6 — Rain events as a tracker
 
@@ -351,13 +350,13 @@ The base the next three PRs stand on. *(TD 1, 3, 6, 10, 18; S-altitude 2, 6, 9, 
 
 | # | Question | Recommendation |
 |---|---|---|
-| D1 | Derive RS `next_60` / `next_60_120` / `next_120` from RV's rolling sums and range-read only RS `_000`? Saves ~0.5-2.6 MB and 2 inflates per release, but RS forecast entities would then depend on RV's availability and timing. *(S-efficiency 1)* | **Not now.** Revisit after PR 7; the coupling cost is real and RS/RV are separate products on purpose. |
+| D1 | Derive RS `next_60` / `next_60_120` / `next_120` from RV's rolling sums and range-read only RS `_000`? | **Decided: not now.** RS and RV stay independent; revisit after step 7 only if bandwidth matters. |
 | D2 | How to dedupe the files fetched by two coordinators | **Decided: keep `rw_10min`, add the short-lived cache** (done, RADOLAN products only). |
 | D3 | `ReleaseGrid` in a new HA-free module vs keeping the arithmetic on the coordinator | **Decided: new module**; the `ast` reading of class constants stays as is. |
-| D4 | Move `rain_events.py` into `radar/` | Yes — it is already HA-free and tested by the parser tier. |
-| D5 | Binary sensor: should `forecast_5min` follow the extra-attributes option? | Yes, but it is a visible change → call it out in release notes. |
-| D6 | `full_rolling_series` downloads the whole RS tar (1-5 GB/day). Document only, or rebuild the straddling windows from stored RV analyses when rain events are on? | Document the bandwidth now; rebuild only if users ask. |
-| D7 | Pyright in CI | After PR 7, when the payload types are stable. |
+| D4 | Move `rain_events.py` into `radar/` | **Decided and done** (step 6, `f6a99d5`). |
+| D5 | Binary sensor: should `forecast_5min` follow the extra-attributes option? | **Decided: no, keep it always on** (deliberate per CLAUDE.md, documented unconditionally, automations may rely on it). Step 5 keeps it as an explicit exception. |
+| D6 | `full_rolling_series` downloads the whole RS tar (1-5 GB/day). | **Decided: leave as is.** |
+| D7 | Pyright in CI | **Decided: after step 7**, once the payload types are stable. |
 
 ## Sequencing and size
 
