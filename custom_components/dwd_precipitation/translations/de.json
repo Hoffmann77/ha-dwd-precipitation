@@ -36,7 +36,7 @@
           "precipitation_threshold": "Wie viel vorhergesagter Regen für die Sensoren „Niederschlagsbeginn“, „Niederschlagsende“ und „Niederschlag erwartet“ als Niederschlag zählt. 0 bedeutet jede vom DWD erkannte Menge; auf etwa 0,5 erhöhen, um Nieselregen zu ignorieren.",
           "start_end_mode": "Ob diese beiden Sensoren eine Uhrzeit („14:25“) oder die Minuten bis zum Ereignis („20“) anzeigen. Die nicht gewählte Variante bleibt als Attribut am selben Sensor verfügbar.",
           "precipitation_reset_threshold": "Wie viel Regen „Zeitraum ohne Niederschlag“ auf null zurücksetzt. Verglichen wird mit der Stundensumme des gewählten Produkts, also den innerhalb einer Stunde gefallenen Millimetern – 1 mm bedeutet, dass innerhalb der Stunde 1 mm gefallen ist, keine Rate.",
-          "dry_streak_source": "Mit welcher Stundensumme „Zeitraum ohne Niederschlag“ den Schwellwert vergleicht. „Niederschlag letzte 1h (angeeicht)“ (RW) ist mit Bodenmessungen angeeicht und genauer; der Zähler folgt dessen 10-Minuten-Läufen des DWD, ein Zurücksetzen erscheint so etwa 30 bis 40 Minuten nach dem Regen. „Niederschlag letzte 1h (Radar)“ (RS) beruht nur auf Radar und wird alle 5 Minuten aktualisiert: schneller, aber unruhiger, und seine gleitende Stunde setzt den Zähler noch bis zu eine Stunde nach Regenende zurück."
+          "dry_streak_source": "Mit welcher Stundensumme „Zeitraum ohne Niederschlag“ den Schwellwert vergleicht. „Angeeichte Stunde“ (RW) ist mit Bodenmessungen angeeicht und genauer: die DWD-Analyse der letzten 60 Minuten, alle 10 Minuten neu berechnet, ein Zurücksetzen erscheint so etwa 30 bis 40 Minuten nach dem Regen. „Niederschlag letzte 1h“ (RS) beruht nur auf Radar und wird alle 5 Minuten aktualisiert: schneller, aber unruhiger, und seine gleitende Stunde setzt den Zähler noch bis zu eine Stunde nach Regenende zurück."
         },
         "sections": {
           "advanced_options": {
@@ -44,14 +44,12 @@
             "description": "Einstellungen, die die meisten Installationen nie ändern müssen.",
             "data": {
               "rain_event_threshold": "Schwelle für Regenereignisse (mm pro Stunde)",
-              "rw_last_hour_mode": "Wie „Niederschlag letzte 1h (angeeicht)“ aktualisiert wird",
               "precipitation_end_algorithm": "Wann „Niederschlagsende“ den Regen als beendet ansieht",
               "full_rolling_series": "Vergangene Stunde in die stündliche Vorhersagereihe aufnehmen",
               "unavailable_when_stale": "Sensoren als nicht verfügbar anzeigen, wenn die Daten veraltet sind"
             },
             "data_description": {
               "rain_event_threshold": "Wie viel Regen ein 5-Minuten-Schritt braucht, um zu einem Regenereignis im Attribut „rain_events“ von „Niederschlag erwartet“ zu zählen. 0 bedeutet, dass jede Spur ein Ereignis bildet. Unabhängig von der Schwelle für Regenerkennung, daher können die Ereignisse und „Niederschlagsbeginn“ voneinander abweichen, wenn sich die beiden Schwellen unterscheiden.",
-              "rw_last_hour_mode": "„Feste Stunde“ zeigt je Wert eine Uhrzeitstunde (die Stunde bis :50), etwa 30 Minuten nach ihrem Ende. „Gleitende Stunde“ folgt den 10-Minuten-Läufen des DWD: die 60 Minuten bis zur letzten vollen 10-Minuten-Marke, genauso angeeicht, etwa 30 Minuten verzögert – ein Schauer erscheint so bis zu eine Stunde früher; aufeinanderfolgende Werte überlappen sich um 50 Minuten. „Niederschlag gesamt (stündlich)“ addiert immer die festen Stunden.",
               "precipitation_end_algorithm": "„Erste trockene Lücke“ meldet das Ende des aktuellen Schauers und springt daher bei Schauerwetter hin und her. „Niederschlag endet innerhalb von 2 h“ wartet, bis kein weiterer Regen vorhergesagt ist – das ist stabiler, bleibt aber länger unbekannt. Der DWD sagt nur zwei Stunden voraus, darüber hinaus ist der Sensor in beiden Fällen „unbekannt“.",
               "full_rolling_series": "Lässt das Attribut „forecast_rolling_1h“ von „Maximaler Stundenniederschlag nächste 2h“ eine Stunde früher beginnen. Jeder Eintrag ist der Niederschlag in der Stunde, die zu diesem Zeitpunkt beginnt. Die ersten Einträge enthalten damit auch Regen, der bereits gefallen ist, und ein Diagramm zeigt die vergangene Stunde und die Vorhersage als eine durchgehende Kurve. Der Wert des Sensors ist in beiden Fällen gleich, da er nur die kommenden Stunden betrachtet. Eingeschaltet verdoppelt sich etwa die Rechenzeit pro Aktualisierung, was auf kleinen Geräten spürbar sein kann.",
               "unavailable_when_stale": "Veröffentlicht der DWD nicht rechtzeitig eine neue Datei, melden die betroffenen Sensoren „nicht verfügbar“, statt den letzten Wert zu behalten. Schalte dies aus, um immer den neuesten Messwert zu behalten – auch wenn er Stunden alt sein kann. In beiden Fällen wird die fehlende Datei im Hintergrund weiter abgerufen."
@@ -76,30 +74,24 @@
     },
     "dry_streak_source": {
       "options": {
-        "rw": "Niederschlag letzte 1h (angeeicht, RW)",
+        "rw": "Angeeichte Stunde (RW, alle 10 Minuten)",
         "rs": "Niederschlag letzte 1h (Radar, RS)"
-      }
-    },
-    "rw_last_hour_mode": {
-      "options": {
-        "fixed": "Feste Stunde, stündlich aktualisiert",
-        "sliding": "Gleitende Stunde, alle 10 Minuten aktualisiert"
       }
     }
   },
   "entity": {
     "sensor": {
-      "precipitation_last_1h_radar": {
-        "name": "Niederschlag letzte 1h (Radar)"
+      "precipitation_last_1h": {
+        "name": "Niederschlag letzte 1h"
       },
-      "precipitation_last_1h_gauge_adjusted": {
-        "name": "Niederschlag letzte 1h (angeeicht)"
+      "precipitation_previous_hour": {
+        "name": "Niederschlag vorige Stunde"
       },
-      "precipitation_last_24h_gauge_adjusted": {
-        "name": "Niederschlag letzte 24h (angeeicht)"
+      "precipitation_last_24h": {
+        "name": "Niederschlag letzte 24h"
       },
-      "precipitation_yesterday_gauge_adjusted": {
-        "name": "Niederschlag gestern (angeeicht)"
+      "precipitation_yesterday": {
+        "name": "Niederschlag gestern"
       },
       "precipitation_total_hourly": {
         "name": "Niederschlag gesamt (stündlich)"

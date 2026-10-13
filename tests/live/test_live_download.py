@@ -38,12 +38,15 @@ def _rs_candidates(now: datetime) -> list[datetime]:
     return [ts - timedelta(minutes=5 * i) for i in range(18)]
 
 
-def _radolan_candidates(now: datetime) -> list[datetime]:
-    """RADOLAN RW/SF: hourly at HH:50, available ~26-30 min later; cover ~6 h."""
-    ts = now.replace(minute=50, second=0, microsecond=0)
-    if ts > now - timedelta(minutes=35):
-        ts -= timedelta(hours=1)
-    return [ts - timedelta(hours=i) for i in range(6)]
+def _radolan_candidates(minute: int):
+    """RADOLAN as the integration reads it: hourly at HH:<minute> (RW :00, SF
+    :50), available ~26-30 min later; cover ~6 h."""
+    def candidates(now: datetime) -> list[datetime]:
+        ts = now.replace(minute=minute, second=0, microsecond=0)
+        if ts > now - timedelta(minutes=35):
+            ts -= timedelta(hours=1)
+        return [ts - timedelta(hours=i) for i in range(6)]
+    return candidates
 
 
 # ---------------------------------------------------------------------------
@@ -74,7 +77,7 @@ _PRODUCTS = {
         "shape": (1200, 1100),
     },
     "rw": {
-        "candidates": _radolan_candidates,
+        "candidates": _radolan_candidates(0),
         "url": lambda ts: (
             f"{_OPENDATA}/radolan/rw/raa01-rw_10000-"
             f"{ts.strftime('%y%m%d%H%M')}-dwd---bin.hdf5"
@@ -83,7 +86,7 @@ _PRODUCTS = {
         "shape": (1200, 1100),
     },
     "sf": {
-        "candidates": _radolan_candidates,
+        "candidates": _radolan_candidates(50),
         "url": lambda ts: (
             f"{_OPENDATA}/radolan/sf/raa01-sf_10000-"
             f"{ts.strftime('%y%m%d%H%M')}-dwd---bin.hdf5"

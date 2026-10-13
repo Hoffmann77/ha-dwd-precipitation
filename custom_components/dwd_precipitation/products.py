@@ -53,9 +53,6 @@ from .const import (
     CONF_DRY_STREAK_SOURCE,
     DEFAULT_DRY_STREAK_SOURCE,
     DRY_STREAK_SOURCE_RW,
-    CONF_RW_LAST_HOUR_MODE,
-    DEFAULT_RW_LAST_HOUR_MODE,
-    RW_LAST_HOUR_SLIDING,
     RW_SLIDING_KEY,
     CONF_RAIN_EVENT_THRESHOLD,
     DEFAULT_RAIN_EVENT_THRESHOLD,
@@ -857,7 +854,15 @@ def _radolan_url(product: str, ts: datetime) -> str:
 
 
 class RadolanRW(RadolanProduct):
-    """DWD RADOLAN RW: 1-hour precipitation analysis."""
+    """DWD RADOLAN RW: 1-hour precipitation analysis, one clock hour per release.
+
+    DWD runs RW every 10 minutes (see RadolanRW10); this reads the run ending
+    on the hour, so each value is a clock hour (11:00-12:00), the one
+    "Precipitation previous hour" shows and the hourly total adds up. Up to
+    2026.10.0 it read the HH:50 run, the minute SF is still published at;
+    nothing ties RW to it, and the :00 run is gauge-adjusted as strongly and
+    published as quickly (~25.5 min after the hour, 48 runs, 2026-10-13).
+    """
 
     PRODUCT_KEY = "rw"
 
@@ -867,7 +872,7 @@ class RadolanRW(RadolanProduct):
 
     RELEASE_DELAY = timedelta(minutes=28)
 
-    RELEASE_OFFSET = timedelta(minutes=50)
+    RELEASE_OFFSET = timedelta()
 
     # An hourly total that is an hour behind is misreported rather than merely
     # old, so give the missing file only the default few minutes.
@@ -882,12 +887,10 @@ class RadolanRW(RadolanProduct):
 class RadolanRW10(RadolanRW):
     """DWD RADOLAN RW's 10-minute runs: a sliding hour ending at each :x0.
 
-    Same file family as RW (DWD publishes the HH:50 run among them), so it
-    reuses RW's URL and parsing; only the grid is every 10 minutes. Gauge-
-    adjusted as strongly as the HH:50 run, measured against radar-only RS
-    over 285 runs (scripts/compare_rw_runs.py). Only built when the sliding
-    hour is wanted: by the "Precipitation last 1h (gauge-adjusted)" option, or
-    by a dry streak counting RW.
+    Same file family as RW (its hourly runs are among them), so it reuses RW's
+    URL and parsing; only the grid is every 10 minutes. Gauge-adjusted as
+    strongly as the HH:50 run, measured against radar-only RS over 285 runs
+    (scripts/compare_rw_runs.py). Only built for a dry streak counting RW.
     """
 
     PRODUCT_KEY = RW_SLIDING_KEY
@@ -896,7 +899,8 @@ class RadolanRW10(RadolanRW):
 
     RELEASE_INTERVAL = timedelta(minutes=10)
 
-    # Observed ~26 min after each run's end, like the HH:50 run it includes.
+    # Observed ~25.7 min after each run's end, every run minute alike (288
+    # runs, 2026-10-13), like the hourly runs it includes.
     RELEASE_DELAY = timedelta(minutes=28)
 
     RELEASE_OFFSET = timedelta()
@@ -905,11 +909,9 @@ class RadolanRW10(RadolanRW):
 
     @classmethod
     def is_needed(cls, options) -> bool:
-        """Whether the last-1h sensor or the dry streak follows the sliding hour."""
+        """Whether the dry streak counts RW, the only user of the sliding hour."""
         return (
-            options.get(CONF_RW_LAST_HOUR_MODE, DEFAULT_RW_LAST_HOUR_MODE)
-            == RW_LAST_HOUR_SLIDING
-            or options.get(CONF_DRY_STREAK_SOURCE, DEFAULT_DRY_STREAK_SOURCE)
+            options.get(CONF_DRY_STREAK_SOURCE, DEFAULT_DRY_STREAK_SOURCE)
             == DRY_STREAK_SOURCE_RW
         )
 

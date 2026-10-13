@@ -55,7 +55,7 @@ def test_extract_timing_resolves_inheritance():
 # ---------------------------------------------------------------------------
 
 def test_previous_release_hourly_offset():
-    """RW/SF: releases at HH:50 → previous release before 13:20 is 12:50."""
+    """SF: releases at HH:50 → previous release before 13:20 is 12:50."""
     now = datetime(2025, 6, 1, 13, 20, tzinfo=UTC)
     prev = previous_release(now, timedelta(hours=1), timedelta(minutes=50))
     assert prev == datetime(2025, 6, 1, 12, 50, tzinfo=UTC)

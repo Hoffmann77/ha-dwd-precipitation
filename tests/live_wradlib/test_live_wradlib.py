@@ -86,13 +86,15 @@ def _five_minute_candidates() -> list[datetime]:
     return [ts - timedelta(minutes=5 * i) for i in range(18)]
 
 
-def _hourly_candidates() -> list[datetime]:
-    """RW/SF as the integration reads them: the HH:50 releases."""
-    now = datetime.now(timezone.utc)
-    ts = now.replace(minute=50, second=0, microsecond=0)
-    if ts > now - timedelta(minutes=35):
-        ts -= timedelta(hours=1)
-    return [ts - timedelta(hours=i) for i in range(6)]
+def _hourly_candidates(minute: int):
+    """RW/SF as the integration reads them: hourly at HH:<minute> (RW :00, SF :50)."""
+    def candidates() -> list[datetime]:
+        now = datetime.now(timezone.utc)
+        ts = now.replace(minute=minute, second=0, microsecond=0)
+        if ts > now - timedelta(minutes=35):
+            ts -= timedelta(hours=1)
+        return [ts - timedelta(hours=i) for i in range(6)]
+    return candidates
 
 
 _URLS = {
@@ -102,9 +104,9 @@ _URLS = {
            lambda ts: f"{_COMPOSITE}/rv/composite_rv_{ts:%Y%m%d_%H%M}.tar"),
     "hymecng": (_five_minute_candidates,
                 lambda ts: f"{_COMPOSITE}/hymecng/composite_HymecNG_{ts:%Y%m%d_%H%M}_000-hd5"),
-    "rw": (_hourly_candidates,
+    "rw": (_hourly_candidates(0),
            lambda ts: f"{_RADOLAN}/rw/raa01-rw_10000-{ts:%y%m%d%H%M}-dwd---bin.hdf5"),
-    "sf": (_hourly_candidates,
+    "sf": (_hourly_candidates(50),
            lambda ts: f"{_RADOLAN}/sf/raa01-sf_10000-{ts:%y%m%d%H%M}-dwd---bin.hdf5"),
 }
 

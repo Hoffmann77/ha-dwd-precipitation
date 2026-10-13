@@ -172,8 +172,8 @@ viewers and Windows consoles mangle typographic punctuation.
 | `RadvorRS` | `rs` | ODIM_H5 (tar) | 5 min | RADVOR nowcast, 25 rolling 60-min accumulations; exposes the 0/60/120 min leads, plus — only with the `full_rolling_series` option — the wettest future hour with the 25-point rolling-hour series (see "RS product specifics") |
 | `RadvorRV` | `rv` | ODIM_H5 (tar) | 5 min | RV nowcast, 25×5-min grids; derives the current intensity (lead 0 × 12, mm/h, with the raw 5-min amount), +1h/+2h peak intensity (mm/h), precip start/end timing (episode/clearing end algorithm, user-selectable), a rain-within-2h flag (whose metadata carries the raw 25-point forecast series, exposed by default), and by default the wettest future hour (see "Peak hourly precipitation") |
 | `HymecNG` | `hymecng` | ODIM_H5 (single .hd5) | 5 min | Precipitation-*type* composite (rain/snow/freezing rain/hail/…); one enum "Precipitation type" sensor |
-| `RadolanRW` | `rw` | ODIM_H5 (RADOLAN HDF5 edition) | 1 h | 1-hour precipitation analysis (gauge-adjusted; same window as RS `_000`) |
-| `RadolanRW10` | `rw_10min` | same as RW | 10 min | RW's 10-minute runs: the sliding hour ending at each :x0. Built only when used (see "RW 10-minute runs") |
+| `RadolanRW` | `rw` | ODIM_H5 (RADOLAN HDF5 edition) | 1 h | 1-hour precipitation analysis (gauge-adjusted), the run ending on the hour: one clock hour per release (see "RW 10-minute runs") |
+| `RadolanRW10` | `rw_10min` | same as RW | 10 min | RW's 10-minute runs: the sliding hour ending at each :x0. Built only for a dry streak counting RW (see "RW 10-minute runs") |
 | `RadolanSF` | `sf` | ODIM_H5 (RADOLAN HDF5 edition) | 1 h | 24-hour precipitation analysis |
 | `RadolanSFLastYesterday` | `sf_2350` | same as SF | daily | Yesterday's 24 h total |
 
@@ -184,33 +184,37 @@ hardcoded `name=` / `_attr_name`. HA derives the entity id by slugifying the
 English name, so the name is also the id: `Precipitation next 1–2h` →
 `sensor.<device>_precipitation_next_1_2h`. Keep names slug-friendly.
 
-A name states a window only when the window is part of the *value*. Two forms:
+A name states a window only when the window is part of the *value*. Three forms:
 
 | form | meaning | examples |
 |------|---------|----------|
-| `last <N>` | measured accumulation over a window ending now | `Precipitation last 1h`, `Precipitation last 24h` |
+| `last <N>` | measured accumulation over a sliding window ending at the latest release | `Precipitation last 1h`, `Precipitation last 24h` |
 | `next <N>` | forecast value over a future window | `Precipitation next 1h`, `Precipitation next 1–2h`, `Peak intensity next 1h` |
+| calendar period | the last complete clock hour / calendar day | `Precipitation previous hour`, `Precipitation yesterday` |
 
 `next 1–2h` is the 60–120 min window, *not* the coming two hours.
 
-RS `_000` and RW measure the *same* window, the 60 minutes ending now, so they
-share the name `Precipitation last 1h` and a parenthesised suffix names the
-source: `(radar)` for RS, `(gauge-adjusted)` for RW. The suffix keeps the head
-noun and the window first, like every other name, so the two sort next to each
-other in the entity list. The whole RADOLAN family carries `(gauge-adjusted)` —
-`Precipitation last 24h (gauge-adjusted)`, `Precipitation yesterday
-(gauge-adjusted)` — so the qualifier means "RADOLAN", not just "the one that
-collides". The running totals do not: nothing collides with them, and they
-already use the parenthesis for their cadence. German: `(Radar)` /
-`(angeeicht)`, DWD's own term for gauge adjustment.
+`Precipitation last 1h` is RS `_000`: the rolling hour, every 5 minutes, from
+the same product as `next 1h` / `next 1–2h`. RW is a clock hour (the run
+ending on the hour, see "RW 10-minute runs"), so it is `Precipitation previous
+hour` rather than a second `last 1h`. No two names share a window, so none
+needs a source qualifier: radar vs. gauge-adjusted is explained in the README,
+not carried in names. (The release branch after 2026.10.0 briefly carried
+`(radar)` / `(gauge-adjusted)` suffixes; they never shipped.)
 
-RS `_000` used to be `Precipitation now`, named for its role rather than
-its window. That hid the fact that it is mm accumulated over the past hour,
-**not** a rate, and left `now` unavailable for the one sensor that really is
-current. The keys (`radvor_rs_000`, `radolan_rw`, …) did not change, so
+RS `_000` was `Precipitation now` up to 2026.10.0, named for its role rather
+than its window. That hid the fact that it is mm accumulated over the past
+hour, **not** a rate, and left `now` unavailable for the one sensor that really
+is current. The keys (`radvor_rs_000`, `radolan_rw`, …) did not change, so
 existing installs keep their entity ids; only new installs get the new slugs.
-Never reuse an old slug for a different value — `precipitation_last_1h` was RW
-and is now nobody's, which is why RS did not simply take it.
+
+That rename made one deliberate exception to "never reuse an old slug for a
+different value": up to 2026.10.0, `precipitation_last_1h` was RW; new
+installs give it to RS. It was accepted because both are mm over a 60-minute
+window, so a template written against either still reads the same quantity,
+and keeping the old slug would have forced a qualifier back into the name.
+The README tells users of older installs which id is which. Do not extend the
+exception: any other reuse needs the same case made for it.
 
 `Precipitation intensity now` (RV lead 0 × 12, mm/h) is the only `now`: the
 latest 5-minute analysis, ending at the release time. The README states that
@@ -368,7 +372,7 @@ Current runtime deps: `numpy`, `h5py`
   rate — `_000`'s `what/startdate..enddate` spans T−60 min to T (verified against
   `tests/fixtures/composite_rs_sample.hd5`: 06:50 → 07:50 for a 07:50 file). So
   `_000` is "precipitation over the past hour" — exposed as `Precipitation last
-  1h (radar)` (see "Entity naming") —
+  1h` (see "Entity naming") —
   `_060` covers T→T+60, and `_120` covers T+60→T+120.
 - **Grid**: `xsize=1100`, `ysize=1200`, `xscale=yscale=1000.0 m`
 - **Projection**: `+proj=stere +lat_ts=60 +lat_0=90 +lon_0=10 +x_0=543196.835... +y_0=3622588.861...` (WGS84)
@@ -415,7 +419,7 @@ entity to `coordinators[source]` directly (options reload the entry, as for
 
 - `rw` — RW, gauge-adjusted, ~28 min late, counted from its **10-minute
   runs** (`rw_10min`, see "RW 10-minute runs"): the reset shows up to an hour
-  sooner than with the HH:50 run alone, at the same adjustment. Scalar
+  sooner than with the hourly run alone, at the same adjustment. Scalar
   payload; the reset time is `metadata.source_timestamp`, the end of that
   sliding hour.
 - `rs` — RS `_000`, radar only, a rolling hour every 5 min. List payload; the
@@ -434,11 +438,18 @@ entry. So every entry stores its source, and changing
 
 ## RW 10-minute runs
 
-DWD runs RW every 10 minutes, each run the hour ending at that :x0; the HH:50
-file the integration always used is just one of them. `RadolanRW10`
-(`rw_10min`) is the same file family on a 10-minute grid (same URL pattern,
-same parsing, HDF5 edition, `RELEASE_DELAY` 28 min, observed ~26 min).
+DWD runs RW every 10 minutes, each run the hour ending at that :x0.
+`RadolanRW` (`rw`) reads the run ending on the hour, so every value is a clock
+hour; `RadolanRW10` (`rw_10min`) is the same file family on a 10-minute grid
+(same URL pattern, same parsing, HDF5 edition). Both have a `RELEASE_DELAY` of
+28 min; every run minute is observed at ~25.7 min (288 runs, 2026-10-13).
 
+- **Why :00.** Up to 2026.10.0 `rw` read the HH:50 run. Nothing recorded why;
+  it is RADOLAN's traditional hour, and SF is still only published at :50
+  (OpenData has no other SF minute). But RW's :00 run is as complete, as
+  timely and as strongly adjusted (below), and only a clock hour can be called
+  "previous hour" and line up with HA's hourly statistics. The cost is that
+  `rw` and `sf` windows are now 10 minutes apart.
 - **Quality.** `scripts/compare_rw_runs.py` compares every RW run on OpenData
   (48 h) with radar-only RS `_000` for the same hour, cell for cell (RW's HDF5
   edition is on the DE1200 grid). If the sub-hourly runs used fewer gauges
@@ -446,17 +457,23 @@ same parsing, HDF5 edition, `RELEASE_DELAY` 28 min, observed ~26 min).
   every run minute departs from RS alike (mean |RW-RS| 0.53-0.58 mm, 58-62 %
   relative, 76-78 % of wet cells adjusted). Rerun it before relying on this
   for anything new.
-- **Built only when used** (`is_needed(options)`, checked in
-  `async_setup_entry`): when `rw_last_hour_mode` is `sliding`, or the dry
-  streak counts RW. Otherwise the entry makes no extra requests.
+- **`rw_10min` is built only when used** (`is_needed(options)`, checked in
+  `async_setup_entry`): when the dry streak counts RW. Otherwise the entry
+  makes no extra requests. No sensor shows the sliding RW hour: as a "last 1h"
+  it would be 28-38 min behind, where RS is 4-9 min, and gauge accuracy is
+  what `Precipitation previous hour` is for. A pre-release had a
+  `rw_last_hour_mode` option for it; it never shipped, and a stored value is
+  ignored.
 - **Never for the totals.** Consecutive runs overlap by 50 minutes, so summing
   them counts each hour six times; `Precipitation total (hourly)` and its
-  missed-release walk stay on the HH:50 grid of `rw`. The startup downtime
+  missed-release walk stay on the hourly grid of `rw`. The startup downtime
   correction of the dry streak also keeps using `rw`.
-- `rw_last_hour_mode` (Advanced, default `fixed`) rebinds the
-  `radolan_rw` sensor (`_radolan_sensors()`); the key is unchanged, so the
-  entity and its history survive the switch. The dry streak does not follow
-  this option: it always takes the sliding runs when counting RW.
+- **The grid move.** A total stored by 2026.10.0 has a `last_release` at :50,
+  off the new grid. `first_uncounted_release()` notices that
+  (`_release_at_or_before` does not map it to itself) and resumes at the first
+  :00 release whose window starts after it: the 10 minutes in between are left
+  out once, rather than 50 counted twice. On-grid releases, including
+  `sf_2350`'s 23- and 25-hour DST days, are unaffected.
 
 ## Range reads
 

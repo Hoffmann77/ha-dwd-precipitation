@@ -62,7 +62,7 @@ COLUMNS = (
     ("rv_000", "RV now (mm/h)"),
     ("rv_max", "RV peak next 2h (mm/h)"),
     ("hymecng", "Type"),
-    ("rw", "RW last 1h (mm)"),
+    ("rw", "RW previous hour (mm)"),
     ("sf", "SF last 24h (mm)"),
     ("match", "Matches wradlib"),
 )

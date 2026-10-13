@@ -66,19 +66,9 @@ CONF_RAIN_EVENT_THRESHOLD = "rain_event_threshold"
 # independent of CONF_PRECIPITATION_THRESHOLD.
 DEFAULT_RAIN_EVENT_THRESHOLD = 0.1
 
-CONF_RW_LAST_HOUR_MODE = "rw_last_hour_mode"
-
-# What "Precipitation last 1h (gauge-adjusted)" shows. DWD runs RW every 10
-# minutes, each run a sliding hour ending at that mark, gauge-adjusted as
-# strongly as the HH:50 run (scripts/compare_rw_runs.py). "fixed" keeps the
-# one clock hour per value the sensor always showed; "sliding" follows the
-# 10-minute runs. The hourly total always adds the fixed hours: summing
-# sliding ones would count every hour six times.
-RW_LAST_HOUR_FIXED = "fixed"
-RW_LAST_HOUR_SLIDING = "sliding"
-DEFAULT_RW_LAST_HOUR_MODE = RW_LAST_HOUR_FIXED
-
-# The coordinator for RW's 10-minute runs, created only when something uses it.
+# The coordinator for RW's 10-minute runs: each a sliding hour ending at that
+# mark, gauge-adjusted as strongly as the hourly run (scripts/compare_rw_runs.py).
+# Created only when the dry streak counts RW.
 RW_SLIDING_KEY = "rw_10min"
 
 CONF_PRECIPITATION_RESET_THRESHOLD = "precipitation_reset_threshold"

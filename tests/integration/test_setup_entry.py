@@ -62,7 +62,7 @@ async def test_entry_setup_creates_sensors_with_correct_values(
             rolling_1h=[{"lead": 75, "start": None, "end": None, "value": 6.5}],
         ),
     ]
-    rw_meta = {"producttype": "RW", "datetime": datetime(2025, 6, 1, 12, 50)}
+    rw_meta = {"producttype": "RW", "datetime": datetime(2025, 6, 1, 12, 0)}
     rv_timing = ProductMetadata(source_product="RV", source_timestamp=ts)
     rv_data = {
         "intensity_000": 2.4,
@@ -210,10 +210,10 @@ async def test_entry_setup_creates_sensors_with_correct_values(
             "radvor_rv_intensity_000",
         }
     } == {
-        "radvor_rs_000": "sensor.mock_title_precipitation_last_1h_radar",
-        "radolan_rw": "sensor.mock_title_precipitation_last_1h_gauge_adjusted",
-        "radolan_sf": "sensor.mock_title_precipitation_last_24h_gauge_adjusted",
-        "radolan_sf_yesterday": "sensor.mock_title_precipitation_yesterday_gauge_adjusted",
+        "radvor_rs_000": "sensor.mock_title_precipitation_last_1h",
+        "radolan_rw": "sensor.mock_title_precipitation_previous_hour",
+        "radolan_sf": "sensor.mock_title_precipitation_last_24h",
+        "radolan_sf_yesterday": "sensor.mock_title_precipitation_yesterday",
         "radvor_rv_intensity_000": "sensor.mock_title_precipitation_intensity_now",
     }
 
@@ -462,21 +462,21 @@ async def test_dry_streak_sensor_binds_to_the_configured_source(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("options", "built", "rw_sensor_on"),
+    ("options", "built"),
     [
         # Nothing uses the 10-minute runs: no coordinator, no requests.
-        ({CONF_DRY_STREAK_SOURCE: "rs"}, False, "rw"),
-        ({CONF_DRY_STREAK_SOURCE: "rs", "rw_last_hour_mode": "fixed"}, False, "rw"),
-        # The dry streak alone needs them; the sensor stays on fixed hours.
-        ({CONF_DRY_STREAK_SOURCE: "rw"}, True, "rw"),
-        # The sensor asks for the sliding hour.
-        ({CONF_DRY_STREAK_SOURCE: "rs", "rw_last_hour_mode": "sliding"}, True, "rw_10min"),
+        ({CONF_DRY_STREAK_SOURCE: "rs"}, False),
+        # The option that once showed them as the last hour is gone; a value a
+        # pre-release stored is ignored.
+        ({CONF_DRY_STREAK_SOURCE: "rs", "rw_last_hour_mode": "sliding"}, False),
+        # The dry streak needs them.
+        ({CONF_DRY_STREAK_SOURCE: "rw"}, True),
     ],
 )
 async def test_sliding_rw_is_built_only_when_used(
-    hass: HomeAssistant, options: dict, built: bool, rw_sensor_on: str
+    hass: HomeAssistant, options: dict, built: bool
 ) -> None:
-    """rw_10min exists only for the option or the dry streak that use it."""
+    """rw_10min exists only for the dry streak that uses it."""
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={"name": "Home", "latitude": 51.05, "longitude": 13.73},
@@ -491,7 +491,7 @@ async def test_sliding_rw_is_built_only_when_used(
 
     coordinators = entry.runtime_data.coordinators
     assert ("rw_10min" in coordinators) is built
-    # The hourly total always adds the fixed hours.
+    # The previous hour and the hourly total are always RW's clock hours.
     total = next(
         entity
         for platform in async_get_platforms(hass, DOMAIN)
@@ -499,8 +499,7 @@ async def test_sliding_rw_is_built_only_when_used(
         if entity.unique_id.endswith("_radolan_rw_total")
     )
     assert total.coordinator is coordinators["rw"]
-    expected = {"rw": 3.2, "rw_10min": 2.7}[rw_sensor_on]
-    assert float(_state_for(hass, "radolan_rw").state) == approx(expected)
+    assert float(_state_for(hass, "radolan_rw").state) == approx(3.2)
 
 
 @pytest.mark.asyncio
@@ -524,23 +523,33 @@ async def test_entry_from_a_newer_major_version_is_not_migrated(
 
 @pytest.mark.asyncio
 async def test_renamed_sensor_keeps_an_existing_entity_id(hass: HomeAssistant) -> None:
-    """The renames change names, never the entity ids users already have."""
+    """The renames change names, never the entity ids users already have.
+
+    Up to 2026.10.0 RS was "Precipitation now" and RW "Precipitation last 1h";
+    a new install gives RS that second id, an existing one keeps both.
+    """
     entry = _entry(hass)
-    er.async_get(hass).async_get_or_create(
-        "sensor",
-        DOMAIN,
-        f"{entry.entry_id}_radvor_rs_000",
-        config_entry=entry,
-        suggested_object_id="home_precipitation_now",
-    )
+    ent_reg = er.async_get(hass)
+    for key, object_id in (
+        ("radvor_rs_000", "home_precipitation_now"),
+        ("radolan_rw", "home_precipitation_last_1h"),
+    ):
+        ent_reg.async_get_or_create(
+            "sensor",
+            DOMAIN,
+            f"{entry.entry_id}_{key}",
+            config_entry=entry,
+            suggested_object_id=object_id,
+        )
 
     with _patched_products():
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
-    state = hass.states.get("sensor.home_precipitation_now")
-    assert state is not None
-    assert state.attributes["friendly_name"].endswith("Precipitation last 1h (radar)")
+    rs = hass.states.get("sensor.home_precipitation_now")
+    assert rs.attributes["friendly_name"].endswith("Precipitation last 1h")
+    rw = hass.states.get("sensor.home_precipitation_last_1h")
+    assert rw.attributes["friendly_name"].endswith("Precipitation previous hour")
 
 
 @pytest.mark.asyncio

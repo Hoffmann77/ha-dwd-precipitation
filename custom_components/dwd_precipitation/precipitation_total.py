@@ -73,23 +73,42 @@ def countable(value: Any) -> float | None:
     return value
 
 
+def first_uncounted_release(coordinator: Any, last_counted: datetime) -> datetime:
+    """Return the first release whose window starts at or after last_counted.
+
+    Normally simply the release after it. If last_counted is off the product's
+    grid, the grid moved under a stored total: RW went from the HH:50 run to
+    the HH:00 one in 2026.10.1. The first new-grid release after it would
+    overlap what is already counted (10:00-11:00 after 09:50-10:50), so the
+    count resumes one release later. That leaves the minutes between the two
+    grids out once (10:50-11:00), where the overlap would count 50 twice.
+    """
+    release = coordinator._next_release_after(last_counted)
+    on_grid = coordinator._release_at_or_before(release)
+    if on_grid == release:
+        return release
+
+    return coordinator._next_release_after(on_grid)
+
+
 def missed_releases(
     coordinator: Any,
     last_counted: datetime,
     current: datetime,
     limit: int,
 ) -> list[datetime]:
-    """Return the releases strictly between last_counted and current, oldest first.
+    """Return the uncounted releases from last_counted up to current, oldest first.
 
     These are the windows nobody counted: Home Assistant was down, or the
     product failed for longer than one release. Walked with the coordinator's
     own _next_release_after, so a local-time product steps over DST changeovers
-    exactly as its schedule does. Only the newest ``limit`` are returned; older
-    files are unlikely to still be on OpenData, and a long outage should not
-    turn into a burst of downloads at startup.
+    exactly as its schedule does, starting at first_uncounted_release. Only the
+    newest ``limit`` are returned; older files are unlikely to still be on
+    OpenData, and a long outage should not turn into a burst of downloads at
+    startup.
     """
     missed: list[datetime] = []
-    release = coordinator._next_release_after(last_counted)
+    release = first_uncounted_release(coordinator, last_counted)
 
     while release < current:
         missed.append(release)

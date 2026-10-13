@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -37,9 +37,6 @@ from .const import (
     DEFAULT_DRY_STREAK_SOURCE,
     DRY_STREAK_SOURCE_RS,
     DRY_STREAK_SOURCE_RW,
-    CONF_RW_LAST_HOUR_MODE,
-    DEFAULT_RW_LAST_HOUR_MODE,
-    RW_LAST_HOUR_SLIDING,
     RW_SLIDING_KEY,
     CONF_START_END_MODE,
     DEFAULT_START_END_MODE,
@@ -58,6 +55,7 @@ from .entity import DwdCoordinatorEntity
 from .precipitation_total import (
     PrecipitationTotalExtraData,
     countable,
+    first_uncounted_release,
     missed_releases,
 )
 
@@ -78,10 +76,13 @@ class PrecipitationSensorEntityDescription(SensorEntityDescription):
     metadata_attrs_fn: Callable[[ProductMetadata], dict[str, Any]] | None = None
 
 
+# The gauge-adjusted analyses. RW's is a clock hour, so it is the "previous
+# hour" rather than a "last 1h": that name belongs to RS's rolling hour, a
+# sliding window like every other "last"/"next" one.
 RADOLAN_SENSORS = (
     PrecipitationSensorEntityDescription(
         key="radolan_rw",
-        translation_key="precipitation_last_1h_gauge_adjusted",
+        translation_key="precipitation_previous_hour",
         native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
@@ -91,7 +92,7 @@ RADOLAN_SENSORS = (
     ),
     PrecipitationSensorEntityDescription(
         key="radolan_sf",
-        translation_key="precipitation_last_24h_gauge_adjusted",
+        translation_key="precipitation_last_24h",
         native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
@@ -101,7 +102,7 @@ RADOLAN_SENSORS = (
     ),
     PrecipitationSensorEntityDescription(
         key="radolan_sf_yesterday",
-        translation_key="precipitation_yesterday_gauge_adjusted",
+        translation_key="precipitation_yesterday",
         native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
@@ -110,21 +111,6 @@ RADOLAN_SENSORS = (
         access_fn=lambda d: d,
     ),
 )
-
-
-def _radolan_sensors(rw_mode: str) -> tuple[PrecipitationSensorEntityDescription, ...]:
-    """Return the RADOLAN sensors, the last-1h one bound to the chosen RW runs.
-
-    The key stays radolan_rw either way, so switching keeps the entity, its id
-    and its history; only the hour it shows changes from a fixed one to the
-    latest sliding one.
-    """
-    if rw_mode != RW_LAST_HOUR_SLIDING:
-        return RADOLAN_SENSORS
-    return tuple(
-        replace(d, product_key=RW_SLIDING_KEY) if d.key == "radolan_rw" else d
-        for d in RADOLAN_SENSORS
-    )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -167,7 +153,7 @@ TOTAL_SENSORS = (
 RADVOR_SENSORS = (
     PrecipitationSensorEntityDescription(
         key="radvor_rs_000",
-        translation_key="precipitation_last_1h_radar",
+        translation_key="precipitation_last_1h",
         native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
         device_class=SensorDeviceClass.PRECIPITATION,
         suggested_display_precision=1,
@@ -374,9 +360,7 @@ async def async_setup_entry(
         + RADVOR_RV_SENSORS
         + _rv_timing_sensors(mode)
         + HYMECNG_SENSORS
-        + _radolan_sensors(
-            entry.options.get(CONF_RW_LAST_HOUR_MODE, DEFAULT_RW_LAST_HOUR_MODE)
-        )
+        + RADOLAN_SENSORS
     )
 
     entities: list[SensorEntity] = [
@@ -393,7 +377,7 @@ async def async_setup_entry(
     # Changing the source reloads the entry, so binding once at setup is enough.
     # The unique id does not depend on it, so the entity and its persisted
     # dry_since survive a switch. RW counts its 10-minute runs: as strongly
-    # gauge-adjusted as HH:50, and a reset shows up to an hour sooner.
+    # gauge-adjusted as the hourly run, and a reset shows up to an hour sooner.
     dry_streak_source = entry.options.get(
         CONF_DRY_STREAK_SOURCE, DEFAULT_DRY_STREAK_SOURCE
     )
@@ -575,6 +559,12 @@ class PrecipitationTotalSensor(DwdCoordinatorEntity, RestoreEntity, SensorEntity
             # First release ever seen: it fixes the starting point only.
             self._total = self._total or 0.0
             self._last_release = release
+            return
+
+        if release < first_uncounted_release(self.coordinator, self._last_release):
+            # Overlaps the counted windows: the first release after the RW grid
+            # moved to HH:00. Not counted, and not advanced past, so the next
+            # release still sees the gap as its own.
             return
 
         missed = missed_releases(

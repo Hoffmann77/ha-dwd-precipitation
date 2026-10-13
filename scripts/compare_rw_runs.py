@@ -1,10 +1,10 @@
 """Compare RW's sub-hourly runs with its HH:50 runs against radar-only RS.
 
 DWD publishes RW (the gauge-adjusted hourly analysis) every 10 minutes: a
-sliding hour ending at :00, :10, ... :50. The integration has only ever used
-the HH:50 run. Before anything relies on the others, this checks whether they
-are gauge-adjusted just as strongly, or whether only HH:50 gets the full set of
-gauges.
+sliding hour ending at :00, :10, ... :50. The integration used only the HH:50
+run up to 2026.10.0 (it reads HH:00 since). Before anything relies on the
+others, this checks whether they are gauge-adjusted just as strongly, or
+whether only HH:50 gets the full set of gauges.
 
 RW and RS ``_000`` cover the same window (the hour ending at T), and RW's
 HDF5 edition sits on RS's 1100x1200 grid, so the two compare cell for cell.
