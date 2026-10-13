@@ -243,6 +243,24 @@ The base the next three PRs stand on. *(TD 1, 3, 6, 10, 18; S-altitude 2, 6, 9, 
   `metadata_attrs_fn` moved into `DwdCoordinatorEntity`). Per D5,
   `forecast_5min` stays always on there, as an explicit exception.
 
+**Step 5 outcome (done, 3 commits `88a5274`..`2c62631`).**
+- `options.py`: `DEFAULT_OPTIONS` (every option's default, used by the form)
+  and the frozen `DwdOptions` snapshot; coordinators read `self.options`,
+  platforms `entry.runtime_data.options`. No `entry.options.get()` left
+  outside it. The dry-streak source resolution lives there.
+- Dry streak gets its RW/SF correction sources passed in; the restore +
+  correction path now has an end-to-end test.
+- Sensors and the binary sensor share one description mechanism
+  (`DwdEntityDescriptionMixin` + rendering in `DwdCoordinatorEntity`);
+  `forecast_5min` stays always on (D5).
+- *Not done, deliberately:* descriptions declaring their products so setup
+  builds only those (one optional product, `rw_10min`, already resolved
+  through `DwdOptions`; not worth a cross-module mechanism), and a generic
+  registry sweep (it would permanently delete users' entities, with their
+  customisations, if setup ever skipped one; the explicit rain-events
+  removal stays). RV's `_parse` reads the frozen snapshot rather than taking
+  options as arguments.
+
 ## PR 6 — Rain events as a tracker
 
 *(TD 9, 15, bug 4; S-altitude 3, 12; S-efficiency 4, 5)*
