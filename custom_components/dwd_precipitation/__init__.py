@@ -16,6 +16,7 @@ from .coordinator import BaseProductUpdateCoordinator
 from .const import CONF_DRY_STREAK_SOURCE, LEGACY_DRY_STREAK_SOURCE, PLATFORMS
 from .products import (
     RAIN_EVENTS_STORE_VERSION,
+    rain_events_enabled,
     rain_events_store_key,
     RadvorRS,
     RadvorRV,
@@ -96,6 +97,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: MyConfigEntry) -> bool:
 
     for coordinator in product_coordinators:
         coordinator.async_track_releases()
+
+    if not rain_events_enabled(entry.options):
+        # Turned off: drop what the tracker stored, so turning it on again
+        # starts clean rather than from a state days out of date.
+        await Store(
+            hass, RAIN_EVENTS_STORE_VERSION, rain_events_store_key(entry.entry_id)
+        ).async_remove()
 
     entry.runtime_data = MyData({c.PRODUCT_KEY: c for c in product_coordinators})
     entry.async_on_unload(entry.add_update_listener(update_listener))

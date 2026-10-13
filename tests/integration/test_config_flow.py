@@ -261,6 +261,7 @@ async def test_options_flow_rejects_an_unknown_dry_streak_source(
 
 
 ADVANCED = (
+    "rain_events",
     "rain_event_threshold",
     "precipitation_end_algorithm",
     "full_rolling_series",
@@ -292,6 +293,7 @@ async def test_advanced_options_are_a_collapsed_section(hass: HomeAssistant) -> 
     assert inner["full_rolling_series"] is True
     assert inner["rain_event_threshold"] == 0.4
     assert inner["unavailable_when_stale"] is True
+    assert inner["rain_events"] is False
     main = {str(m) for m in result["data_schema"].schema}
     assert main.isdisjoint(ADVANCED)
 

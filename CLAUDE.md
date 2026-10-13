@@ -26,8 +26,8 @@ precipitation_total.py
                       (with its pending backfill), the reading filter, and the
                       missed-release walk used by the PrecipitationTotalSensor
                       in sensor.py.
-rain_events.py        Pure rain-event tracker behind the rain_events attribute
-                      of Precipitation expected (see "Rain events"). HA-free,
+rain_events.py        Pure rain-event tracker behind the Rain events sensor
+                      (see "Rain events"). HA-free,
                       no relative imports: the parser tier tests it.
 config_flow.py        UI config flow: collects name + lat/lon; options form
                       with a collapsed Advanced section, stored flat.
@@ -535,9 +535,26 @@ of the bytes (archives are 3.5-17.5 MB), an RV analysis 1-2 requests and 4-7 %.
 
 ## Rain events
 
-`rain_events` on `binary_sensor.<device>_precipitation_expected` (schema 1) is a
-contract with blueprints: field names and semantics in the README section "Rain
-events". `rain_events.py` holds the logic; `RadvorRV` the glue.
+The `Rain events` sensor (`sensor.<device>_rain_events`, key
+`radvor_rv_rain_events`) publishes the tracker's view (schema 1) as its
+attributes, a contract with blueprints: field names and semantics in the
+README section "Rain events". `rain_events.py` holds the logic; `RadvorRV` the
+glue; `RainEventsSensor` in sensor.py the entity.
+
+- **Opt-in.** The `rain_events` option (Advanced, default off) gates all of it:
+  `rain_events_enabled()` decides whether `RadvorRV` gets a `Store`, and with
+  none it skips the tracker, so an entry that does not use it makes no fill
+  requests and writes nothing. Turning it off removes the entity from the
+  registry (rather than leaving "no longer provided") and deletes the store,
+  so turning it on again starts clean. Nothing on 2026.10.0 had it, so it is
+  off for existing installs as well.
+- **Own entity.** It sat on `Precipitation expected` as a `rain_events`
+  attribute in pre-releases; a flag is the wrong home for a few KB that change
+  every release and that blueprints depend on. The state is
+  `overall_status()`: `ongoing` if any event is, else `upcoming`, else `none`
+  (an `unseen` event alone is `none`), so a blueprint can trigger on the state.
+  All `VIEW_KEYS` are unrecorded. A tracker failure leaves the view out, so
+  the state is `unknown`, not a guess.
 
 - **Steps.** The measured step ending at T is the RV analysis (lead 0) of
   release T, and no other release has it, so the integration keeps measured
@@ -579,7 +596,7 @@ events". `rain_events.py` holds the logic; `RadvorRV` the glue.
 ## Options form
 
 The options form nests rarely needed options in a collapsed `advanced_options`
-section (`data_entry_flow.section`): `rain_event_threshold`,
+section (`data_entry_flow.section`): `rain_events`, `rain_event_threshold`,
 `precipitation_end_algorithm`, `full_rolling_series`, `unavailable_when_stale`.
 Only the *form* is nested: `async_step_init` flattens the section before
 saving, so every key stays where `entry.options.get(...)` looks for it and no

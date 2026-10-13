@@ -465,3 +465,16 @@ def test_nodata_steps_are_not_refetched():
     sim = Sim()
     sim.release(at("12:00"), lambda _t: None)  # no data for the cell at all
     assert steps_to_fill(sim.state, at("12:05")) == []
+
+
+def test_overall_status_prefers_ongoing_and_ignores_unseen():
+    from rain_events import NO_EVENT, overall_status
+
+    def view(*statuses):
+        return {"events": [{"status": s} for s in statuses]}
+
+    assert overall_status(view()) == NO_EVENT
+    assert overall_status({"events": None}) == NO_EVENT
+    assert overall_status(view("unseen")) == NO_EVENT
+    assert overall_status(view("unseen", "upcoming")) == "upcoming"
+    assert overall_status(view("upcoming", "ongoing")) == "ongoing"

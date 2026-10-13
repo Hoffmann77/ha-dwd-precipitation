@@ -54,6 +54,8 @@ from .const import (
     DEFAULT_DRY_STREAK_SOURCE,
     DRY_STREAK_SOURCE_RW,
     RW_SLIDING_KEY,
+    CONF_RAIN_EVENTS,
+    DEFAULT_RAIN_EVENTS,
     CONF_RAIN_EVENT_THRESHOLD,
     DEFAULT_RAIN_EVENT_THRESHOLD,
     CONF_FULL_ROLLING_SERIES,
@@ -108,6 +110,11 @@ RAIN_FILL_BUDGET = timedelta(seconds=30)
 # RadvorRV._schedule_rain_save).
 RAIN_SAVE_DELAY = timedelta(seconds=10)
 RAIN_IDLE_SAVE_DELAY = timedelta(hours=12)
+
+
+def rain_events_enabled(options) -> bool:
+    """Whether the entry tracks rain events (the "Rain events" sensor)."""
+    return bool(options.get(CONF_RAIN_EVENTS, DEFAULT_RAIN_EVENTS))
 
 
 def rain_events_store_key(entry_id: str) -> str:
@@ -430,8 +437,8 @@ class RadvorRV(BaseProductUpdateCoordinator):
     # across one whole missed release before dropping the entities.
     OVERDUE_GRACE = DEFAULT_OVERDUE_GRACE
 
-    # rain_events persistence; None leaves the tracker off (tests building the
-    # coordinator without HA).
+    # rain_events persistence; None leaves the tracker off: the option is off,
+    # or a test builds the coordinator without HA.
     _rain_store: Store | None = None
     _rain_state: RainEventsState | None = None
     _rain_saved_ended: str | None = None
@@ -439,11 +446,12 @@ class RadvorRV(BaseProductUpdateCoordinator):
     _rain_broken: bool = False
 
     def __init__(self, hass, entry, async_client, lat, lon) -> None:
-        """Initialize the coordinator and its rain_events store."""
+        """Initialize the coordinator and, if tracked, its rain_events store."""
         super().__init__(hass, entry, async_client, lat, lon)
-        self._rain_store = Store(
-            hass, RAIN_EVENTS_STORE_VERSION, rain_events_store_key(entry.entry_id)
-        )
+        if rain_events_enabled(entry.options):
+            self._rain_store = Store(
+                hass, RAIN_EVENTS_STORE_VERSION, rain_events_store_key(entry.entry_id)
+            )
 
     @cached_property
     def index(self) -> tuple[int, int]:
@@ -495,7 +503,7 @@ class RadvorRV(BaseProductUpdateCoordinator):
             if not self._rain_broken:
                 self._rain_broken = True
                 _LOGGER.exception(
-                    "Could not update the rain_events attribute; the other RV "
+                    "Could not update the Rain events sensor; the other RV "
                     "sensors are not affected"
                 )
             return None

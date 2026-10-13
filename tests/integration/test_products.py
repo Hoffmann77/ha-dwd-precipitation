@@ -847,7 +847,7 @@ async def test_rv_tracker_failure_leaves_the_sensors_alone(caplog) -> None:
         data, _ = await _rv_release(coord, _RVWorld(lambda _t: 0.0), "14:00")
     assert data["rain_events"] is None
     assert data["max_060"] == 0.0
-    assert any("Could not update the rain_events attribute" in r.message for r in caplog.records)
+    assert any("Could not update the Rain events sensor" in r.message for r in caplog.records)
 
 
 @pytest.mark.asyncio

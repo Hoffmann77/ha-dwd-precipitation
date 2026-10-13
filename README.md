@@ -21,7 +21,7 @@ Radar-based precipitation measurements and forecasts from the German Weather Ser
 - **Precipitation type:** rain, drizzle, snow, sleet, graupel, hail, freezing rain
 - **Measured totals:** past hour, past 24 hours, yesterday, and a days-without-rain counter
 - **Long-term totals:** running rain totals for Home Assistant's statistics, so weekly, monthly and yearly sums work out of the box
-- **Rain events for blueprints:** each burst of rain followed under one id from forecast to measurement, with forecast and measured amounts side by side
+- **Rain events for blueprints** (optional): each burst of rain followed under one id from forecast to measurement, with forecast and measured amounts side by side
 - **Customizable thresholds** for rain events to use as input for automations.
 
 ## Entities
@@ -143,7 +143,8 @@ Open **Settings > Devices & Services > DWD Precipitation > Configure**. None of 
 
 Collapsed at the bottom of the form; most installations never need them.
 
-- **Rain event threshold (mm per hour)** (default: 0.1): how much rain a 5-minute step needs to count towards an event in the [`rain_events`](#rain-events) attribute. 0 means any trace forms an event. It is independent of the rain detection threshold above, so the events and `Precipitation start` can disagree when the two differ.
+- **Track rain events** (default: off): adds the [`Rain events`](#rain-events) sensor. With it on, the integration also fetches the radar analyses it missed (a small part of each file) and keeps a small record of recent rain on disk; turning it off removes the sensor and that record.
+- **Rain event threshold (mm per hour)** (default: 0.1): how much rain a 5-minute step needs to count towards an event in the [`Rain events`](#rain-events) sensor. 0 means any trace forms an event. It is independent of the rain detection threshold above, so the events and `Precipitation start` can disagree when the two differ.
 - **When "Precipitation end" counts rain as over** (default: first dry gap): see `Precipitation end` below.
 - **Include the past hour in the hourly forecast series** (default: off): makes the `forecast_rolling_1h` attribute of `Peak hourly precipitation next 120 min` start one hour earlier, so the first entries also include rain that has already fallen and a chart shows the past hour and the forecast as one curve. The sensor's value does not change. Roughly doubles the processing time per update, which can matter on small devices such as a Raspberry Pi.
 - **Show sensors as unavailable when the data is out of date** (default: on): if DWD does not publish a new file in time, sensors report `unavailable` instead of keeping the last value. See [Troubleshooting](#troubleshooting) for how long "in time" is. The missing file keeps being retried either way.
@@ -170,7 +171,8 @@ Collapsed at the bottom of the form; most installations never need them.
 - **Precipitation end** (time or min): when rain stops. `unknown` if it continues beyond 2 h, which means "still raining in 2 hours", not "never".
   - *First dry gap*: end of the current burst. Moves around during showers.
   - *Precipitation clears within 2 h*: when no more rain is forecast within the horizon. Steadier, but stays `unknown` longer.
-- **Precipitation expected** (binary sensor): `on` if rain is forecast within the next 2 h. Its `rain_events` attribute follows each rain event from forecast to measurement; see [Rain events](#rain-events).
+- **Precipitation expected** (binary sensor): `on` if rain is forecast within the next 2 h.
+- **Rain events** (only with *Track rain events* on): `ongoing` while a rain event is falling, otherwise `upcoming` if one is forecast, otherwise `none`. Its attributes follow each event from forecast to measurement; see [Rain events](#rain-events).
 
 ### HymecNG: precipitation type · every 5 min
 
@@ -201,7 +203,7 @@ Always present:
 |-----------|----------|-------------|
 | `minutes_until` / `at` | `Precipitation start`, `Precipitation end`, `Precipitation expected` | The form *not* shown as the state: whole minutes until the event, or its ISO-8601 UTC time. The binary sensor carries both, pointing at the forecast start (`null` when no rain is expected) |
 | `forecast_5min` | `Precipitation expected` | The full 25-point RV forecast (0–120 min in 5-minute steps); each point has `lead` (minutes from now), `start`, `end`, `value` (mm in those 5 minutes) and `intensity` (mm/h). `value` and `intensity` are `null` for a step without data. Not recorded in history |
-| `rain_events` | `Precipitation expected` | The rain around your location split into events, each with a stable id, measured and forecast amounts and their peaks. See [Rain events](#rain-events). Not recorded in history |
+| `schema`, `events`, `steps`, … | `Rain events` | The rain around your location split into events, each with a stable id, measured and forecast amounts and their peaks. See [Rain events](#rain-events). Not recorded in history |
 | `window_start` / `window_end` | `Peak hourly precipitation next 120 min` | ISO-8601 UTC start and end of the wettest hour; `null` when no rain is forecast. If two windows tie, the earlier one |
 | `window_start` / `window_end` | `Precipitation intensity now` | ISO-8601 UTC start and end of the 5-minute radar analysis the rate comes from |
 | `amount_5min` | `Precipitation intensity now` | The rain in that window in mm, before it is scaled to mm/h; `null` without data |
@@ -221,11 +223,12 @@ With **Add technical details to each sensor** enabled, every DWD sensor except `
 
 ### Rain events
 
-The `rain_events` attribute of `Precipitation expected` is meant for blueprints that warn about short bursts of rain: it follows each event from the first forecast that shows it until it has fallen, under one id, and reports what was forecast against what was measured. It applies one threshold, the *Rain event threshold* option (a 5-minute step is wet if its amount is above a twelfth of it); levels and warnings are up to the blueprint.
+The `Rain events` sensor (`sensor.<name>_rain_events`, enabled with the *Track rain events* option) is meant for blueprints that warn about short bursts of rain. Its state is `ongoing`, `upcoming` or `none` (an `unseen` event alone counts as `none`), and its attributes are the view below. It follows each event from the first forecast that shows it until it has fallen, under one id, and reports what was forecast against what was measured. It applies one threshold, the *Rain event threshold* option (a 5-minute step is wet if its amount is above a twelfth of it); levels and warnings are up to the blueprint.
 
 ```yaml
 schema: 1                              # check this; it changes only on a breaking change
-base: "2026-10-12T14:30:00+00:00"      # T, the release time (= forecast_5min[0].end)
+base: "2026-10-12T14:30:00+00:00"      # T, the release time (= forecast_5min[0].end
+                                       #   of Precipitation expected)
 wet_step_mm: 0.008                     # a step is wet above this (mm per 5 min)
 steps_start: "2026-10-12T13:30:00+00:00"
 steps: [0.0, …, 1.5, …]                # 36 values, mm per 5 min: 12 measured ending at T,

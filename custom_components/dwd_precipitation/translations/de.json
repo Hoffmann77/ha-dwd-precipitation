@@ -43,13 +43,15 @@
             "name": "Erweiterte Optionen",
             "description": "Einstellungen, die die meisten Installationen nie ändern müssen.",
             "data": {
+              "rain_events": "Regenereignisse verfolgen",
               "rain_event_threshold": "Schwelle für Regenereignisse (mm pro Stunde)",
               "precipitation_end_algorithm": "Wann „Niederschlagsende“ den Regen als beendet ansieht",
               "full_rolling_series": "Vergangene Stunde in die stündliche Vorhersagereihe aufnehmen",
               "unavailable_when_stale": "Sensoren als nicht verfügbar anzeigen, wenn die Daten veraltet sind"
             },
             "data_description": {
-              "rain_event_threshold": "Wie viel Regen ein 5-Minuten-Schritt braucht, um zu einem Regenereignis im Attribut „rain_events“ von „Niederschlag erwartet“ zu zählen. 0 bedeutet, dass jede Spur ein Ereignis bildet. Unabhängig von der Schwelle für Regenerkennung, daher können die Ereignisse und „Niederschlagsbeginn“ voneinander abweichen, wenn sich die beiden Schwellen unterscheiden.",
+              "rain_events": "Fügt den Sensor „Regenereignisse“ hinzu, der jeden Regenschauer von der ersten Vorhersage, die ihn zeigt, bis er gefallen ist, verfolgt – für Blueprints, die vor Regen warnen oder darüber berichten. Standardmäßig aus: eingeschaltet ruft die Integration auch verpasste Radaranalysen ab und speichert eine kleine Aufzeichnung des jüngsten Regens.",
+              "rain_event_threshold": "Wie viel Regen ein 5-Minuten-Schritt braucht, um im Sensor „Regenereignisse“ zu einem Regenereignis zu zählen. 0 bedeutet, dass jede Spur ein Ereignis bildet. Unabhängig von der Schwelle für Regenerkennung, daher können die Ereignisse und „Niederschlagsbeginn“ voneinander abweichen, wenn sich die beiden Schwellen unterscheiden. Nur wirksam, wenn „Regenereignisse verfolgen“ eingeschaltet ist.",
               "precipitation_end_algorithm": "„Erste trockene Lücke“ meldet das Ende des aktuellen Schauers und springt daher bei Schauerwetter hin und her. „Niederschlag endet innerhalb von 2 h“ wartet, bis kein weiterer Regen vorhergesagt ist – das ist stabiler, bleibt aber länger unbekannt. Der DWD sagt nur zwei Stunden voraus, darüber hinaus ist der Sensor in beiden Fällen „unbekannt“.",
               "full_rolling_series": "Lässt das Attribut „forecast_rolling_1h“ von „Maximaler Stundenniederschlag nächste 120 min“ eine Stunde früher beginnen. Jeder Eintrag ist der Niederschlag in der Stunde, die zu diesem Zeitpunkt beginnt. Die ersten Einträge enthalten damit auch Regen, der bereits gefallen ist, und ein Diagramm zeigt die vergangene Stunde und die Vorhersage als eine durchgehende Kurve. Der Wert des Sensors ist in beiden Fällen gleich, da er nur die kommenden Stunden betrachtet. Eingeschaltet verdoppelt sich etwa die Rechenzeit pro Aktualisierung, was auf kleinen Geräten spürbar sein kann.",
               "unavailable_when_stale": "Veröffentlicht der DWD nicht rechtzeitig eine neue Datei, melden die betroffenen Sensoren „nicht verfügbar“, statt den letzten Wert zu behalten. Schalte dies aus, um immer den neuesten Messwert zu behalten – auch wenn er Stunden alt sein kann. In beiden Fällen wird die fehlende Datei im Hintergrund weiter abgerufen."
@@ -146,6 +148,14 @@
           "graupel": "Graupel",
           "hail": "Hagel",
           "large_hail": "Großer Hagel"
+        }
+      },
+      "rain_events": {
+        "name": "Regenereignisse",
+        "state": {
+          "none": "Keines",
+          "upcoming": "Bevorstehend",
+          "ongoing": "Laufend"
         }
       }
     },

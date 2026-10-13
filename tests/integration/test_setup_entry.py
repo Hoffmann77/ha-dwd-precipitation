@@ -615,3 +615,64 @@ async def test_removing_the_entry_deletes_its_rain_events_store(
     await hass.async_block_till_done()
 
     assert key not in hass_storage
+
+
+RAIN_VIEW = {
+    "schema": 1,
+    "base": "2025-06-01T12:00:00+00:00",
+    "wet_step_mm": 0.008,
+    "steps_start": "2025-06-01T11:00:00+00:00",
+    "steps": [0.0] * 36,
+    "history_complete": True,
+    "events": [{"id": "20250601t1200-0", "status": "upcoming"}],
+    "last_ended": None,
+}
+
+
+@pytest.mark.asyncio
+async def test_rain_events_sensor_with_the_option(hass: HomeAssistant) -> None:
+    """With the option on, the view is its own sensor's attributes."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"name": "Home", "latitude": 51.05, "longitude": 13.73},
+        options={"rain_events": True},
+    )
+    entry.add_to_hass(hass)
+
+    rv = AsyncMock(return_value=({**RV_DATA, "rain_events": RAIN_VIEW}, RV_META))
+    with _patched_products(), patch.object(RadvorRV, "_fetch_and_parse", new=rv):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    state = _state_for(hass, "radvor_rv_rain_events")
+    assert state.entity_id == "sensor.mock_title_rain_events"
+    assert state.state == "upcoming"
+    assert state.attributes["schema"] == 1
+    assert state.attributes["events"] == RAIN_VIEW["events"]
+    assert state.attributes["options"] == ["none", "upcoming", "ongoing"]
+    assert entry.runtime_data.coordinators["rv"]._rain_store is not None
+
+    flag = _state_for(hass, "radvor_rv_precipitation_expected_120", "binary_sensor")
+    assert "rain_events" not in flag.attributes
+
+
+@pytest.mark.asyncio
+async def test_rain_events_off_runs_no_tracker_and_leaves_nothing(
+    hass: HomeAssistant, hass_storage
+) -> None:
+    """Off (the default): no tracker, and what an earlier "on" left is removed."""
+    entry = _entry(hass)
+    unique_id = f"{entry.entry_id}_radvor_rv_rain_events"
+    er.async_get(hass).async_get_or_create(
+        "sensor", DOMAIN, unique_id, config_entry=entry
+    )
+    key = f"dwd_precipitation.{entry.entry_id}.rain_events"
+    hass_storage[key] = {"version": 1, "minor_version": 1, "key": key, "data": {}}
+
+    with _patched_products():
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    assert entry.runtime_data.coordinators["rv"]._rain_store is None
+    assert er.async_get(hass).async_get_entity_id("sensor", DOMAIN, unique_id) is None
+    assert key not in hass_storage

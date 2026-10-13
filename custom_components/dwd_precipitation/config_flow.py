@@ -35,6 +35,8 @@ from .const import (
     DRY_STREAK_SOURCE_RS,
     CONF_FULL_ROLLING_SERIES,
     DEFAULT_FULL_ROLLING_SERIES,
+    CONF_RAIN_EVENTS,
+    DEFAULT_RAIN_EVENTS,
     CONF_RAIN_EVENT_THRESHOLD,
     DEFAULT_RAIN_EVENT_THRESHOLD,
 )
@@ -67,6 +69,10 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         options = self.config_entry.options
         advanced = vol.Schema(
             {
+                vol.Optional(
+                    CONF_RAIN_EVENTS,
+                    default=options.get(CONF_RAIN_EVENTS, DEFAULT_RAIN_EVENTS),
+                ): selector.BooleanSelector(),
                 vol.Optional(
                     CONF_RAIN_EVENT_THRESHOLD,
                     default=options.get(

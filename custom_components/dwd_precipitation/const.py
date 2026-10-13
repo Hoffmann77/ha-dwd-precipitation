@@ -58,6 +58,13 @@ CONF_FULL_ROLLING_SERIES = "full_rolling_series"
 # 12 windows that straddle now. The peak itself is identical either way.
 DEFAULT_FULL_ROLLING_SERIES = False
 
+CONF_RAIN_EVENTS = "rain_events"
+
+# Whether the entry tracks rain events (the "Rain events" sensor). Off by
+# default: the tracker fetches missed analyses and keeps a store, which only
+# pays off for the blueprints that read it.
+DEFAULT_RAIN_EVENTS = False
+
 CONF_RAIN_EVENT_THRESHOLD = "rain_event_threshold"
 
 # mm/h; a 5-minute step above a twelfth of this is wet for rain_events. Not a

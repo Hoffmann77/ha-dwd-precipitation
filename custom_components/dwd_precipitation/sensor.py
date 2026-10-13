@@ -22,6 +22,7 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -52,6 +53,8 @@ from .dry_streak import (
     scalar_reading,
 )
 from .entity import DwdCoordinatorEntity
+from .products import rain_events_enabled
+from .rain_events import NO_EVENT, ONGOING, UPCOMING, VIEW_KEYS, overall_status
 from .precipitation_total import (
     PrecipitationTotalExtraData,
     countable,
@@ -297,6 +300,17 @@ HYMECNG_SENSORS = (
 )
 
 
+# The rain-event tracker's view, for blueprints. Its state is the status of
+# the nearest event; the view itself (schema 1) is the attributes.
+RAIN_EVENTS_SENSOR = SensorEntityDescription(
+    key="radvor_rv_rain_events",
+    translation_key="rain_events",
+    icon="mdi:weather-pouring",
+    device_class=SensorDeviceClass.ENUM,
+    options=[NO_EVENT, UPCOMING, ONGOING],
+)
+
+
 def _rv_timing_sensors(
     mode: str,
 ) -> tuple[PrecipitationSensorEntityDescription, ...]:
@@ -395,6 +409,15 @@ async def async_setup_entry(
         PrecipitationTotalSensor(coordinators[description.product_key], description)
         for description in TOTAL_SENSORS
     )
+    # Rain events are opt-in. With the option off there is no tracker, so the
+    # entity goes too, rather than lingering as "no longer provided".
+    if rain_events_enabled(entry.options):
+        entities.append(RainEventsSensor(coordinators["rv"], RAIN_EVENTS_SENSOR))
+    elif entity_id := er.async_get(hass).async_get_entity_id(
+        "sensor", DOMAIN, f"{entry.entry_id}_{RAIN_EVENTS_SENSOR.key}"
+    ):
+        er.async_get(hass).async_remove(entity_id)
+
     # Changing the source reloads the entry, so binding once at setup is enough.
     # The unique id does not depend on it, so the entity and its persisted
     # dry_since survive a switch. RW counts its 10-minute runs: as strongly
@@ -491,6 +514,34 @@ class PrecipitationSensorEntity(DwdCoordinatorEntity, SensorEntity):
             attrs["forecast_5min"] = metadata.samples
 
         return attrs
+
+
+class RainEventsSensor(DwdCoordinatorEntity, SensorEntity):
+    """The rain-event tracker's view: nearest status as state, view as attributes.
+
+    The attributes are the schema-1 contract with blueprints (README "Rain
+    events"), a few KB that change every release, so none is recorded.
+    """
+
+    _unrecorded_attributes = frozenset(VIEW_KEYS)
+
+    def _view(self) -> dict[str, Any] | None:
+        """Return the tracker's view of the latest release, if it has one."""
+        if self.coordinator.data is None or self.coordinator.data.data is None:
+            return None
+
+        return self.coordinator.data.data.get("rain_events")
+
+    @property
+    def native_value(self) -> str | None:
+        """Return ongoing, upcoming or none; unknown if the tracker failed."""
+        view = self._view()
+        return None if view is None else overall_status(view)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return the view: the events, their steps and the last ended one."""
+        return dict(self._view() or {})
 
 
 class PrecipitationTotalSensor(DwdCoordinatorEntity, RestoreEntity, SensorEntity):

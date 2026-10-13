@@ -58,9 +58,8 @@ class DwdBinarySensorEntity(DwdCoordinatorEntity, BinarySensorEntity):
 
     entity_description: DwdBinarySensorEntityDescription
 
-    # The 5-minute forecast series and the rain events (a few KB) would bloat
-    # the recorder history.
-    _unrecorded_attributes = frozenset({"forecast_5min", "rain_events"})
+    # The 5-minute forecast series would bloat the recorder history.
+    _unrecorded_attributes = frozenset({"forecast_5min"})
 
     @property
     def is_on(self) -> bool | None:
@@ -75,7 +74,7 @@ class DwdBinarySensorEntity(DwdCoordinatorEntity, BinarySensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Expose the forecast start, the 5-minute RV forecast and the rain events."""
+        """Expose the forecast start and the 5-minute RV forecast."""
         if self.coordinator.data is None or self.coordinator.data.data is None:
             return {}
 
@@ -95,9 +94,5 @@ class DwdBinarySensorEntity(DwdCoordinatorEntity, BinarySensorEntity):
             metadata = self.entity_description.access_fn(metadata_map)
             if metadata is not None and getattr(metadata, "samples", None):
                 attrs["forecast_5min"] = metadata.samples
-
-        # From the same RV release as forecast_5min, so the two always agree.
-        if (rain_events := data.get("rain_events")) is not None:
-            attrs["rain_events"] = rain_events
 
         return attrs
