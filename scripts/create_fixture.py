@@ -36,6 +36,8 @@ HDF5_OUT = FIXTURES / "composite_rs_sample.hd5"
 META_OUT  = FIXTURES / "fixture_metadata.json"
 
 DWD_URL   = "https://opendata.dwd.de/weather/radar/composite/rs"
+MIN_MM    = 0.1   # minimum precipitation to consider a valid cell
+
 # Real RS grid parameters for the synthetic fallback
 PROJDEF = (
     "+proj=stere +lat_ts=60 +lat_0=90 +lon_0=10"
