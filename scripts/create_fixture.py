@@ -129,7 +129,7 @@ def try_download_real_file() -> tuple[bytes | None, datetime | None]:
         data, _ = parse_hdf5(hdf5_bytes)
         rain_cells = np.argwhere((~np.isnan(data)) & (data >= MIN_MM))
         if len(rain_cells) == 0:
-            print(f"    → no precipitation, trying earlier …", flush=True)
+            print("    → no precipitation, trying earlier …", flush=True)
             ts -= timedelta(minutes=5)
             continue
 

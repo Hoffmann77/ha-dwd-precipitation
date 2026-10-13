@@ -50,6 +50,19 @@ wradlib-comparison = [
     "h5py==3.16.0",
 ]
 
+# Lint only: ruff, nothing imported. Not in the conflicts list above, so it
+# can be synced on its own (`uv run --only-group lint ruff check`).
+lint = [
+    "ruff==0.17.0",
+]
+
+[tool.ruff]
+target-version = "py314"
+
+[tool.ruff.lint]
+# Pyflakes only for now: undefined and unused names. Broader rule sets later.
+select = ["F"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # "." allows `from custom_components... import` (used in ha-test job, where HA is installed).
