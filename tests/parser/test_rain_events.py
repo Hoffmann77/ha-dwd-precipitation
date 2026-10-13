@@ -475,6 +475,21 @@ def test_nothing_at_stake_on_a_dry_day():
     assert at_stake(sim.state) is True
 
 
+def test_nodata_steps_are_not_at_stake():
+    # A coverage-edge cell: no data, nothing to refetch, nothing to save.
+    sim = Sim()
+    sim.run("12:00", "13:00", lambda _t: None, DRY)
+    assert at_stake(sim.state) is False
+
+
+def test_an_unknown_step_is_at_stake():
+    sim = Sim()
+    sim.unfillable.add(at("12:30"))
+    sim.run("12:00", "13:00", DRY, skip=["12:30"])
+    assert steps_to_fill(sim.state, at("13:00")) == [at("12:30")]
+    assert at_stake(sim.state) is True
+
+
 def test_nodata_steps_are_not_refetched():
     sim = Sim()
     sim.release(at("12:00"), lambda _t: None)  # no data for the cell at all
