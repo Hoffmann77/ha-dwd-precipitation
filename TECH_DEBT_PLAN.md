@@ -148,7 +148,31 @@ unless marked.
 - `window_start` / `window_end` on intensity-now and peak sensors →
   `_unrecorded_attributes` (~288 attribute rows/entity/day). *(S-efficiency 14; changes history only)*
 
+**Step 3 outcome (done, 14 commits `1126d33`..`5e295bd`).** Deviations:
+- *Moved to step 4:* `mydatetime`, `get_previous_multiple(include=)` and
+  `_get_latest_release` → `_release_at_or_before(...)`: all release-grid
+  arithmetic that `ReleaseGrid` replaces anyway.
+- *Kept:* `read_odim_composite_cell` still returns NaN (it mirrors wradlib and
+  the grid reader, which the reference tiers compare against); NaN → None
+  happens once, in `products._nan_to_none`. The dry streak's own NaN guard
+  stays: tests feed it NaN on purpose.
+- *Skipped:* the `_onset_view` / `candidate` dict merges. Their explicit field
+  lists are the published schema-1 contract; a merge would let stored keys
+  leak into the view.
+- *Placed differently:* `iso()` / `parse_utc()` live in `utils.py` (HA-free),
+  not a new `serialize.py`; `rain_events.py` keeps its copies until step 6.
+- *Found on the way:* a total restored without a `total` backfilled its stale
+  pending releases into a total that had just restarted at 0 (fixed with the
+  invariant, `2920f41`). On a range-read fallback the archive is now unpacked
+  in the executor (`5092370`).
+- *Verified beyond the suites:* rain_events old vs new on 1500 random
+  scenarios (identical; the check flags a planted off-by-one), every sensor
+  description and the options form compared field by field before and after.
+
 ## PR 4 — Coordinator core API
+
+- *From step 3:* drop `mydatetime` and `get_previous_multiple(include=)`;
+  `_get_latest_release(now)` becomes `at_or_before(now - release_delay)`.
 
 The base the next three PRs stand on. *(TD 1, 3, 6, 10, 18; S-altitude 2, 6, 9, 11; S-efficiency 9, 10; S-simplification 1, 13)*
 
