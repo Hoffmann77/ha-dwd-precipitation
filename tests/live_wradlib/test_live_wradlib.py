@@ -23,12 +23,11 @@ from __future__ import annotations
 
 import io
 import tarfile
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from functools import lru_cache
 
 import numpy as np
 import pytest
-import requests
 
 pytest.importorskip("wradlib")
 
@@ -41,7 +40,8 @@ from radar.odim import (  # noqa: E402
     rs_grid_contains,
 )
 from radar import nowcast  # noqa: E402
-from radar.urls import product_url, radvor_prefix  # noqa: E402
+from radar.urls import radvor_prefix  # noqa: E402
+from tests.live_common import download_newest  # noqa: E402
 from tests.live_wradlib import report  # noqa: E402
 from tests.wradlib_ref import (  # noqa: E402
     de1200_cell,
@@ -80,48 +80,12 @@ LEADS = tuple(nowcast.LEADS)
 # Download (walk back from the newest likely release until one is up)
 # ---------------------------------------------------------------------------
 
-def _five_minute_candidates() -> list[datetime]:
-    ts = datetime.now(timezone.utc).replace(second=0, microsecond=0)
-    ts -= timedelta(minutes=ts.minute % 5 + 10)
-    return [ts - timedelta(minutes=5 * i) for i in range(18)]
-
-
-def _hourly_candidates(minute: int):
-    """RW/SF as the integration reads them: hourly at HH:<minute> (RW :00, SF :50)."""
-    def candidates() -> list[datetime]:
-        now = datetime.now(timezone.utc)
-        ts = now.replace(minute=minute, second=0, microsecond=0)
-        if ts > now - timedelta(minutes=35):
-            ts -= timedelta(hours=1)
-        return [ts - timedelta(hours=i) for i in range(6)]
-    return candidates
-
-
-# The files the integration fetches (radar/urls.py), newest candidate first.
-_CANDIDATES = {
-    "rs": _five_minute_candidates,
-    "rv": _five_minute_candidates,
-    "hymecng": _five_minute_candidates,
-    "rw": _hourly_candidates(0),
-    "sf": _hourly_candidates(50),
-}
-
-
 @lru_cache(maxsize=None)
 def _download(product: str) -> tuple[bytes, datetime, str]:
     """Return (content, release, url) of the newest downloadable release."""
-    tried = []
-    for ts in _CANDIDATES[product]():
-        url = product_url(product, ts)
-        tried.append(url)
-        try:
-            resp = requests.get(url, timeout=120)
-            resp.raise_for_status()
-        except requests.RequestException:
-            continue
-        report.SOURCES[product] = url
-        return resp.content, ts, url
-    pytest.fail(f"No downloadable {product} release found. Tried:\n" + "\n".join(tried))
+    content, ts, url = download_newest(product, timeout=120)
+    report.SOURCES[product] = url
+    return content, ts, url
 
 
 @lru_cache(maxsize=None)
