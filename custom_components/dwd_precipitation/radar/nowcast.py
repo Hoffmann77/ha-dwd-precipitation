@@ -77,27 +77,23 @@ def bucket_max_intensity(
     return float(max(present)) * STEPS_PER_HOUR
 
 
-def rolling_hour_sums(
-    values: list[float | None], leads: list[int] = FUTURE_HOUR_LEADS
-) -> list[float | None]:
+def rolling_hour_sums(values: list[float | None]) -> list[float | None]:
     """Return RS-equivalent rolling 60-minute totals (mm) from RV 5-minute steps.
 
     ``values`` is aligned to :data:`LEADS` and holds RV 5-minute accumulations.
-    The result is aligned to :data:`LEADS` too: for each lead ``L`` in ``leads``
-    it is the sum of the twelve steps ending at ``L`` (RV leads ``L-55..L``),
-    i.e. the window ``[T+L-60, T+L]`` of the RS member at the same lead; every
-    other position is ``None``. Only windows wholly in the forecast can be
-    built this way, since RV holds no rain from before ``T-5``, so ``leads`` must
-    all be >= 60.
+    The result is aligned to :data:`LEADS` too: for each lead ``L`` in
+    :data:`FUTURE_HOUR_LEADS` it is the sum of the twelve steps ending at ``L``
+    (RV leads ``L-55..L``), i.e. the window ``[T+L-60, T+L]`` of the RS member
+    at the same lead; every other position is ``None``. Only windows wholly in
+    the forecast can be built this way, since RV holds no rain from before
+    ``T-5``: that is what FUTURE_HOUR_LEADS (60..120) are.
 
     A missing step counts as 0, which is what RS reports at the edge of radar
     coverage; a window is ``None`` only when all twelve steps are missing.
     On live data this matched RS exactly wherever both had data.
     """
     sums: list[float | None] = [None] * len(LEADS)
-    for lead in leads:
-        if lead < 60:
-            raise ValueError(f"Lead {lead} reaches before the RV analysis window")
+    for lead in FUTURE_HOUR_LEADS:
         window = [
             values[k // LEAD_STEP]
             for k in range(lead - 60 + LEAD_STEP, lead + 1, LEAD_STEP)
@@ -108,10 +104,8 @@ def rolling_hour_sums(
     return sums
 
 
-def peak_rolling_hour(
-    values: list[float | None], leads: list[int]
-) -> tuple[float | None, int | None]:
-    """Return ``(peak, lead)`` of the wettest rolling hour among ``leads``.
+def peak_rolling_hour(values: list[float | None]) -> tuple[float | None, int | None]:
+    """Return ``(peak, lead)`` of the wettest rolling hour wholly in the future.
 
     ``values`` is aligned to :data:`LEADS` and holds RS rolling 60-minute
     accumulations (mm), so each is already an hourly total and is compared as
@@ -121,7 +115,7 @@ def peak_rolling_hour(
     """
     peak: float | None = None
     peak_lead: int | None = None
-    for lead in leads:
+    for lead in FUTURE_HOUR_LEADS:
         value = values[lead // LEAD_STEP]
         if value is not None and (peak is None or value > peak):
             peak, peak_lead = float(value), lead

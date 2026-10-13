@@ -276,7 +276,7 @@ def _peak_hour_payload(
         for lead in series_leads
     ]
 
-    peak, peak_lead = peak_rolling_hour(sums, FUTURE_HOUR_LEADS)
+    peak, peak_lead = peak_rolling_hour(sums)
     # A dry forecast has no wettest hour, so it gets no window either.
     start, end = windows[peak_lead // LEAD_STEP] if peak else (None, None)
     return peak, ProductMetadata(

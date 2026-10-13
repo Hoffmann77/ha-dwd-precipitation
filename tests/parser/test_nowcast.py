@@ -159,26 +159,26 @@ def test_future_hour_leads_span_next_two_hours():
 
 def test_peak_rolling_hour_ignores_past_hour():
     values = _series(**{"0": 40.0, "55": 30.0, "75": 7.0})
-    assert peak_rolling_hour(values, FUTURE_HOUR_LEADS) == (7.0, 75)
+    assert peak_rolling_hour(values) == (7.0, 75)
 
 
 def test_peak_rolling_hour_tie_goes_to_earliest_window():
     values = _series(**{"80": 5.0, "100": 5.0})
-    assert peak_rolling_hour(values, FUTURE_HOUR_LEADS) == (5.0, 80)
+    assert peak_rolling_hour(values) == (5.0, 80)
 
 
 def test_peak_rolling_hour_skips_missing_members():
     values = [None] * len(LEADS)
     values[120 // 5] = 1.5
-    assert peak_rolling_hour(values, FUTURE_HOUR_LEADS) == (1.5, 120)
+    assert peak_rolling_hour(values) == (1.5, 120)
 
 
 def test_peak_rolling_hour_all_missing():
-    assert peak_rolling_hour([None] * len(LEADS), FUTURE_HOUR_LEADS) == (None, None)
+    assert peak_rolling_hour([None] * len(LEADS)) == (None, None)
 
 
 def test_peak_rolling_hour_dry():
-    assert peak_rolling_hour(_series(), FUTURE_HOUR_LEADS) == (0.0, 60)
+    assert peak_rolling_hour(_series()) == (0.0, 60)
 
 
 # --- RS-equivalent rolling hours from RV --------------------------------
@@ -213,6 +213,8 @@ def test_rolling_hour_sums_missing_steps():
     assert rolling_hour_sums(all_missing)[60 // 5] is None
 
 
-def test_rolling_hour_sums_reject_past_windows():
-    with pytest.raises(ValueError):
-        rolling_hour_sums(_series(), leads=[55])
+def test_rolling_hour_sums_build_only_future_windows():
+    """A window ending before T+60 would reach before the RV analysis."""
+    sums = rolling_hour_sums(_series(**{"5": 1.0}))
+    assert sums[: 60 // 5] == [None] * (60 // 5)
+    assert all(v is not None for v in sums[60 // 5:])
