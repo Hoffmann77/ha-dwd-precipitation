@@ -64,8 +64,9 @@ uv run --group ha-test pytest tests/integration
 uv run --group unit-test pytest tests/live -m live
 uv run --group wradlib-comparison pytest tests/live_wradlib -m live
 
-# Everything that doesn't need HA or the network
-uv run --group unit-test pytest tests -m "not live"
+# Everything that doesn't need HA or the network (live tests are deselected
+# unless -m live is given; see addopts in pyproject.toml)
+uv run --group unit-test pytest tests
 ```
 
 ## Markers
