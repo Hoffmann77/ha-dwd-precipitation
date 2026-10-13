@@ -61,6 +61,12 @@ poll loop.
    `(precipitation, metadata)`. Decoding never runs on the event loop: a
    radar grid is one gzip chunk of 1.3 M cells, ~6 ms to inflate even on a fast
    machine, times 25 members for RS/RV — many users run HA on a Raspberry Pi
+   `_fetch_and_parse` has no side effects, so `async_fetch_release(ts)` can
+   fetch any past release (the totals' backfill) without moving the
+   coordinator. What adopting a release should also do goes in
+   `_async_on_new_release(release, data, metadata)`, called once per adopted
+   release before it is published, never raising: RV feeds the rain-events
+   tracker there.
 4. The coordinator wraps those in a `CoordinatorData` — its `data`/`metadata`
    are a scalar for RADOLAN products (`None` for a nodata cell, which the ODIM
    reader returns as NaN), parallel lists for RS (`[_000, _060,

@@ -772,6 +772,7 @@ async def _rv_refresh(coord, world, hhmm):
     ts = DAY_RV.replace(hour=int(hhmm[:2]), minute=int(hhmm[3:]))
     with _serving(world):
         data, metadata = await coord._fetch_and_parse(ts)
+        await coord._async_on_new_release(ts, data, metadata)
     coord.data = CoordinatorData(data, metadata)
     return data, metadata
 
@@ -971,6 +972,32 @@ async def test_rv_tracker_failure_leaves_the_sensors_alone(caplog) -> None:
     assert data["rain_events"] is None
     assert data["max_060"] == 0.0
     assert any("Could not update the Rain events sensor" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_rv_new_release_hook_does_not_raise(caplog) -> None:
+    """Metadata without the series fails the tracker, not the RV update."""
+    coord = _rv_tracked()
+    data: dict = {}
+    await coord._async_on_new_release(
+        DAY_RV, data, {"rain_within_2h": products.ProductMetadata("RV", DAY_RV)}
+    )
+    assert data["rain_events"] is None
+    assert any("Could not update the Rain events sensor" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_rv_fetching_a_past_release_leaves_the_tracker_alone() -> None:
+    """async_fetch_release (the totals' backfill path) has no side effects."""
+    world = _RVWorld(_rain_between("13:30", "15:00"))
+    coord = _rv_tracked()
+    with _serving(world):
+        cdata = await coord.async_fetch_release(DAY_RV.replace(hour=14))
+
+    assert cdata.data["max_060"] == pytest.approx(12.0)
+    assert "rain_events" not in cdata.data
+    assert coord._rain_state is None
+    assert coord._rain_fill_task is None
 
 
 @pytest.mark.asyncio

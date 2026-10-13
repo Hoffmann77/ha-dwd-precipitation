@@ -78,7 +78,7 @@ def _make_total_sensor(
         curr_release=release,
         data=None if release is None else CoordinatorData(data=value, metadata={}),
         grid=RW_GRID,
-        _fetch_and_parse=AsyncMock(return_value=(1.0, {})),
+        async_fetch_release=AsyncMock(return_value=CoordinatorData(1.0, {})),
         config_entry=SimpleNamespace(async_create_background_task=_create_task),
     )
 
@@ -349,14 +349,15 @@ async def test_backfill_keeps_a_failed_release_pending():
     missed = [RELEASE - timedelta(hours=2), RELEASE - timedelta(hours=1)]
     sensor._pending = list(missed)
     sensor._backfilling = True
-    sensor.coordinator._fetch_and_parse = AsyncMock(
-        side_effect=[OSError("not there yet"), (1.5, {})]
+    sensor.coordinator.async_fetch_release = AsyncMock(
+        side_effect=[OSError("not there yet"), CoordinatorData(1.5, {})]
     )
 
     await sensor._async_backfill()
 
     assert sensor.native_value == approx(11.5)
-    assert [c.args[0] for c in sensor.coordinator._fetch_and_parse.call_args_list] == missed
+    fetched = sensor.coordinator.async_fetch_release.call_args_list
+    assert [c.args[0] for c in fetched] == missed
     assert sensor._pending == [missed[0]]
     assert sensor._backfilling is False
     # Stored with the total, so a restart keeps it too.
@@ -384,7 +385,9 @@ async def test_release_without_data_leaves_the_list_and_adds_nothing():
     """A file DWD serves without data for the cell is done, not retried."""
     sensor, _ = _make_total_sensor(total=10.0, last_release=RELEASE)
     sensor._pending = [RELEASE - timedelta(hours=1)]
-    sensor.coordinator._fetch_and_parse = AsyncMock(return_value=(None, {}))
+    sensor.coordinator.async_fetch_release = AsyncMock(
+        return_value=CoordinatorData(None, {})
+    )
 
     await sensor._async_backfill()
 

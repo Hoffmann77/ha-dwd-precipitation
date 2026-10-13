@@ -496,24 +496,28 @@ class RadvorRV(BaseProductUpdateCoordinator):
     async def _fetch_and_parse(self, ts: datetime) -> tuple[dict, dict]:
         """Fetch one tar archive and decode it off the event loop."""
         response = await async_get(self._get_url(ts), self.async_client)
-        data, metadata = await self.hass.async_add_executor_job(
+        return await self.hass.async_add_executor_job(
             self._parse, response.content, ts
         )
+
+    async def _async_on_new_release(
+        self, release: datetime, data: dict, metadata: dict
+    ) -> None:
+        """Feed the release to the rain_events tracker, if the entry has one."""
         if self._rain_store is not None:
-            series = metadata["rain_within_2h"]
-            data["rain_events"] = await self._async_rain_events(
-                series.source_timestamp or ts, [s["value"] for s in series.samples]
-            )
-        return data, metadata
+            data["rain_events"] = await self._async_rain_events(release, metadata)
 
     # ------------------------------------------------------------------
     # rain_events: fill the missed analyses, track, persist
     # ------------------------------------------------------------------
 
     async def _async_rain_events(
-        self, base: datetime, values: list[float | None]
+        self, release: datetime, metadata: dict
     ) -> dict | None:
         """Update the rain_events tracker with this release; None if it failed.
+
+        The release's 25-point series (``rain_within_2h`` samples) is the
+        analysis followed by the 24 forecast steps.
 
         The missed analyses must be filled *before* the tracker sees the
         release: updating first and recomputing after the fill can swap event
@@ -529,6 +533,9 @@ class RadvorRV(BaseProductUpdateCoordinator):
         logged (once per run of failures) and the attribute is left out.
         """
         try:
+            series = metadata["rain_within_2h"]
+            base = series.source_timestamp or release
+            values = [s["value"] for s in series.samples]
             state = await self._async_rain_state()
         except Exception:
             self._rain_failed()

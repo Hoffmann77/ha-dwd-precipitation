@@ -706,9 +706,7 @@ class PrecipitationTotalSensor(DwdCoordinatorEntity, RestoreEntity, SensorEntity
                 release = todo[0]
                 tried.add(release)
                 try:
-                    value, _metadata = await self.coordinator._fetch_and_parse(
-                        release
-                    )
+                    value = (await self.coordinator.async_fetch_release(release)).data
                 except Exception as err:  # noqa: BLE001 - retried next round
                     _LOGGER.debug(
                         "%s: could not backfill %s: %s",

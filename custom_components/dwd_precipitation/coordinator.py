@@ -558,13 +558,36 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
         """Fetch and parse the product for release timestamp ts.
 
         Return (precipitation, metadata). Must raise on any failure — the
-        base class owns the stale/retry logic in _async_update_data.
+        base class owns the stale/retry logic in _async_update_data. Must
+        have no side effects: the totals' backfill fetches past releases
+        through it (async_fetch_release). What a newly adopted release should
+        also do belongs in _async_on_new_release.
 
         Only the download belongs on the event loop: hand the decoding to
         ``hass.async_add_executor_job``. Decompressing a radar grid takes
         milliseconds per file even on a fast machine, which every other
         integration and automation would otherwise wait out.
         """
+
+    async def _async_on_new_release(
+        self, release: datetime, data: Any, metadata: Any
+    ) -> None:
+        """React to a release this coordinator is about to adopt.
+
+        Called once per release, after a successful fetch and before the data
+        is published; may add to ``data``. Must not raise: a failure here must
+        not cost the product its update. Nothing by default.
+        """
+
+    async def async_fetch_release(self, release: datetime) -> CoordinatorData:
+        """Fetch and decode any ``release`` without adopting it.
+
+        For the totals' backfill: the coordinator's own state, schedule and
+        retry ramp are untouched, and _async_on_new_release is not called.
+        Raises like _fetch_and_parse.
+        """
+        data, metadata = await self._fetch_and_parse(release)
+        return CoordinatorData(data, metadata)
 
     # ------------------------------------------------------------------
     # Template method — do not override in subclasses
@@ -607,6 +630,7 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
             # Data is still fresh enough — retry silently
             return self.data
 
+        await self._async_on_new_release(latest_release, data, metadata)
         self._record_success(latest_release)
 
         return CoordinatorData(data, metadata)
