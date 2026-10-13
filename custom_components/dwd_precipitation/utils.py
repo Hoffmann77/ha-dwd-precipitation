@@ -23,6 +23,14 @@ DEFAULT_MAX_BYTES = 128 * 1024 * 1024
 
 _READ_CHUNK = 64 * 1024
 
+# Fail a stalled request, not a slow one. Without this, HA's shared session
+# applies aiohttp's 300 s total: a hung fetch then occupies a whole 5-minute
+# release interval. A total cap would be wrong the other way: a full RS/RV
+# archive (up to ~17.5 MB when a range read falls back) over a weak uplink
+# can legitimately take longer than any cap short enough to help. So bound
+# the connect and the silence between reads, and nothing else.
+REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=None, sock_connect=15, sock_read=30)
+
 
 @dataclass
 class AsyncResponse:
@@ -144,7 +152,9 @@ async def async_get(
     _validate_url(url)
     for attempt in range(attempts):
         try:
-            async with session.get(url, allow_redirects=False) as response:
+            async with session.get(
+                url, allow_redirects=False, timeout=REQUEST_TIMEOUT
+            ) as response:
                 response.raise_for_status()
                 if 300 <= response.status < 400:
                     raise ValueError(
