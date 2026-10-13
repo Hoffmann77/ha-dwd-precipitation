@@ -5,6 +5,7 @@ HA-free: the parser tier uses them as much as the integration tier.
 
 from __future__ import annotations
 
+import asyncio
 import io
 import re
 import tarfile
@@ -80,6 +81,11 @@ class RangeServer:
         self.replace_after: tuple[int, bytes, str] | None = None
 
     async def fetch(self, url: str, headers: Mapping[str, str] | None = None) -> Response:
+        # Yield to the event loop, as a real request does. Without it a task
+        # HA starts eagerly can run to completion before its creator gets
+        # control back: on Python 3.14.3 even an executor await need not
+        # suspend, so nothing in the fill path would.
+        await asyncio.sleep(0)
         headers = dict(headers or {})
         self.requests.append(headers)
         if "Range" not in headers:

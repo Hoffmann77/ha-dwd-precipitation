@@ -4,6 +4,9 @@
 
 A HomeAssistant custom component that pulls DWD (German Weather Service) radar composites and exposes per-location precipitation sensors. It fetches Cartesian grids, finds the nearest grid cell to the user's configured lat/lon, and reports the cell value.
 
+Why things are the way they are, and what they were before, is in
+`docs/adr/` (architecture decision records); this guide states the rules.
+
 ## Architecture
 
 ```
@@ -39,9 +42,11 @@ options.py            DwdOptions: the entry's options as one typed snapshot,
                       with every option's default in DEFAULT_OPTIONS. Read as
                       coordinator.options / entry.runtime_data.options; never
                       entry.options.get() elsewhere.
-const.py              DWD OpenData base URLs and HA constants.
+const.py              Option keys and defaults, payload sub-keys (KEY_*),
+                      HymecNG's class labels, and other HA constants.
 utils.py              async_get() HTTP helper (headers, status, separate 206
-                      cap, stall timeout); FailureLatch. HA-free.
+                      cap, stall timeout); DownloadCache (one download per
+                      URL for an entry's products); FailureLatch. HA-free.
 rain_events_tracker.py
                       RainEventsTracker: one entry's rain events in HA
                       (store, background fill, save policy).
@@ -52,6 +57,12 @@ radar/                The HA-free core: parsers and pure domain logic (no
                       heavy external deps). Its modules import each other
                       relatively, which works both inside HA and in the
                       parser tier (which imports it as `radar`).
+  __init__.py         Exports what the integration reads (the cell readers
+                      and the DE1200 lookup); the whole-grid readers are for
+                      the test tiers and scripts/, from radar.odim.
+  urls.py             Every product's OpenData URL pattern (product_url,
+                      radvor_prefix), for the products, scripts/ and the
+                      live tiers alike.
   odim.py             ODIM_H5 (HDF5) reader for every product (RS, RV,
                       HymecNG, RW/SF in their HDF5 edition) and the DE1200
                       grid lookup.
@@ -153,16 +164,13 @@ that from turning into noise:
   spelling them out separately is how an entity ends up reporting a value the
   coordinator has already given up on.
 
-  Anchoring matters. Measure the tolerance from the *cached* release and it has
-  to be expressed in release intervals, so it expires exactly when some later
-  fetch is due: the value is written off at the very instant of the attempt
-  that might have restored it, and which of the two happens first comes down to
-  event-loop latency. That is what made a routinely late file blank the sensors
-  and log an ERROR every single time. Anchored on the overdue release, the
-  deadline only collides with the fetch grid if `OVERDUE_GRACE` is a whole
-  multiple of `RELEASE_INTERVAL` — a rule a test enforces per product. Landing
-  on a *retry* is harmless by contrast: a retry is itself the attempt whose
-  failure decides the verdict.
+  Anchoring matters: measured from the *cached* release, the tolerance
+  expires exactly when some later fetch is due, so a routinely late file
+  blanks the sensors (ADR 0007 has the incident). Anchored on the overdue
+  release, the deadline only collides with the fetch grid if `OVERDUE_GRACE`
+  is a whole multiple of `RELEASE_INTERVAL` — a rule a test enforces per
+  product. Landing on a *retry* is harmless by contrast: a retry is itself the
+  attempt whose failure decides the verdict.
 
   Every product spells out its own `OVERDUE_GRACE`, most of them as
   `DEFAULT_OVERDUE_GRACE` (6 min, defined next to the fast-poll constants);
@@ -180,13 +188,10 @@ that from turning into noise:
 
   For the same reason `async_track_releases()` registers a `USE_LOCAL_TIME`
   product with `async_track_time_change` rather than
-  `async_track_utc_time_change`. `track_time_change_args` describes the
-  product's own grid, so registering `sf_2350` in UTC fetched it an offset's
-  worth of hours late every day — in summer, 1.5 h after its own staleness
-  deadline had already passed. The registration lives on the coordinator rather
-  than in `async_setup_entry` precisely because that pairing is the thing that
-  broke: the grid and the clock it is read in are one decision, and the entry
-  point had only half of it.
+  `async_track_utc_time_change`: `track_time_change_args` describes the
+  product's own grid. The registration lives on the coordinator rather than in
+  `async_setup_entry` because the grid and the clock it is read in are one
+  decision (ADR 0007: registering `sf_2350` in UTC fetched it hours late).
 - **One failing product must not take the entry down.** `async_setup_entry`
   refreshes all products concurrently and raises `ConfigEntryNotReady` only if
   *every* one fails. A single dead product (DWD retiring one, say) leaves its
@@ -217,7 +222,8 @@ hardcoded `name=` / `_attr_name`. HA derives the entity id by slugifying the
 English name, so the name is also the id: `Precipitation next 60–120 min` →
 `sensor.<device>_precipitation_next_60_120_min`. Keep names slug-friendly.
 
-A name states a window only when the window is part of the *value*. Three forms:
+A name states a window only when the window is part of the *value* (ADR 0001
+has the reasoning and the names before 2026.10.1). Three forms:
 
 | form | meaning | examples |
 |------|---------|----------|
@@ -227,8 +233,7 @@ A name states a window only when the window is part of the *value*. Three forms:
 
 **Units follow the product.** The RADVOR nowcast (RS/RV) states its windows in
 minutes, matching its 5-minute steps and the `minutes_until` attributes:
-`next 60–120 min` says what it covers, where the old `next 1–2h` needed a note
-that it is the second hour, not the coming two. RADOLAN keeps hours and days
+`next 60–120 min` says what it covers. RADOLAN keeps hours and days
 (`last 24h`, `previous hour`, `yesterday`); `last 1440 min` would be absurd,
 and none of them ever collided. `24h` keeps its released spelling (no space,
 unlike `60 min`) because a space would change its slug for nothing.
@@ -238,27 +243,20 @@ from the same product as `next 60 min` / `next 60–120 min`. RW is a clock hour
 (the run ending on the hour, see "RW 10-minute runs"), so it is `Precipitation
 previous hour`. No two names share a window, so none needs a source qualifier:
 radar vs. gauge-adjusted is explained in the README, not carried in names.
-(The release branch after 2026.10.0 briefly carried `(radar)` /
-`(gauge-adjusted)` suffixes; they never shipped.)
 
-**Never reuse an old slug for a different value.** Keys did not change, so
-existing installs keep their entity ids and only see new names; new installs
-get the new slugs. Up to 2026.10.0 the names were: RS `_000` `Precipitation
-now` (`precipitation_now`, named for its role, which hid that it is mm over the
-past hour and not a rate), RW `Precipitation last 1h` (`precipitation_last_1h`),
-and the forecasts `next 1h`, `next 1–2h`, `Peak intensity next 1h` /
-`next 1–2h`, `Peak hourly precipitation next 2h`, and HymecNG's
-`Precipitation type`. None of the new slugs is one
-of those, so an id means one thing on every install, and HA's "recreate entity
-ids" on an old install cannot collide (giving RS `precipitation_last_1h` was
-considered and rejected for exactly that: RW still holds it there, so RS would
-land on `_2`). The README lists the old ids for older installs.
+**Never reuse an old slug for a different value.** A rename keeps the key, so
+existing installs keep their entity ids and only see the new name; new
+installs get the new slug. A new slug must not be one a released version gave
+another entity: on an old install that entity still holds it, and HA's
+"recreate entity ids" would put the new one on `_2`. `tests/entity_ids.py`
+records the released ids by key; the setup test checks new installs against
+it, and a docs test checks that the README's note for older installs names
+every renamed one.
 
 `now` means the latest 5-minute analysis, ending at the release time:
 `Precipitation intensity now` (RV lead 0 × 12, mm/h) and `Precipitation type
 now` (HymecNG). The README states that "now" is the analysis window, which
-ended 3–10 minutes before the value appears. A window total is never `now`
-(that was RS `_000`'s old name, see above).
+ended 3–10 minutes before the value appears. A window total is never `now`.
 
 `Precipitation next 120 min` (RS `_060 + _120`) and `Peak intensity next 120
 min` (RV, the max over leads 5–120) cover the whole horizon, so no sum or max
@@ -283,16 +281,14 @@ counted once. RW backs `Precipitation total`, the one to use: it is up to date
 within the hour, and HA's statistics see each hour one hour late (11:00-12:00
 is added at ~12:28), so only the last hour of a day spills into the next.
 `sf_2350` backs the daily one, whose rain every day lands in the *next* day's
-statistics; it stays because 2026.10.0 shipped it (removing it would orphan
-users' entities), but `entity_registry_enabled_default=False`. That only
+statistics; it stays (removing it would orphan users' entities), but
+`entity_registry_enabled_default=False`. That only
 applies when HA first registers the entity, so installs that had it keep it
 enabled, and new ones get it disabled; enabling it reloads the entry and it
 starts from 0, like any new total. The `sf_2350` coordinator runs either way,
 for `Precipitation yesterday`. They are separate entities rather
 than one with a source option, because switching the source would make a
-`TOTAL_INCREASING` sensor jump. Up to 2026.10.0 they were `(hourly)` /
-`(daily)`; the daily one keeps its slug (`precipitation_total_daily`), the
-hourly one gets the new `precipitation_total`.
+`TOTAL_INCREASING` sensor jump (ADR 0005).
 
 **Backfill.** Missed releases (`missed_releases`, at most `max_backfill`: 48
 for RW, 7 for `sf_2350`, what OpenData keeps) go on a `pending` list stored in
@@ -380,8 +376,7 @@ The lookup returns the cell that *contains* the location: project it, then
 never take the nearest grid coordinate unless those coordinates are pixel
 centres — the corner references below are pixel *edges*, and treating them as
 centres shifts the lookup by half a cell, which picks a neighbouring cell for
-~3 locations in 4. Both lookups the integration had then were wrong that way
-until 2026.10; since RW/SF moved to HDF5 there is only the DE1200 one.
+~3 locations in 4 (ADR 0008). There is one lookup, on the DE1200 grid.
 
 The reference tier checks it against wradlib's own grid (`mode="edge"`),
 not against a reimplementation of our arithmetic, and pins wradlib's DE1200
@@ -396,21 +391,9 @@ member's full grid must decode identically.
 Read in their **HDF5 edition** (`raa01-<p>_10000-<yymmddHHMM>-dwd---bin.hdf5`),
 which is ODIM_H5 on the same DE1200 grid as RS below, so `RadolanProduct.index`
 is `get_rs_grid_index` and `_parse` is `read_odim_composite_cell` (ACRR,
-gain 0.1, nodata 65535 -> NaN -> `None`). DWD announced that the legacy binary
-edition (.bz2, national 900x900 spherical grid) would be switched off; it is
-still published, but nothing reads it any more, and its reader
-(`radar/radolan.py`, `radar/georef.py`, extracted from wradlib) was removed
-with its tests and fixtures. Git history has them if the binary edition is ever
-needed again.
-
-The two editions are the same analysis on different grids, not a cell-for-
-cell copy: checked on live files (2026-10-12), area means over ~1100 locations
-agree to 1 % (SF 0.717 vs 0.725 mm), while a location's own value differs in
-~65-80 % of wet cases (median 0.1 mm, up to a few mm in sharp gradients) and
-is found in the old cell's 3x3 neighbourhood only ~60 % of the time. So users
-see small value changes at the switch; nothing else changes. Timing: RW's HDF5
-file appears ~25.7 min after its window ends, like the binary one; SF's ~29.3
-min, ~2.5 min *later* than its binary one, hence SF's `RELEASE_DELAY` of 31 min.
+gain 0.1, nodata 65535 -> NaN -> `None`). The legacy binary edition (.bz2,
+national 900x900 grid) is not read; ADR 0004 has the switch, how the two
+editions compare, and why SF's `RELEASE_DELAY` is 31 min.
 
 ### RS (ODIM_H5)
 `RadvorRS.index` calls `get_rs_grid_index(lat, lon)` from `radar/odim.py`.
@@ -428,8 +411,7 @@ wradlib's `dwd-radolan-wgs84-de1200` grid.
 
 wradlib is not a runtime dependency (it pulls in many heavy packages that
 cannot be installed in standard HA environments); it is used only by the
-reference tiers. The RADOLAN binary reader once extracted from it is gone (see
-"RADOLAN (RW, SF)").
+reference tiers.
 
 `radar/odim.py` is original code that uses `h5py` directly. It exposes
 `read_odim_composite` (physical quantities like RS/RV's `ACRR`, scaled by
@@ -546,43 +528,31 @@ DWD runs RW every 10 minutes, each run the hour ending at that :x0.
 `RadolanRW` (`rw`) reads the run ending on the hour, so every value is a clock
 hour; `RadolanRW10` (`rw_10min`) is the same file family on a 10-minute grid
 (same URL pattern, same parsing, HDF5 edition). Both have a `RELEASE_DELAY` of
-28 min; every run minute is observed at ~25.7 min (288 runs, 2026-10-13).
+28 min, since every run minute is published alike (ADR 0002 has the measurement).
 
-- **Why :00.** Up to 2026.10.0 `rw` read the HH:50 run. Nothing recorded why;
-  it is RADOLAN's traditional hour, and SF is still only published at :50
-  (OpenData has no other SF minute). But RW's :00 run is as complete, as
-  timely and as strongly adjusted (below), and only a clock hour can be called
-  "previous hour" and line up with HA's hourly statistics. The cost is that
-  `rw` and `sf` windows are now 10 minutes apart.
-- **Quality.** `scripts/compare_rw_runs.py` compares every RW run on OpenData
-  (48 h) with radar-only RS `_000` for the same hour, cell for cell (RW's HDF5
-  edition is on the DE1200 grid). If the sub-hourly runs used fewer gauges
-  they would sit closer to RS. They do not: over 285 wet runs (2026-10-10..12)
-  every run minute departs from RS alike (mean |RW-RS| 0.53-0.58 mm, 58-62 %
-  relative, 76-78 % of wet cells adjusted). Rerun it before relying on this
-  for anything new.
+- **Why :00.** Only a clock hour can be called "previous hour" and line up
+  with HA's hourly statistics, and the :00 run is as complete, as timely and
+  as strongly adjusted as the :50 one (ADR 0002; `scripts/compare_rw_runs.py`
+  measures it, rerun it before relying on that for anything new). SF is only
+  published at :50, so `rw` and `sf` windows are 10 minutes apart.
 - **`rw_10min` is built only when used** (`is_needed(options)`, checked in
   `async_setup_entry`): when the dry streak counts RW. Otherwise the entry
   makes no extra requests. When built, its :00 run is the file `rw` fetches
   too; both go through the entry's `DownloadCache` (`SHARES_FILES` on the
   RADOLAN products, which also covers `sf`/`sf_2350`), which downloads a URL
   once and keeps it for `SHARED_DOWNLOAD_TTL` (5 min). Failures are not kept,
-  and the multi-MB RADVOR tars never go through it. No sensor shows the sliding RW hour: as a "last 60
-  min" it would be 28-38 min behind, where RS is 4-9 min, and gauge accuracy is
-  what `Precipitation previous hour` is for. A pre-release had a
-  `rw_last_hour_mode` option for it; it never shipped, and a stored value is
-  ignored.
+  and the multi-MB RADVOR tars never go through it. No sensor shows the
+  sliding RW hour (ADR 0003); a stored `rw_last_hour_mode` from a pre-release
+  is ignored.
 - **Never for the totals.** Consecutive runs overlap by 50 minutes, so summing
   them counts each hour six times; `Precipitation total` and its
   missed-release walk stay on the hourly grid of `rw`. The startup downtime
   correction of the dry streak also keeps using `rw`.
-- **The grid move.** A total stored by 2026.10.0 has a `last_release` at :50,
-  off the new grid. Restoring it maps it once with `counted_on_grid()`
-  (`grid.at_or_before` does not map it to itself) onto the :00 release before
-  the first window that starts after it, so counting resumes there: the 10
-  minutes in between are left out once, rather than 50 counted twice
-  (`counted_until` reads 10 minutes ahead until the next release). On-grid
-  releases, including `sf_2350`'s 23- and 25-hour DST days, are unaffected.
+- **Off-grid restored totals.** A total stored by 2026.10.0 has a
+  `last_release` at :50. `counted_on_grid()` maps it once onto the :00 release
+  before the first window that starts after it (ADR 0002), so 10 minutes are
+  left out once rather than 50 counted twice. On-grid releases, including
+  `sf_2350`'s 23- and 25-hour DST days, map to themselves.
 
 ## Range reads
 
@@ -626,11 +596,9 @@ callback; `RainEventsSensor` in sensor.py is the entity.
   without one there is nothing to track, so an entry that does not use it makes no fill
   requests and writes nothing. Turning it off removes the entity from the
   registry (rather than leaving "no longer provided") and deletes the store,
-  so turning it on again starts clean. Nothing on 2026.10.0 had it, so it is
-  off for existing installs as well.
-- **Own entity.** It sat on `Precipitation expected` as a `rain_events`
-  attribute in pre-releases; a flag is the wrong home for a few KB that change
-  every release and that blueprints depend on. The state is
+  so turning it on again starts clean.
+- **Own entity** (ADR 0006: not an attribute of `Precipitation expected`, as
+  in pre-releases). The state is
   `overall_status()`: `ongoing` if any event is, else `upcoming`, else `none`
   (an `unseen` event alone is `none`), so a blueprint can trigger on the state.
   All `VIEW_KEYS` are unrecorded. A tracker failure leaves the view out, so
@@ -647,7 +615,7 @@ callback; `RainEventsSensor` in sensor.py is the entity.
   timeline and recomputes every event's amounts and peaks from its own steps.
   This is a deliberate deviation from the spec's incremental accumulators: same
   values, but a late fill can never be counted twice and `observed` can never
-  go down. A multi-day event is a few KB of store.
+  go down (ADR 0006). A multi-day event is a few KB of store.
 - **Unknown steps bridge, bounded.** An unknown step never splits a run;
   for *ending* an event it counts as dry only once it has left the window (it
   can no longer be filled), which then ends the event as `end_clipped`. More
