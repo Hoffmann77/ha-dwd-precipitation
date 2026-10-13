@@ -78,6 +78,22 @@ class PrecipitationSensorEntityDescription(SensorEntityDescription):
     metadata_attrs_fn: Callable[[ProductMetadata], dict[str, Any]] | None = None
 
 
+# What every amount (mm) and every intensity (mm/h) sensor shares.
+_MM = dict(
+    native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
+    device_class=SensorDeviceClass.PRECIPITATION,
+    suggested_display_precision=1,
+    state_class=SensorStateClass.MEASUREMENT,
+)
+_MM_TOTAL = _MM | dict(state_class=SensorStateClass.TOTAL_INCREASING)
+_MMH = dict(
+    native_unit_of_measurement=UnitOfVolumetricFlux.MILLIMETERS_PER_HOUR,
+    device_class=SensorDeviceClass.PRECIPITATION_INTENSITY,
+    suggested_display_precision=1,
+    state_class=SensorStateClass.MEASUREMENT,
+)
+
+
 # The gauge-adjusted analyses. RW's is a clock hour, so it is the "previous
 # hour" rather than a "last 60 min": that name belongs to RS's rolling hour,
 # a sliding window like every other "last"/"next" one.
@@ -85,30 +101,21 @@ RADOLAN_SENSORS = (
     PrecipitationSensorEntityDescription(
         key="radolan_rw",
         translation_key="precipitation_previous_hour",
-        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
-        device_class=SensorDeviceClass.PRECIPITATION,
-        suggested_display_precision=1,
-        state_class=SensorStateClass.MEASUREMENT,
+        **_MM,
         product_key="rw",
         access_fn=lambda d: d,
     ),
     PrecipitationSensorEntityDescription(
         key="radolan_sf",
         translation_key="precipitation_last_24h",
-        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
-        device_class=SensorDeviceClass.PRECIPITATION,
-        suggested_display_precision=1,
-        state_class=SensorStateClass.MEASUREMENT,
+        **_MM,
         product_key="sf",
         access_fn=lambda d: d,
     ),
     PrecipitationSensorEntityDescription(
         key="radolan_sf_yesterday",
         translation_key="precipitation_yesterday",
-        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
-        device_class=SensorDeviceClass.PRECIPITATION,
-        suggested_display_precision=1,
-        state_class=SensorStateClass.MEASUREMENT,
+        **_MM,
         product_key="sf_2350",
         access_fn=lambda d: d,
     ),
@@ -132,10 +139,7 @@ TOTAL_SENSORS = (
     PrecipitationTotalEntityDescription(
         key="radolan_rw_total",
         translation_key="precipitation_total",
-        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
-        device_class=SensorDeviceClass.PRECIPITATION,
-        suggested_display_precision=1,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        **_MM_TOTAL,
         product_key="rw",
         max_backfill=48,
     ),
@@ -146,10 +150,7 @@ TOTAL_SENSORS = (
         # rain under the next day in HA's statistics. Only applies when the
         # entity is first registered, so installs that have it keep it on.
         entity_registry_enabled_default=False,
-        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
-        device_class=SensorDeviceClass.PRECIPITATION,
-        suggested_display_precision=1,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        **_MM_TOTAL,
         product_key="sf_2350",
         max_backfill=7,
     ),
@@ -160,40 +161,28 @@ RADVOR_SENSORS = (
     PrecipitationSensorEntityDescription(
         key="radvor_rs_000",
         translation_key="precipitation_last_60_min",
-        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
-        device_class=SensorDeviceClass.PRECIPITATION,
-        suggested_display_precision=1,
-        state_class=SensorStateClass.MEASUREMENT,
+        **_MM,
         product_key="rs",
         access_fn=lambda _list: _list[0],
     ),
     PrecipitationSensorEntityDescription(
         key="radvor_rs_060",
         translation_key="precipitation_next_60_min",
-        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
-        device_class=SensorDeviceClass.PRECIPITATION,
-        suggested_display_precision=1,
-        state_class=SensorStateClass.MEASUREMENT,
+        **_MM,
         product_key="rs",
         access_fn=lambda _list: _list[1],
     ),
     PrecipitationSensorEntityDescription(
         key="radvor_rs_120",
         translation_key="precipitation_next_60_120_min",
-        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
-        device_class=SensorDeviceClass.PRECIPITATION,
-        suggested_display_precision=1,
-        state_class=SensorStateClass.MEASUREMENT,
+        **_MM,
         product_key="rs",
         access_fn=lambda _list: _list[2],
     ),
     PrecipitationSensorEntityDescription(
         key="radvor_rs_000_120",
         translation_key="precipitation_next_120_min",
-        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
-        device_class=SensorDeviceClass.PRECIPITATION,
-        suggested_display_precision=1,
-        state_class=SensorStateClass.MEASUREMENT,
+        **_MM,
         product_key="rs",
         access_fn=lambda _list: _list[4],
     ),
@@ -221,10 +210,7 @@ def _peak_hour_sensor(full_rolling_series: bool) -> PrecipitationSensorEntityDes
     common = dict(
         key="radvor_peak_1h_120",
         translation_key="peak_hourly_precipitation_next_120_min",
-        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
-        device_class=SensorDeviceClass.PRECIPITATION,
-        suggested_display_precision=1,
-        state_class=SensorStateClass.MEASUREMENT,
+        **_MM,
         metadata_attrs_fn=_peak_hour_attrs,
     )
     if full_rolling_series:
@@ -242,10 +228,7 @@ RADVOR_RV_SENSORS = (
     PrecipitationSensorEntityDescription(
         key="radvor_rv_intensity_000",
         translation_key="precipitation_intensity_now",
-        native_unit_of_measurement=UnitOfVolumetricFlux.MILLIMETERS_PER_HOUR,
-        device_class=SensorDeviceClass.PRECIPITATION_INTENSITY,
-        suggested_display_precision=1,
-        state_class=SensorStateClass.MEASUREMENT,
+        **_MMH,
         product_key="rv",
         access_fn=lambda d: d["intensity_000"],
         # "Now" is the latest analysis, the 5 minutes ending at the release
@@ -259,30 +242,21 @@ RADVOR_RV_SENSORS = (
     PrecipitationSensorEntityDescription(
         key="radvor_rv_max_intensity_060",
         translation_key="peak_intensity_next_60_min",
-        native_unit_of_measurement=UnitOfVolumetricFlux.MILLIMETERS_PER_HOUR,
-        device_class=SensorDeviceClass.PRECIPITATION_INTENSITY,
-        suggested_display_precision=1,
-        state_class=SensorStateClass.MEASUREMENT,
+        **_MMH,
         product_key="rv",
         access_fn=lambda d: d["max_060"],
     ),
     PrecipitationSensorEntityDescription(
         key="radvor_rv_max_intensity_120",
         translation_key="peak_intensity_next_60_120_min",
-        native_unit_of_measurement=UnitOfVolumetricFlux.MILLIMETERS_PER_HOUR,
-        device_class=SensorDeviceClass.PRECIPITATION_INTENSITY,
-        suggested_display_precision=1,
-        state_class=SensorStateClass.MEASUREMENT,
+        **_MMH,
         product_key="rv",
         access_fn=lambda d: d["max_120"],
     ),
     PrecipitationSensorEntityDescription(
         key="radvor_rv_max_intensity_000_120",
         translation_key="peak_intensity_next_120_min",
-        native_unit_of_measurement=UnitOfVolumetricFlux.MILLIMETERS_PER_HOUR,
-        device_class=SensorDeviceClass.PRECIPITATION_INTENSITY,
-        suggested_display_precision=1,
-        state_class=SensorStateClass.MEASUREMENT,
+        **_MMH,
         product_key="rv",
         access_fn=lambda d: d["max_000_120"],
     ),
