@@ -8,7 +8,6 @@ from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
 from functools import cached_property
 from io import BytesIO
-from typing import ClassVar
 
 import numpy as np
 
