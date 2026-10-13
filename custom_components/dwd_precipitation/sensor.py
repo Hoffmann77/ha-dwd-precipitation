@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -39,7 +38,7 @@ from .dry_streak import (
     fresh_anchor,
     scalar_reading,
 )
-from .entity import DwdCoordinatorEntity, unique_id_for
+from .entity import DwdCoordinatorEntity, DwdEntityDescriptionMixin, unique_id_for
 from .radar.isotime import iso
 from .radar.rain_events import NO_EVENT, ONGOING, UPCOMING, VIEW_KEYS, overall_status
 from .precipitation_total import (
@@ -54,17 +53,10 @@ _LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, kw_only=True)
-class PrecipitationSensorEntityDescription(SensorEntityDescription):
+class PrecipitationSensorEntityDescription(
+    SensorEntityDescription, DwdEntityDescriptionMixin
+):
     """Provide a description for a precipitation sensor."""
-
-    product_key: str
-    access_fn: Callable[[Any], Any]
-    # Optional companion attributes, computed from the coordinator data payload.
-    # Always exposed (not gated behind the diagnostic-attributes option).
-    attrs_fn: Callable[[Any], dict[str, Any]] | None = None
-    # Like attrs_fn, but computed from this entity's ProductMetadata (as picked
-    # by access_fn). Also always exposed.
-    metadata_attrs_fn: Callable[[ProductMetadata], dict[str, Any]] | None = None
 
 
 # What every amount (mm) and every intensity (mm/h) sensor shares.
@@ -330,17 +322,6 @@ def _rv_timing_sensors(
     )
 
 
-def _plain_value(value: Any) -> Any:
-    """Return values suitable for Home Assistant state attributes."""
-    if isinstance(value, datetime):
-        return value.isoformat()
-    if hasattr(value, "decode"):
-        return value.decode()
-    if hasattr(value, "item"):
-        return value.item()
-    return value
-
-
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -419,13 +400,7 @@ class PrecipitationSensorEntity(DwdCoordinatorEntity, SensorEntity):
     @property
     def native_value(self) -> float | datetime | str | None:
         """Return the state of the sensor."""
-        if self.coordinator.data is None:
-            return None
-
-        if (data := self.coordinator.data.data) is None:
-            return None
-
-        return self.entity_description.access_fn(data)
+        return self._value()
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -433,38 +408,15 @@ class PrecipitationSensorEntity(DwdCoordinatorEntity, SensorEntity):
         if self.coordinator.data is None:
             return {}
 
-        attrs: dict[str, Any] = {}
-
-        # Companion attributes (e.g. the start/end representation not used as the
-        # state) are a feature, so they are always exposed.
-        attrs_fn = self.entity_description.attrs_fn
-        if attrs_fn is not None and self.coordinator.data.data is not None:
-            attrs.update(
-                {
-                    key: _plain_value(value)
-                    for key, value in attrs_fn(self.coordinator.data.data).items()
-                }
-            )
-
-        metadata: ProductMetadata | None = (
-            self.entity_description.access_fn(self.coordinator.data.metadata)
-            if self.coordinator.data.metadata
-            else None
-        )
-        metadata_attrs_fn = self.entity_description.metadata_attrs_fn
-        if metadata_attrs_fn is not None and metadata is not None:
-            attrs.update(
-                {
-                    key: _plain_value(value)
-                    for key, value in metadata_attrs_fn(metadata).items()
-                }
-            )
+        # Companion attributes (e.g. the start/end representation not used as
+        # the state) are a feature, so they are always exposed.
+        attrs = self._described_attributes()
 
         # Diagnostic metadata is opt-in via the integration options.
         if not self.coordinator.options.extra_attributes:
             return attrs
 
-        if metadata is None:
+        if (metadata := self._metadata()) is None:
             return attrs
 
         attrs["source_product"] = metadata.source_product

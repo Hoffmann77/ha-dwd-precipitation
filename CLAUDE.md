@@ -16,8 +16,15 @@ coordinator.py        BaseProductUpdateCoordinator: the per-product HA
 products.py           One BaseProductUpdateCoordinator subclass per DWD
                       product. Each handles its own URL, fetch, parse, and
                       grid lookup.
-sensor.py             HA SensorEntity descriptors. value_fn pulls from
-                      coordinator.data[product_key].
+entity.py             DwdCoordinatorEntity, the base of every entity: unique
+                      id, device, availability (data_is_reportable), and the
+                      description mechanism (DwdEntityDescriptionMixin:
+                      product_key, access_fn, attrs_fn, metadata_attrs_fn).
+sensor.py             HA SensorEntity descriptors; access_fn picks each value
+                      from coordinators[product_key].data.
+binary_sensor.py      "Precipitation expected" (RV), on the same descriptions;
+                      its forecast_5min series is always exposed, unlike the
+                      sensors' diagnostics (blueprints read it).
 dry_streak.py         Pure "days without rain" logic: the persisted anchor
                       payload + threshold/downtime-correction helpers used by
                       the TimespanWithoutPrecipitationSensor in sensor.py.
