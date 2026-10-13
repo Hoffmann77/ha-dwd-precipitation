@@ -7,6 +7,7 @@ import logging
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
 from functools import cached_property
+from typing import Any
 from io import BytesIO
 
 import aiohttp
@@ -18,12 +19,11 @@ from .coordinator import (
     BaseProductUpdateCoordinator,
     ProductMetadata,
 )
-from .utils import async_get, iso
+from .utils import FailureLatch, async_get, iso
 from .radar.tar_range import fetch_tar_members, member_names, members_from_archive
 from .radar import (
     read_odim_composite_cell,
     read_odim_classification_cell,
-    get_rs_grid_index,
     RS_GRID_SHAPE,
 )
 from .radar.nowcast import (
@@ -205,36 +205,6 @@ def _decode_cells(
     return out
 
 
-async def async_read_tar_members(
-    hass, client, url: str, prefix: str, leads
-) -> dict[str, bytes]:
-    """Fetch only the requested members of a RADVOR tar, by range reads.
-
-    Falls back to the whole archive on anything unexpected (see
-    radar.tar_range), unpacked in the executor; a missing release still
-    raises, like any fetch.
-    """
-    async def fetch(target: str, headers):
-        return await async_get(
-            target, client, headers=headers, partial_max_bytes=RANGE_MAX_BYTES
-        )
-
-    async def extract(content: bytes, wanted) -> dict[str, bytes]:
-        return await hass.async_add_executor_job(members_from_archive, content, wanted)
-
-    result = await fetch_tar_members(
-        fetch, url, member_names(prefix, LEADS), member_names(prefix, leads), extract
-    )
-    _LOGGER.debug(
-        "Read %s member(s) of %s in %s request(s), %s bytes%s",
-        len(result.members),
-        url,
-        result.requests,
-        result.bytes_read,
-        " (whole archive)" if result.whole else "",
-    )
-    return result.members
-
 
 def _odim_window(what: dict) -> tuple[datetime | None, datetime | None]:
     """Return the (start, end) validity window of an ODIM /dataset/what."""
@@ -321,7 +291,100 @@ def _next_120(
     )
 
 
-class RadvorRS(BaseProductUpdateCoordinator):
+class WholeFileProduct(BaseProductUpdateCoordinator, ABC):
+    """A product published as one file per release, decoded whole.
+
+    Fetching is the same for all of them: download ``_get_url(ts)`` on the
+    event loop, decode it with ``_parse(content, ts)`` in the executor.
+    """
+
+    @abstractmethod
+    def _get_url(self, ts: datetime) -> str:
+        """Return the URL of release ``ts``."""
+
+    @abstractmethod
+    def _parse(self, content: bytes, ts: datetime) -> tuple[Any, Any]:
+        """Return (data, metadata) from the file's bytes (blocking)."""
+
+    async def _fetch_and_parse(self, ts: datetime) -> tuple[Any, Any]:
+        """Fetch the release's file and decode it off the event loop."""
+        response = await async_get(self._get_url(ts), self.async_client)
+        return await self.hass.async_add_executor_job(
+            self._parse, response.content, ts
+        )
+
+
+class RadvorProduct(WholeFileProduct, ABC):
+    """A RADVOR nowcast (RS, RV): one tar of 25 ODIM_H5 members per release.
+
+    The tar is ``<prefix>.tar`` under the product's key, its members
+    ``<prefix>_<lead>-hd5``.
+    """
+
+    def _prefix(self, ts: datetime) -> str:
+        """Return release ``ts``'s name stem (``composite_rs_<ts>``)."""
+        return _radvor_prefix(self.PRODUCT_KEY, ts)
+
+    def _get_url(self, ts: datetime) -> str:
+        """Return the URL for the tar archive."""
+        return f"{DWD_COMPOSITE_URL}/{self.PRODUCT_KEY}/{self._prefix(ts)}.tar"
+
+    @cached_property
+    def _range_latch(self) -> FailureLatch:
+        """Whether range reads of this product are falling back right now."""
+        return FailureLatch()
+
+    async def _async_read_members(self, ts: datetime, leads) -> dict[str, bytes]:
+        """Fetch only the requested members of release ``ts``, by range reads.
+
+        Falls back to the whole archive on anything unexpected (see
+        radar.tar_range), unpacked in the executor; a missing release still
+        raises, like any fetch. A fallback is said once per run of them:
+        values are unaffected, but every update then downloads several times
+        the data, so a lasting change on DWD's side should not go unnoticed.
+        """
+        url, prefix = self._get_url(ts), self._prefix(ts)
+
+        async def fetch(target: str, headers):
+            return await async_get(
+                target, self.async_client, headers=headers,
+                partial_max_bytes=RANGE_MAX_BYTES,
+            )
+
+        async def extract(content: bytes, wanted) -> dict[str, bytes]:
+            return await self.hass.async_add_executor_job(
+                members_from_archive, content, wanted
+            )
+
+        result = await fetch_tar_members(
+            fetch, url, member_names(prefix, LEADS), member_names(prefix, leads), extract
+        )
+        _LOGGER.debug(
+            "Read %s member(s) of %s in %s request(s), %s bytes%s",
+            len(result.members),
+            url,
+            result.requests,
+            result.bytes_read,
+            " (whole archive)" if result.whole else "",
+        )
+        if result.whole and self._range_latch.fail():
+            _LOGGER.warning(
+                "Reading whole DWD %s archives: partial (range) downloads of "
+                "%s did not work. Values are not affected, but each update "
+                "now downloads several times the data; this is said again "
+                "only when range downloads work again",
+                self.PRODUCT_LABEL,
+                url,
+            )
+        elif not result.whole and self._range_latch.ok():
+            _LOGGER.info(
+                "Partial (range) downloads of DWD %s archives work again",
+                self.PRODUCT_LABEL,
+            )
+        return result.members
+
+
+class RadvorRS(RadvorProduct):
     """DWD RS precipitation nowcast (RADVOR, ODIM_H5 format).
 
     RS is published every 5 minutes as one tar of 25 ODIM_H5 members (leads
@@ -356,11 +419,6 @@ class RadvorRS(BaseProductUpdateCoordinator):
     # "how much fell in the last hour".
     OVERDUE_GRACE = DEFAULT_OVERDUE_GRACE
 
-    @cached_property
-    def index(self) -> tuple[int, int]:
-        """Return (row, col) in the RS composite grid."""
-        return get_rs_grid_index(*self.coords)
-
     @property
     def full_rolling_series(self) -> bool:
         """Whether this entry decodes every member for the rolling-hour series."""
@@ -368,37 +426,29 @@ class RadvorRS(BaseProductUpdateCoordinator):
             CONF_FULL_ROLLING_SERIES, DEFAULT_FULL_ROLLING_SERIES
         )
 
-    def _get_url(self, ts: datetime) -> str:
-        """Return the URL for the tar archive."""
-        return f"{DWD_COMPOSITE_URL}/rs/{_radvor_prefix('rs', ts)}.tar"
-
     async def _fetch_and_parse(self, ts: datetime) -> tuple[list, list]:
         """Fetch the members this entry decodes, then decode them off the loop.
 
         All 25 for the full rolling series, so the whole archive; otherwise
         only the three fixed hours, read by range (~20 % of the bytes).
         """
-        prefix = _radvor_prefix("rs", ts)
         if self.full_rolling_series:
-            response = await async_get(self._get_url(ts), self.async_client)
-            return await self.hass.async_add_executor_job(
-                self._parse_archive, response.content, ts
-            )
-        members = await async_read_tar_members(
-            self.hass, self.async_client, self._get_url(ts), prefix, RS_HOURLY_LEADS
-        )
-        return await self.hass.async_add_executor_job(self._parse, members, ts)
+            return await super()._fetch_and_parse(ts)
+        members = await self._async_read_members(ts, RS_HOURLY_LEADS)
+        return await self.hass.async_add_executor_job(self._parse_members, members, ts)
 
-    def _parse_archive(self, content: bytes, ts: datetime) -> tuple[list, list]:
+    def _parse(self, content: bytes, ts: datetime) -> tuple[list, list]:
         """Derive the RS entity payloads from a whole tar (blocking)."""
-        return self._parse(_tar_members(content, _radvor_prefix("rs", ts), LEADS), ts)
+        return self._parse_members(_tar_members(content, self._prefix(ts), LEADS), ts)
 
-    def _parse(self, members: dict[str, bytes], ts: datetime) -> tuple[list, list]:
+    def _parse_members(
+        self, members: dict[str, bytes], ts: datetime
+    ) -> tuple[list, list]:
         """Derive the RS entity payloads from its members' bytes (blocking)."""
         full = self.full_rolling_series
         cells = _decode_cells(
             members,
-            _radvor_prefix("rs", ts),
+            self._prefix(ts),
             LEADS if full else RS_HOURLY_LEADS,
             self.index,
             "RS",
@@ -426,7 +476,7 @@ class RadvorRS(BaseProductUpdateCoordinator):
         return data + [peak, next_120[0]], metadata + [peak_meta, next_120[1]]
 
 
-class RadvorRV(BaseProductUpdateCoordinator):
+class RadvorRV(RadvorProduct):
     """DWD RV precipitation nowcast (RADVOR, ODIM_H5 format).
 
     RV is published every 5 minutes as one tar of 25 ODIM_H5 members
@@ -471,8 +521,6 @@ class RadvorRV(BaseProductUpdateCoordinator):
     _rain_store: Store | None = None
     _rain_state: RainEventsState | None = None
     _rain_saved_ended: str | None = None
-    _rain_fill_failing: bool = False
-    _rain_broken: bool = False
     # The background fill-and-track round, if one was started; and the last
     # view this run published, shown while a round is still running.
     _rain_fill_task: asyncio.Task | None = None
@@ -485,35 +533,33 @@ class RadvorRV(BaseProductUpdateCoordinator):
             self._rain_store = rain_events_store(hass, entry.entry_id)
 
     @cached_property
-    def index(self) -> tuple[int, int]:
-        """Return (row, col) in the RV composite grid (identical to RS)."""
-        return get_rs_grid_index(*self.coords)
+    def _rain_fill_latch(self) -> FailureLatch:
+        """Whether filling missed analyses is failing right now."""
+        return FailureLatch()
 
-    def _get_url(self, ts: datetime) -> str:
-        """Return the URL for the tar archive."""
-        return f"{DWD_COMPOSITE_URL}/rv/{_radvor_prefix('rv', ts)}.tar"
+    @cached_property
+    def _rain_latch(self) -> FailureLatch:
+        """Whether the rain_events tracker is failing right now."""
+        return FailureLatch()
 
-    async def _fetch_and_parse(self, ts: datetime) -> tuple[dict, dict]:
-        """Fetch one tar archive and decode it off the event loop."""
-        response = await async_get(self._get_url(ts), self.async_client)
-        data, metadata = await self.hass.async_add_executor_job(
-            self._parse, response.content, ts
-        )
+    async def _async_on_new_release(
+        self, release: datetime, data: dict, metadata: dict
+    ) -> None:
+        """Feed the release to the rain_events tracker, if the entry has one."""
         if self._rain_store is not None:
-            series = metadata["rain_within_2h"]
-            data["rain_events"] = await self._async_rain_events(
-                series.source_timestamp or ts, [s["value"] for s in series.samples]
-            )
-        return data, metadata
+            data["rain_events"] = await self._async_rain_events(release, metadata)
 
     # ------------------------------------------------------------------
     # rain_events: fill the missed analyses, track, persist
     # ------------------------------------------------------------------
 
     async def _async_rain_events(
-        self, base: datetime, values: list[float | None]
+        self, release: datetime, metadata: dict
     ) -> dict | None:
         """Update the rain_events tracker with this release; None if it failed.
+
+        The release's 25-point series (``rain_within_2h`` samples) is the
+        analysis followed by the 24 forecast steps.
 
         The missed analyses must be filled *before* the tracker sees the
         release: updating first and recomputing after the fill can swap event
@@ -529,6 +575,9 @@ class RadvorRV(BaseProductUpdateCoordinator):
         logged (once per run of failures) and the attribute is left out.
         """
         try:
+            series = metadata["rain_within_2h"]
+            base = series.source_timestamp or release
+            values = [s["value"] for s in series.samples]
             state = await self._async_rain_state()
         except Exception:
             self._rain_failed()
@@ -563,15 +612,14 @@ class RadvorRV(BaseProductUpdateCoordinator):
         except Exception:
             self._rain_failed()
             return None
-        self._rain_broken = False
+        self._rain_latch.ok()
         self._schedule_rain_save(state)
         self._rain_view = view
         return view
 
     def _rain_failed(self) -> None:
         """Log a tracker failure once per run of failures."""
-        if not self._rain_broken:
-            self._rain_broken = True
+        if self._rain_latch.fail():
             _LOGGER.exception(
                 "Could not update the Rain events sensor; the other RV "
                 "sensors are not affected"
@@ -649,22 +697,18 @@ class RadvorRV(BaseProductUpdateCoordinator):
                     )
                     return
                 _LOGGER.debug("Could not fill the RV analysis of %s: %s", step_end, err)
-                if not self._rain_fill_failing:
-                    self._rain_fill_failing = True
+                if self._rain_fill_latch.fail():
                     _LOGGER.warning(_describe_fill_failure(err, step_end))
                 return
             _LOGGER.debug("Filled the RV analysis of %s: %s", step_end, value)
             record_measured(state, step_end, value)
-        self._rain_fill_failing = False
+        self._rain_fill_latch.ok()
 
     async def _async_fetch_analysis(self, step_end: datetime) -> float | None:
         """Return the analysis (lead 0) of release ``step_end``; None for nodata."""
-        prefix = _radvor_prefix("rv", step_end)
-        members = await async_read_tar_members(
-            self.hass, self.async_client, self._get_url(step_end), prefix, [0]
-        )
+        members = await self._async_read_members(step_end, [0])
         return await self.hass.async_add_executor_job(
-            self._parse_analysis, members, prefix, step_end
+            self._parse_analysis, members, self._prefix(step_end), step_end
         )
 
     def _parse_analysis(
@@ -703,7 +747,7 @@ class RadvorRV(BaseProductUpdateCoordinator):
 
     def _parse(self, content: bytes, ts: datetime) -> tuple[dict, dict]:
         """Derive the RV entity payloads from the tar bytes (blocking)."""
-        prefix = _radvor_prefix("rv", ts)
+        prefix = self._prefix(ts)
         cells = _decode_cells(
             _tar_members(content, prefix, LEADS), prefix, LEADS, self.index, "RV"
         )
@@ -845,7 +889,7 @@ class RadvorRV(BaseProductUpdateCoordinator):
         return data, metadata
 
 
-class HymecNG(BaseProductUpdateCoordinator):
+class HymecNG(WholeFileProduct):
     """DWD HymecNG precipitation-type composite (ODIM_H5 classification).
 
     Published every 5 minutes as one ODIM_H5 file (no tar) on the same
@@ -873,11 +917,6 @@ class HymecNG(BaseProductUpdateCoordinator):
     # is still informative.
     OVERDUE_GRACE = DEFAULT_OVERDUE_GRACE
 
-    @cached_property
-    def index(self) -> tuple[int, int]:
-        """Return (row, col) in the HymecNG grid (identical to RS/RV)."""
-        return get_rs_grid_index(*self.coords)
-
     def _get_url(self, ts: datetime) -> str:
         """Return the URL for the single ODIM_H5 file."""
         return (
@@ -885,12 +924,9 @@ class HymecNG(BaseProductUpdateCoordinator):
             f"composite_HymecNG_{ts.strftime('%Y%m%d_%H%M')}_000-hd5"
         )
 
-    async def _fetch_and_parse(self, ts: datetime) -> tuple[str | None, ProductMetadata]:
-        """Fetch one ODIM_H5 file and decode it off the event loop."""
-        response = await async_get(self._get_url(ts), self.async_client)
-        return await self.hass.async_add_executor_job(self._parse, response.content)
-
-    def _parse(self, content: bytes) -> tuple[str | None, ProductMetadata]:
+    def _parse(
+        self, content: bytes, ts: datetime
+    ) -> tuple[str | None, ProductMetadata]:
         """Return the cell's precipitation-type label (blocking)."""
         value, dataset_what, moment_what = read_odim_classification_cell(
             BytesIO(content), *self.index, expected_shape=RS_GRID_SHAPE
@@ -912,7 +948,7 @@ class HymecNG(BaseProductUpdateCoordinator):
         return precip_type, _odim_metadata(dataset_what)
 
 
-class RadolanProduct(BaseProductUpdateCoordinator, ABC):
+class RadolanProduct(WholeFileProduct, ABC):
     """Abstract coordinator for the RADOLAN analyses (RW, SF), read as HDF5.
 
     DWD publishes RADOLAN both in its legacy binary format (.bz2, national
@@ -927,21 +963,9 @@ class RadolanProduct(BaseProductUpdateCoordinator, ABC):
     precipitation -> float, metadata -> ProductMetadata
     """
 
-    @cached_property
-    def index(self) -> tuple[int, int]:
-        """Return the (row, col) of the DE1200 cell holding the location."""
-        return get_rs_grid_index(*self.coords)
-
-    @abstractmethod
-    def _get_url(self, ts: datetime) -> str:
-        """Return the HDF5 file URL for the given release timestamp."""
-
-    async def _fetch_and_parse(self, ts: datetime) -> tuple[float | None, ProductMetadata]:
-        """Fetch one RADOLAN HDF5 file and decode it off the event loop."""
-        response = await async_get(self._get_url(ts), self.async_client)
-        return await self.hass.async_add_executor_job(self._parse, response.content)
-
-    def _parse(self, content: bytes) -> tuple[float | None, ProductMetadata]:
+    def _parse(
+        self, content: bytes, ts: datetime
+    ) -> tuple[float | None, ProductMetadata]:
         """Return (scalar_value, ProductMetadata) from the HDF5 bytes (blocking).
 
         The value is ``None`` where the cell holds no data (radar outage, masked

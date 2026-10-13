@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -54,6 +54,31 @@ def parse_utc(raw: Any) -> datetime | None:
     return ts if ts.tzinfo is not None else ts.replace(tzinfo=UTC)
 
 
+class FailureLatch:
+    """Whether a run of failures is going on, so it is reported once.
+
+    ``fail()`` is True only for the first failure of a run and ``ok()`` only
+    for the first success after one: log on those, and the failures in
+    between stay quiet.
+    """
+
+    def __init__(self) -> None:
+        """Start with nothing failing."""
+        self.failing = False
+
+    def fail(self) -> bool:
+        """Record a failure; return whether it starts a run."""
+        first = not self.failing
+        self.failing = True
+        return first
+
+    def ok(self) -> bool:
+        """Record a success; return whether it ends a run."""
+        ended = self.failing
+        self.failing = False
+        return ended
+
+
 @dataclass
 class AsyncResponse:
     """Minimal HTTP response wrapper returned by async_get."""
@@ -96,68 +121,6 @@ async def _read_capped(response: aiohttp.ClientResponse, max_bytes: int) -> byte
         chunks.append(chunk)
 
     return b"".join(chunks)
-
-
-class mydatetime(datetime):
-    """Standard datetime class with added support for the % and // operators.
-
-    Timedeltas in microseconds are not supported.
-
-    """
-
-    def __divmod__(self, delta: timedelta) -> tuple[int, timedelta]:
-        """Magic __divmod__ method."""
-        seconds = int(
-            (self - datetime.min.replace(tzinfo=self.tzinfo)).total_seconds()
-        )
-        remainder = timedelta(
-            seconds=seconds % delta.total_seconds(),
-            microseconds=self.microsecond,
-        )
-        quotient = self - remainder
-        return quotient, remainder
-
-    def __floordiv__(self, delta: timedelta) -> int:
-        """Magic __floordiv__ method."""
-        return divmod(self, delta)[0]
-
-    def __mod__(self, delta: timedelta) -> timedelta:
-        """Magic __mod__ method."""
-        return divmod(self, delta)[1]
-
-    @classmethod
-    def from_datetime(cls, dt: datetime) -> mydatetime:
-        """Create instance from a datetime obj."""
-        return mydatetime(
-            year=dt.year,
-            month=dt.month,
-            day=dt.day,
-            hour=dt.hour,
-            minute=dt.minute,
-            second=dt.second,
-            tzinfo=dt.tzinfo,
-            fold=dt.fold,
-        )
-
-
-def get_previous_multiple(
-        timestamp: datetime,
-        interval: timedelta,
-        offset: timedelta,
-        include: bool = True,
-) -> datetime:
-    """Return the previous multiple of the given timestamp."""
-    dt = mydatetime.from_datetime(timestamp)
-    floor, remainder = divmod((dt - offset), interval)
-
-    if not include and not remainder:
-        prev_multiple = (floor + offset) - interval
-    else:
-        prev_multiple = floor + offset
-
-    return datetime.fromtimestamp(
-        prev_multiple.timestamp(), tz=dt.tzinfo
-    )
 
 
 async def async_get(

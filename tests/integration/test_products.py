@@ -26,7 +26,7 @@ from custom_components.dwd_precipitation.products import (
     RadvorRS,
     RadvorRV,
 )
-from custom_components.dwd_precipitation.radar import RS_GRID_SHAPE
+from custom_components.dwd_precipitation.radar import RS_GRID_SHAPE, get_rs_grid_index
 from custom_components.dwd_precipitation.utils import AsyncResponse
 
 from tests.factories.odim import make_hymecng_h5, make_rs_tar, make_rv_tar
@@ -175,6 +175,41 @@ async def test_rs_without_option_decodes_only_the_three_hours() -> None:
     assert meta[3] is None
     assert [m.lead_time_minutes for m in meta[:3]] == [0, 60, 120]
 
+
+
+@pytest.mark.asyncio
+async def test_rs_range_fallback_is_said_once_and_its_end_once(caplog) -> None:
+    """Whole archives instead of ranges: one WARNING per run, one INFO after."""
+    ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
+    archive = make_rs_tar(ts)
+
+    async def ignores_ranges(url, _client, headers=None, **_kw):
+        return AsyncResponse(content=archive)  # 200: the whole file
+
+    async def serves_ranges(url, _client, headers=None, **_kw):
+        start, end = (int(x) for x in headers["Range"][6:].split("-"))
+        end = min(end, len(archive) - 1)
+        return AsyncResponse(
+            content=archive[start:end + 1],
+            status=206,
+            headers={"Content-Range": f"bytes {start}-{end}/{len(archive)}"},
+        )
+
+    def _read(fileobj, _row, _col, **_kw):
+        lead = int(fileobj.getvalue())
+        return np.float32(lead), _rs_what(ts, lead)
+
+    coord = _coord(RadvorRS, {"full_rolling_series": False})
+    with patch.object(products, "read_odim_composite_cell", side_effect=_read):
+        for server in (ignores_ranges, ignores_ranges, ignores_ranges, serves_ranges):
+            with patch.object(products, "async_get", side_effect=server):
+                data, _ = await coord._fetch_and_parse(ts)
+            assert data[:3] == [0.0, 60.0, 120.0]  # values are unaffected
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "Reading whole DWD RS precipitation nowcast archives" in warnings[0].message
+    assert any("work again" in r.message and r.levelno == logging.INFO for r in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -495,7 +530,7 @@ async def test_radolan_reads_the_hdf5_edition_and_its_window(cls, product, hours
     assert url.endswith(f"/{product.lower()}/raa01-{product.lower()}_10000-2506011250-dwd---bin.hdf5")
     assert reader.call_args.args[1:] == coord.index
     assert reader.call_args.kwargs["expected_shape"] == RS_GRID_SHAPE
-    assert coord.index == products.get_rs_grid_index(*coord.coords)
+    assert coord.index == get_rs_grid_index(*coord.coords)
     assert value == pytest.approx(1.7)
     assert meta.source_product == product
     assert meta.source_timestamp == meta.data_end == ts
@@ -772,6 +807,7 @@ async def _rv_refresh(coord, world, hhmm):
     ts = DAY_RV.replace(hour=int(hhmm[:2]), minute=int(hhmm[3:]))
     with _serving(world):
         data, metadata = await coord._fetch_and_parse(ts)
+        await coord._async_on_new_release(ts, data, metadata)
     coord.data = CoordinatorData(data, metadata)
     return data, metadata
 
@@ -866,7 +902,7 @@ async def test_rv_fill_budget_running_out_is_not_a_failure(caplog) -> None:
     steps = data["rain_events"]["steps"][:11]
     assert 0 < steps.count(None) < 11  # filled some, newest first, then stopped
     assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
-    assert coord._rain_fill_failing is False
+    assert not coord._rain_fill_latch.failing
 
 
 @pytest.mark.asyncio
@@ -971,6 +1007,32 @@ async def test_rv_tracker_failure_leaves_the_sensors_alone(caplog) -> None:
     assert data["rain_events"] is None
     assert data["max_060"] == 0.0
     assert any("Could not update the Rain events sensor" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_rv_new_release_hook_does_not_raise(caplog) -> None:
+    """Metadata without the series fails the tracker, not the RV update."""
+    coord = _rv_tracked()
+    data: dict = {}
+    await coord._async_on_new_release(
+        DAY_RV, data, {"rain_within_2h": products.ProductMetadata("RV", DAY_RV)}
+    )
+    assert data["rain_events"] is None
+    assert any("Could not update the Rain events sensor" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_rv_fetching_a_past_release_leaves_the_tracker_alone() -> None:
+    """async_fetch_release (the totals' backfill path) has no side effects."""
+    world = _RVWorld(_rain_between("13:30", "15:00"))
+    coord = _rv_tracked()
+    with _serving(world):
+        cdata = await coord.async_fetch_release(DAY_RV.replace(hour=14))
+
+    assert cdata.data["max_060"] == pytest.approx(12.0)
+    assert "rain_events" not in cdata.data
+    assert coord._rain_state is None
+    assert coord._rain_fill_task is None
 
 
 @pytest.mark.asyncio

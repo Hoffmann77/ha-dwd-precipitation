@@ -1,78 +1,22 @@
-"""Unit tests for utils.py timing math and fetch hardening — no HA, no network."""
+"""Unit tests for utils.py: fetch hardening and timestamps — no HA, no network."""
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import pytest
 
 from utils import (
     AsyncResponse,
     DEFAULT_MAX_BYTES,
+    FailureLatch,
     async_get,
-    get_previous_multiple,
     iso,
-    mydatetime,
     parse_utc,
 )
 
 UTC = timezone.utc
 
 _VALID_URL = "https://opendata.dwd.de/weather/radar/composite/rs/composite_rs.tar"
-
-
-# ===========================================================================
-# get_previous_multiple
-# ===========================================================================
-
-def test_hourly_with_offset():
-    """RADOLAN-style grid at HH:50 — previous release before 12:32 is 11:50."""
-    ts = datetime(2025, 6, 1, 12, 32, tzinfo=UTC)
-    result = get_previous_multiple(ts, timedelta(hours=1), timedelta(minutes=50))
-    assert result == datetime(2025, 6, 1, 11, 50, tzinfo=UTC)
-
-
-def test_on_boundary_included():
-    """A timestamp exactly on a release boundary returns itself when include=True."""
-    ts = datetime(2025, 6, 1, 11, 50, tzinfo=UTC)
-    result = get_previous_multiple(ts, timedelta(hours=1), timedelta(minutes=50))
-    assert result == ts
-
-
-def test_on_boundary_excluded():
-    """include=False steps back one interval when exactly on a boundary."""
-    ts = datetime(2025, 6, 1, 11, 50, tzinfo=UTC)
-    result = get_previous_multiple(
-        ts, timedelta(hours=1), timedelta(minutes=50), include=False
-    )
-    assert result == datetime(2025, 6, 1, 10, 50, tzinfo=UTC)
-
-
-def test_five_minute_zero_offset():
-    """RS-style 5-minute grid — 12:37:30 floors to 12:35."""
-    ts = datetime(2025, 6, 1, 12, 37, 30, tzinfo=UTC)
-    result = get_previous_multiple(ts, timedelta(minutes=5), timedelta())
-    assert result == datetime(2025, 6, 1, 12, 35, tzinfo=UTC)
-
-
-# ===========================================================================
-# mydatetime operators
-# ===========================================================================
-
-def test_divmod_invariant():
-    """divmod(dt, delta) → (quotient, remainder) with quotient + remainder == dt."""
-    dt = mydatetime(2025, 6, 1, 12, 32, tzinfo=UTC)
-    delta = timedelta(hours=1)
-    quotient, remainder = divmod(dt, delta)
-    assert timedelta() <= remainder < delta
-    assert quotient + remainder == dt
-
-
-def test_floordiv_and_mod_match_divmod():
-    dt = mydatetime(2025, 6, 1, 12, 32, tzinfo=UTC)
-    delta = timedelta(minutes=15)
-    quotient, remainder = divmod(dt, delta)
-    assert dt // delta == quotient
-    assert dt % delta == remainder
 
 
 # ===========================================================================
@@ -230,3 +174,16 @@ def test_parse_utc_reads_naive_as_utc():
 @pytest.mark.parametrize("raw", [None, "", "not a time", 17, ["2026-10-13"]])
 def test_parse_utc_rejects_what_is_not_a_timestamp(raw):
     assert parse_utc(raw) is None
+
+
+# ===========================================================================
+# FailureLatch
+# ===========================================================================
+
+def test_failure_latch_reports_a_run_once_and_its_end_once():
+    latch = FailureLatch()
+    assert latch.ok() is False  # nothing to recover from
+    assert [latch.fail() for _ in range(3)] == [True, False, False]
+    assert latch.failing
+    assert [latch.ok() for _ in range(2)] == [True, False]
+    assert latch.fail() is True  # a new run

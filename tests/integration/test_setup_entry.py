@@ -642,8 +642,8 @@ async def test_rain_events_sensor_with_the_option(hass: HomeAssistant) -> None:
     )
     entry.add_to_hass(hass)
 
-    rv = AsyncMock(return_value=({**RV_DATA, "rain_events": RAIN_VIEW}, RV_META))
-    with _patched_products(), patch.object(RadvorRV, "_fetch_and_parse", new=rv):
+    tracker = AsyncMock(return_value=RAIN_VIEW)
+    with _patched_products(), patch.object(RadvorRV, "_async_rain_events", new=tracker):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 

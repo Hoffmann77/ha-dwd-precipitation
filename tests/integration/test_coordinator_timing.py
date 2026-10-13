@@ -22,6 +22,7 @@ from custom_components.dwd_precipitation import (
     coordinator as coordinator_mod,
 )
 from custom_components.dwd_precipitation.coordinator import CoordinatorData
+from custom_components.dwd_precipitation.release_grid import ReleaseGrid
 from custom_components.dwd_precipitation.products import (
     RadolanRW,
     RadolanSFLastYesterday,
@@ -111,12 +112,12 @@ def test_rw_get_latest_release():
 
 def test_release_at_or_before_maps_the_grid():
     """A release maps to itself; anything off the grid to the release before it."""
-    coord = RadolanRW.__new__(RadolanRW)
+    grid = RadolanRW.__new__(RadolanRW).grid
     release = datetime(2025, 6, 1, 12, 0, tzinfo=UTC)
-    assert coord._release_at_or_before(release) == release
+    assert grid.at_or_before(release) == release
     # A timestamp from RW's old HH:50 grid is off it.
     old = datetime(2025, 6, 1, 12, 50, tzinfo=UTC)
-    assert coord._release_at_or_before(old) == release
+    assert grid.at_or_before(old) == release
 
 
 def test_stale_deadline_runs_from_the_overdue_release():
@@ -532,7 +533,7 @@ def test_daily_deadline_follows_the_local_release_grid():
     coord.curr_release = datetime(2025, 10, 25, 23, 50, tzinfo=berlin).astimezone(UTC)
 
     with patch.object(
-        coordinator_mod.dt_util, "as_local", lambda d: d.astimezone(berlin)
+        coordinator_mod.dt_util, "get_default_time_zone", lambda: berlin
     ):
         deadline = coord._stale_deadline()
 
@@ -541,6 +542,34 @@ def test_daily_deadline_follows_the_local_release_grid():
     assert deadline == next_release + timedelta(minutes=31) + timedelta(minutes=30)
     # 25 h later in absolute terms, not 24.
     assert next_release - coord.curr_release == timedelta(hours=25)
+
+
+def test_local_grid_steps_over_both_changeovers():
+    """A 23:50-local grid: 23 h across spring, 25 h across autumn, both ways."""
+    berlin = ZoneInfo("Europe/Berlin")
+    grid = ReleaseGrid(timedelta(hours=24), timedelta(hours=23, minutes=50), berlin)
+
+    def local(day: str) -> datetime:
+        y, m, d = (int(x) for x in day.split("-"))
+        return datetime(y, m, d, 23, 50, tzinfo=berlin).astimezone(UTC)
+
+    for before, after, hours in (
+        ("2026-03-28", "2026-03-29", 23),
+        ("2026-10-24", "2026-10-25", 25),
+    ):
+        assert grid.next_after(local(before)) == local(after)
+        assert local(after) - local(before) == timedelta(hours=hours)
+        assert grid.previous(local(after)) == local(before)
+        assert grid.at_or_before(local(after) + timedelta(hours=3)) == local(after)
+    assert grid.back(local("2026-10-26"), 3) == local("2026-10-23")
+
+
+def test_a_wall_time_that_occurs_twice_means_its_first_occurrence():
+    """As before ReleaseGrid: the autumn hour 02:00-03:00 floors onto its first pass."""
+    berlin = ZoneInfo("Europe/Berlin")
+    grid = ReleaseGrid(timedelta(hours=24), timedelta(hours=2, minutes=30), berlin)
+    second_pass = datetime(2026, 10, 25, 1, 55, tzinfo=UTC)  # 02:55 CET
+    assert grid.at_or_before(second_pass) == datetime(2026, 10, 25, 0, 30, tzinfo=UTC)
 
 
 def test_every_product_states_its_own_grace():

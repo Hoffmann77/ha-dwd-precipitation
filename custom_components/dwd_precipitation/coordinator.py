@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from functools import cached_property
 from http import HTTPStatus
 from itertools import product as cartesian_product
@@ -30,7 +30,8 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from homeassistant.util import dt as dt_util
 
 from .const import CONF_UNAVAILABLE_WHEN_STALE, DEFAULT_UNAVAILABLE_WHEN_STALE
-from .utils import get_previous_multiple
+from .radar import get_rs_grid_index
+from .release_grid import ReleaseGrid
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -184,8 +185,9 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
     """Abstract per-product data update coordinator.
 
     Each concrete subclass represents one DWD product and owns its own
-    update schedule. Subclasses must define PRODUCT_KEY, timing ClassVars,
-    and implement index() and _fetch_and_parse().
+    update schedule. Subclasses must define PRODUCT_KEY and the timing
+    ClassVars, and implement _fetch_and_parse() (products.py has a base for
+    one-file-per-release products). index defaults to the DE1200 grid.
 
     """
 
@@ -277,19 +279,27 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
         everything that asks "which release is ours by now" has to ask in the
         same reference. One helper rather than the ternary at each site: the
         cost of getting this wrong is a product fetched hours off its schedule
-        (see _next_release_after), and a missed branch is the way that happens.
+        (see grid), and a missed branch is the way that happens.
         """
         return dt_util.now() if self.USE_LOCAL_TIME else dt_util.utcnow()
 
-    def _get_latest_release(self, now: datetime) -> datetime:
-        """Return the most recent valid release timestamp."""
-        prev = get_previous_multiple(
-            now - self.release_delay,
+    @property
+    def grid(self) -> ReleaseGrid:
+        """Return this product's release grid, in its own time reference.
+
+        A USE_LOCAL_TIME product's grid is on Home Assistant's local clock, so
+        its releases are 23 or 25 hours apart on DST changeover days (see
+        ReleaseGrid). Built on each use, so a change of HA's time zone applies.
+        """
+        return ReleaseGrid(
             self.RELEASE_INTERVAL,
             self.RELEASE_OFFSET,
+            dt_util.get_default_time_zone() if self.USE_LOCAL_TIME else UTC,
         )
 
-        return dt_util.as_utc(prev)
+    def _get_latest_release(self, now: datetime) -> datetime:
+        """Return the newest release that is ours to fetch by ``now``."""
+        return self.grid.at_or_before(now - self.release_delay)
 
     def _stale_deadline(self) -> datetime | None:
         """Return when the cached value is written off, or None if it is fresh.
@@ -312,39 +322,13 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
         if self.curr_release is None:
             return None
 
+        # On the product's own clock (see grid): adding 24 h to a UTC
+        # timestamp would put the autumn deadline before the file it waits
+        # for can exist.
         return (
-            self._next_release_after(self.curr_release)
+            self.grid.next_after(self.curr_release)
             + self.release_delay
             + self.OVERDUE_GRACE
-        )
-
-    def _next_release_after(self, release: datetime) -> datetime:
-        """Return the first scheduled release after the given one.
-
-        Done in the product's own time reference rather than by adding
-        RELEASE_INTERVAL to a UTC timestamp: for USE_LOCAL_TIME products the
-        release grid is a local wall-clock one, so consecutive releases are 23
-        or 25 hours apart on the two DST changeover days. Adding 24 h there
-        would put the deadline an hour off — on the autumn one, before the file
-        it is waiting for could even exist.
-        """
-        reference = dt_util.as_local(release) if self.USE_LOCAL_TIME else release
-
-        return dt_util.as_utc(reference + self.RELEASE_INTERVAL)
-
-    def _release_at_or_before(self, moment: datetime) -> datetime:
-        """Return the newest scheduled release at or before the given moment.
-
-        In the product's own time reference, like _next_release_after. A
-        release maps to itself; a timestamp that does not is off the grid,
-        which only happens to one stored from an older grid (RW's HH:50).
-        """
-        reference = dt_util.as_local(moment) if self.USE_LOCAL_TIME else moment
-
-        return dt_util.as_utc(
-            get_previous_multiple(
-                reference, self.RELEASE_INTERVAL, self.RELEASE_OFFSET
-            )
         )
 
     def _data_is_stale(self, now: datetime) -> bool:
@@ -572,22 +556,51 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
     # Abstract interface — subclasses implement these
     # ------------------------------------------------------------------
 
-    @abstractmethod
-    def index(self):
-        """Grid cell index for this location. Override with @cached_property."""
+    @cached_property
+    def index(self) -> tuple[int, int]:
+        """Return the (row, col) of the grid cell holding the location.
+
+        Every product so far is on DWD's DE1200 grid (RS/RV/HymecNG, and
+        RW/SF in their HDF5 edition). Override with a cached_property for a
+        product on another grid.
+        """
+        return get_rs_grid_index(*self.coords)
 
     @abstractmethod
     async def _fetch_and_parse(self, ts: datetime) -> tuple[Any, Any]:
         """Fetch and parse the product for release timestamp ts.
 
         Return (precipitation, metadata). Must raise on any failure — the
-        base class owns the stale/retry logic in _async_update_data.
+        base class owns the stale/retry logic in _async_update_data. Must
+        have no side effects: the totals' backfill fetches past releases
+        through it (async_fetch_release). What a newly adopted release should
+        also do belongs in _async_on_new_release.
 
         Only the download belongs on the event loop: hand the decoding to
         ``hass.async_add_executor_job``. Decompressing a radar grid takes
         milliseconds per file even on a fast machine, which every other
         integration and automation would otherwise wait out.
         """
+
+    async def _async_on_new_release(
+        self, release: datetime, data: Any, metadata: Any
+    ) -> None:
+        """React to a release this coordinator is about to adopt.
+
+        Called once per release, after a successful fetch and before the data
+        is published; may add to ``data``. Must not raise: a failure here must
+        not cost the product its update. Nothing by default.
+        """
+
+    async def async_fetch_release(self, release: datetime) -> CoordinatorData:
+        """Fetch and decode any ``release`` without adopting it.
+
+        For the totals' backfill: the coordinator's own state, schedule and
+        retry ramp are untouched, and _async_on_new_release is not called.
+        Raises like _fetch_and_parse.
+        """
+        data, metadata = await self._fetch_and_parse(release)
+        return CoordinatorData(data, metadata)
 
     # ------------------------------------------------------------------
     # Template method — do not override in subclasses
@@ -641,6 +654,7 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
             # Data is still fresh enough — retry silently
             return self.data
 
+        await self._async_on_new_release(latest_release, data, metadata)
         self._record_success(latest_release)
 
         return CoordinatorData(data, metadata)

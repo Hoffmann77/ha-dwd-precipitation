@@ -33,8 +33,11 @@ config_flow.py        UI config flow: collects name + lat/lon; options form
                       with a collapsed Advanced section, stored flat.
 const.py              DWD OpenData base URLs and HA constants.
 utils.py              async_get() HTTP helper (headers, status, separate 206
-                      cap); get_previous_multiple() for computing the most
-                      recent release timestamp.
+                      cap, stall timeout); iso()/parse_utc() for restore
+                      payloads. HA-free.
+release_grid.py       ReleaseGrid: a product's release times on its own
+                      clock (see "Release timing"). HA-free, no relative
+                      imports: scripts/check_release_delay.py uses it too.
 radar/                Embedded parsers (no heavy external deps).
   odim.py             ODIM_H5 (HDF5) reader for every product (RS, RV,
                       HymecNG, RW/SF in their HDF5 edition) and the DE1200
@@ -58,6 +61,12 @@ poll loop.
    `(precipitation, metadata)`. Decoding never runs on the event loop: a
    radar grid is one gzip chunk of 1.3 M cells, ~6 ms to inflate even on a fast
    machine, times 25 members for RS/RV — many users run HA on a Raspberry Pi
+   `_fetch_and_parse` has no side effects, so `async_fetch_release(ts)` can
+   fetch any past release (the totals' backfill) without moving the
+   coordinator. What adopting a release should also do goes in
+   `_async_on_new_release(release, data, metadata)`, called once per adopted
+   release before it is published, never raising: RV feeds the rain-events
+   tracker there.
 4. The coordinator wraps those in a `CoordinatorData` — its `data`/`metadata`
    are a scalar for RADOLAN products (`None` for a nodata cell, which the ODIM
    reader returns as NaN), parallel lists for RS (`[_000, _060,
@@ -142,7 +151,8 @@ that from turning into noise:
   just as promptly as the 5-minute ones, because the question is how long DWD is
   given to publish, not how stale the value is allowed to be.
 
-  `_next_release_after()` walks the release grid in the product's *own* time
+  The coordinator's `grid` (`ReleaseGrid`, see "Release timing") walks the
+  release grid in the product's *own* time
   reference. `sf_2350` is `USE_LOCAL_TIME`, so its releases are 23 or 25 hours
   apart on DST changeover days; adding `RELEASE_INTERVAL` to a UTC timestamp
   would put the autumn deadline before the file it is waiting for could exist.
@@ -271,10 +281,12 @@ for the cell), so a restart resumes the list (`_start_backfill` at startup)
 and a failed fetch is retried with the next counted release. A new release is
 the retry trigger, not every coordinator update: during a DWD outage the
 coordinator's own fast-poll retries would otherwise refetch the backlog each
-minute. `split_fetchable` gives up on entries older than `max_backfill`
-releases, walking the grid so DST days count as one release, and logs once
-per batch dropped. One round runs at a time; releases that join meanwhile are
-picked up by the running round.
+minute. Both `missed_releases` and `split_fetchable` cut at the same release,
+`grid.back(current, max_backfill)`, so a DST day counts as one release and the
+walk never goes further back than the window however long the outage: a gap
+older than it is logged once (INFO) and left out, as is a pending entry that
+aged out. One round runs at a time; releases that join meanwhile are picked up
+by the running round, and the state is written once per round.
 
 `Peak intensity next 60 min` / `next 60–120 min` drop the `Precipitation` head
 noun on purpose: they are mm/h rather than mm, and the shorter head stops them
@@ -287,28 +299,43 @@ once released, since renaming one orphans the user's entity.
 
 ## Adding a new DWD product
 
-1. Subclass `BaseProductUpdateCoordinator` in `products.py`
+1. Subclass a base in `products.py`: `WholeFileProduct` for one file per
+   release decoded whole (HymecNG, RADOLAN), `RadvorProduct` for a RADVOR
+   tar (RS, RV); `BaseProductUpdateCoordinator` itself only if neither fits
 2. Set `PRODUCT_KEY`, `PRODUCT_LABEL`, `RELEASE_INTERVAL`, `RELEASE_DELAY`,
    `RELEASE_OFFSET` and `OVERDUE_GRACE` (spelled out even when it is just
    `DEFAULT_OVERDUE_GRACE` — a test enforces this), plus
    `MAX_FAST_POLL_INTERVAL` if the default does not fit
-3. Implement `_get_url(ts)` and `async _fetch_and_parse(ts)`
-4. Override `index` (cached_property) if the grid differs from DE1200
+3. Implement `_get_url(ts)` and the blocking `_parse(content, ts)`; the base
+   fetches and runs `_parse` in the executor. Override `_fetch_and_parse` only
+   to read part of a file (RS's range reads), and keep it free of side
+   effects (anything else goes in `_async_on_new_release`)
+4. `index` defaults to the DE1200 lookup; override it (cached_property) only
+   for a product on another grid
 5. Add sensor descriptors in `sensor.py` (new `*_SENSORS` tuple)
 6. Register the class in `__init__.py` `PRODUCT_CLASSES` tuple
 7. Register sensors in `sensor.py` `async_setup_entry`, and add each
    `translation_key`'s name to `translations/en.json` and `translations/de.json`
    (the two files must keep identical keys)
+8. Add it to `PRODUCTS` in `scripts/check_release_delay.py`, so its
+   `RELEASE_DELAY` is checked against what DWD actually does
 
 ## Release timing
 
-`_get_latest_release()` in `BaseProductUpdateCoordinator` computes the
-most-recent valid release:
+Every release computation goes through the coordinator's `grid`, a
+`ReleaseGrid(RELEASE_INTERVAL, RELEASE_OFFSET, tz)` on the product's own clock
+(HA's local zone for `USE_LOCAL_TIME`, else UTC): `at_or_before`,
+`next_after`, `previous`, `back`, `walk`. `_get_latest_release()` is the
+most-recent release that is ours to fetch:
 ```
-latest = floor((now - RELEASE_DELAY) / RELEASE_INTERVAL) * RELEASE_INTERVAL + RELEASE_OFFSET
+latest = grid.at_or_before(now - release_delay)
+       = floor((now - RELEASE_DELAY - jitter - RELEASE_OFFSET) / RELEASE_INTERVAL)
+         * RELEASE_INTERVAL + RELEASE_OFFSET      (on the grid's wall clock)
 ```
 `RELEASE_DELAY` = how long after the nominal product time it's available on OpenData.
 `RELEASE_OFFSET` = minute/second alignment of nominal product times within the interval.
+A wall time that occurs twice (the autumn hour) means its first occurrence;
+no product sits in that hour.
 
 `scripts/check_release_delay.py` (run by `.github/workflows/release-delay.yml`,
 scheduled) averages the *observed* availability delay across a rolling window of
@@ -512,17 +539,18 @@ hour; `RadolanRW10` (`rw_10min`) is the same file family on a 10-minute grid
   missed-release walk stay on the hourly grid of `rw`. The startup downtime
   correction of the dry streak also keeps using `rw`.
 - **The grid move.** A total stored by 2026.10.0 has a `last_release` at :50,
-  off the new grid. `first_uncounted_release()` notices that
-  (`_release_at_or_before` does not map it to itself) and resumes at the first
-  :00 release whose window starts after it: the 10 minutes in between are left
-  out once, rather than 50 counted twice. On-grid releases, including
-  `sf_2350`'s 23- and 25-hour DST days, are unaffected.
+  off the new grid. Restoring it maps it once with `counted_on_grid()`
+  (`grid.at_or_before` does not map it to itself) onto the :00 release before
+  the first window that starts after it, so counting resumes there: the 10
+  minutes in between are left out once, rather than 50 counted twice
+  (`counted_until` reads 10 minutes ahead until the next release). On-grid
+  releases, including `sf_2350`'s 23- and 25-hour DST days, are unaffected.
 
 ## Range reads
 
 RS/RV tars are plain ustar archives, 25 members in lead order, served as static
 files with range support. `radar/tar_range.py` (`fetch_tar_members`) reads the
-members a caller needs; `products.async_read_tar_members` wraps it with
+members a caller needs; `RadvorProduct._async_read_members` wraps it with
 `async_get`. Used by RS in its default mode (3 members) and the RV backfill (the
 analysis only). Measured on 12 live archives: RS takes 4 requests and 19-20 %
 of the bytes (archives are 3.5-17.5 MB), an RV analysis 1-2 requests and 4-7 %.
@@ -537,7 +565,9 @@ of the bytes (archives are 3.5-17.5 MB), an RV analysis 1-2 requests and 4-7 %.
 - DWD promises neither the layout nor range support. Anything unexpected — a
   200, an unexpected first member, a header not found within `MAX_REQUESTS`,
   a 206 that does not match the request, a file replaced between requests
-  (`If-Range` turns that into a 200) — falls back to the whole archive. A
+  (`If-Range` turns that into a 200) — falls back to the whole archive,
+  with one WARNING per run of fallbacks and an INFO once range reads work
+  again (values are unaffected, the data volume is not). A
   failed fetch (404, network) is not a fallback case and raises as usual.
 - Not worth it elsewhere: RV needs all 25 members every release, HymecNG is one
   gzip chunk, RADOLAN files are a single small HDF5 (RW ~30 KB).
