@@ -65,6 +65,8 @@ class _Server:
 
     async def fetch(self, url, headers):
         self.requests.append(dict(headers))
+        if "Range" not in headers:
+            self.whole_downloads += 1
         if self.replace_after and len(self.requests) > self.replace_after[0]:
             _, self.content, self.etag = self.replace_after
         if not self.ranges or "Range" not in headers:
@@ -82,14 +84,10 @@ class _Server:
             {"Content-Range": f"bytes {start}-{end}/{total}", "ETag": self.etag},
         )
 
-    async def whole(self):
-        self.whole_downloads += 1
-        return self.content
-
 
 def _read(server: _Server, wanted):
     return asyncio.run(
-        fetch_tar_members(server.fetch, "https://x/f.tar", NAMES, wanted, server.whole)
+        fetch_tar_members(server.fetch, "https://x/f.tar", NAMES, wanted)
     )
 
 
@@ -211,11 +209,13 @@ def test_missing_member_is_absent_after_the_fallback():
 
 
 def test_not_found_propagates():
-    async def fetch(_url, _headers):
+    requests = []
+
+    async def fetch(_url, headers):
+        requests.append(headers)
         raise _HTTPError(404)
 
-    async def whole():
-        raise AssertionError("a missing release is not a fallback case")
-
     with pytest.raises(_HTTPError):
-        asyncio.run(fetch_tar_members(fetch, "https://x/f.tar", NAMES, [NAMES[0]], whole))
+        asyncio.run(fetch_tar_members(fetch, "https://x/f.tar", NAMES, [NAMES[0]]))
+    # A missing release is not a fallback case: no whole-archive download.
+    assert len(requests) == 1

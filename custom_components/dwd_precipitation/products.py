@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import tarfile
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
 from functools import cached_property
@@ -20,7 +19,7 @@ from .coordinator import (
     ProductMetadata,
 )
 from .utils import async_get
-from .radar.tar_range import fetch_tar_members, member_names
+from .radar.tar_range import fetch_tar_members, member_names, members_from_archive
 from .radar import (
     read_odim_composite_cell,
     read_odim_classification,
@@ -151,17 +150,8 @@ def rain_events_store_key(entry_id: str) -> str:
 
 
 def _tar_members(content: bytes, prefix: str, leads) -> dict[str, bytes]:
-    """Return the requested members of a whole RADVOR tar, by name."""
-    out: dict[str, bytes] = {}
-    with tarfile.open(fileobj=BytesIO(content), mode="r") as tf:
-        for name in member_names(prefix, leads):
-            try:
-                f = tf.extractfile(name)
-            except KeyError:
-                continue
-            if f is not None:
-                out[name] = f.read()
-    return out
+    """Return the requested members of a whole RADVOR tar, by name (blocking)."""
+    return members_from_archive(content, member_names(prefix, leads))
 
 
 def _decode_cells(
@@ -189,23 +179,24 @@ def _decode_cells(
 
 
 async def async_read_tar_members(
-    client, url: str, prefix: str, leads
+    hass, client, url: str, prefix: str, leads
 ) -> dict[str, bytes]:
     """Fetch only the requested members of a RADVOR tar, by range reads.
 
     Falls back to the whole archive on anything unexpected (see
-    radar.tar_range); a missing release still raises, like any fetch.
+    radar.tar_range), unpacked in the executor; a missing release still
+    raises, like any fetch.
     """
     async def fetch(target: str, headers):
         return await async_get(
             target, client, headers=headers, partial_max_bytes=RANGE_MAX_BYTES
         )
 
-    async def whole() -> bytes:
-        return (await async_get(url, client)).content
+    async def extract(content: bytes, wanted) -> dict[str, bytes]:
+        return await hass.async_add_executor_job(members_from_archive, content, wanted)
 
     result = await fetch_tar_members(
-        fetch, url, member_names(prefix, LEADS), member_names(prefix, leads), whole
+        fetch, url, member_names(prefix, LEADS), member_names(prefix, leads), extract
     )
     _LOGGER.debug(
         "Read %s member(s) of %s in %s request(s), %s bytes%s",
@@ -354,7 +345,7 @@ class RadvorRS(BaseProductUpdateCoordinator):
                 self._parse_archive, response.content, ts
             )
         members = await async_read_tar_members(
-            self.async_client, self._get_url(ts), prefix, RS_HOURLY_LEADS
+            self.hass, self.async_client, self._get_url(ts), prefix, RS_HOURLY_LEADS
         )
         return await self.hass.async_add_executor_job(self._parse, members, ts)
 
@@ -657,7 +648,7 @@ class RadvorRV(BaseProductUpdateCoordinator):
         """Return the analysis (lead 0) of release ``step_end``; None for nodata."""
         prefix = f"composite_rv_{step_end.strftime('%Y%m%d_%H%M')}"
         members = await async_read_tar_members(
-            self.async_client, self._get_url(step_end), prefix, [0]
+            self.hass, self.async_client, self._get_url(step_end), prefix, [0]
         )
         return await self.hass.async_add_executor_job(
             self._parse_analysis, members, prefix, step_end

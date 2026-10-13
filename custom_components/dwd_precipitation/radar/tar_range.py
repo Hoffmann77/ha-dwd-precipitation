@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import io
 import logging
+import os
 import re
 import tarfile
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -56,6 +57,13 @@ MAX_REQUESTS = 10
 # A member larger than this is not a radar grid.
 MAX_MEMBER_BYTES = 64 * 1024 * 1024
 
+# Window sizes in strides (the average bytes per member seen so far): the next
+# member is read with this much room for being larger than average, ...
+NEXT_MEMBER_STRIDES = 1.5
+# ... and an interpolated or extrapolated header is searched this far either
+# side of its estimate (doubled after each window that finds nothing).
+ESTIMATE_MARGIN_STRIDES = 0.5
+
 _CONTENT_RANGE = re.compile(r"bytes (\d+)-(\d+)/(\d+)")
 
 
@@ -68,6 +76,9 @@ class RangeResponse(Protocol):
 
 
 Fetch = Callable[[str, Mapping[str, str]], Awaitable[RangeResponse]]
+
+# Turns a whole archive into the wanted members; the default runs in place.
+Extract = Callable[[bytes, Sequence[str]], Awaitable[dict[str, bytes]]]
 
 
 class _Fallback(Exception):
@@ -119,19 +130,17 @@ class _Remote:
         for seg_start, seg in self.segments:
             seg_end = seg_start + len(seg)
             if seg_start <= start < seg_end:
-                _, rest = await self.read(seg_end, end)
-                return seg[start - seg_start:] + rest
-        _, data = await self.read(start, end)
-        return data
+                return seg[start - seg_start:] + await self.read(seg_end, end)
+        return await self.read(start, end)
 
-    async def read(self, start: int, end: int) -> tuple[int, bytes]:
-        """Fetch bytes [start, end) (clamped to the file); return (start, data)."""
+    async def read(self, start: int, end: int) -> bytes:
+        """Fetch bytes [start, end), clamped to the file."""
         if self.total is not None:
             end = min(end, self.total)
         if start >= end:
             raise _Fallback(f"empty range {start}-{end}")
         if (data := self.cached(start, end)) is not None:
-            return start, data
+            return data
         if self.requests >= MAX_REQUESTS:
             raise _Fallback("request budget spent")
 
@@ -171,7 +180,7 @@ class _Remote:
         if self.etag is None:
             self.etag = response.headers.get("ETag")
         self.segments.append((start, response.content))
-        return start, response.content
+        return response.content
 
 
 def _padded(size: int) -> int:
@@ -245,26 +254,29 @@ async def _locate(
             # this member, the archive is not laid out the way we expect.
             if remote.cached(after_lower, after_lower + BLOCK) is not None:
                 raise _Fallback(f"no header for member {pos} after member {lower}")
-            start, end = after_lower, after_lower + BLOCK + int(stride * 1.5)
+            start = after_lower
+            end = after_lower + BLOCK + int(stride * NEXT_MEMBER_STRIDES)
         elif upper is not None:
             span = known[upper][0] - after_lower
             estimate = after_lower + span * (pos - lower - 1) / (upper - lower - 1)
-            margin = stride * 0.5 * widen + BLOCK
+            margin = stride * ESTIMATE_MARGIN_STRIDES * widen + BLOCK
             start, end = estimate - margin, estimate + margin + stride
         elif pos == count - 1 and remote.total is not None:
             # The last member ends just before the trailer.
-            start = remote.total - TRAILER_MAX - stride * 1.5 * widen - BLOCK
+            start = (
+                remote.total - TRAILER_MAX - stride * NEXT_MEMBER_STRIDES * widen - BLOCK
+            )
             end = remote.total
         else:
             estimate = after_lower + stride * (pos - lower - 1)
-            margin = stride * 0.5 * widen + BLOCK
+            margin = stride * ESTIMATE_MARGIN_STRIDES * widen + BLOCK
             start, end = estimate - margin, estimate + margin + stride
 
         start = max(int(start) // BLOCK * BLOCK, after_lower)
         if upper is not None:
             end = min(end, known[upper][0])
-        seg_start, data = await remote.read(start, int(end))
-        if not _scan(seg_start, data, prefix, positions, known):
+        data = await remote.read(start, int(end))
+        if not _scan(start, data, prefix, positions, known):
             # The window fell inside one member's data: look wider next time.
             widen *= 2
 
@@ -272,8 +284,11 @@ async def _locate(
         raise _Fallback(f"member {pos} not found")
 
 
-def _members_from_archive(content: bytes, wanted: Sequence[str]) -> dict[str, bytes]:
-    """Extract the wanted members from a whole archive; missing ones are left out."""
+def members_from_archive(content: bytes, wanted: Sequence[str]) -> dict[str, bytes]:
+    """Extract the wanted members from a whole archive; missing ones are left out.
+
+    Blocking: walks the archive with ``tarfile``.
+    """
     out: dict[str, bytes] = {}
     with tarfile.open(fileobj=io.BytesIO(content), mode="r") as tf:
         for name in wanted:
@@ -291,22 +306,22 @@ async def fetch_tar_members(
     url: str,
     names: Sequence[str],
     wanted: Sequence[str],
-    whole_fetch: Callable[[], Awaitable[bytes]],
+    extract: Extract | None = None,
 ) -> TarRead:
     """Return the ``wanted`` members of the archive at ``url``.
 
     ``names`` is every member in archive order (the layout DWD uses); a member
-    missing from the archive is simply absent from the result. ``whole_fetch``
-    downloads the entire archive and is used whenever range reading cannot
-    proceed.
+    missing from the archive is simply absent from the result. Whenever range
+    reading cannot proceed, the whole archive is fetched (without a Range
+    header) and ``extract`` takes the members from it; pass one that runs
+    :func:`members_from_archive` in an executor to keep it off an event loop.
     """
     positions = {name: i for i, name in enumerate(names)}
-    prefix = names[0].encode()[: _common_prefix_length(names)]
+    prefix = os.path.commonprefix(list(names)).encode()
     remote = _Remote(fetch, url)
     try:
         known: dict[int, tuple[int, int]] = {}
-        seg_start, data = await remote.read(0, HEAD_BYTES)
-        _scan(seg_start, data, prefix, positions, known)
+        _scan(0, await remote.read(0, HEAD_BYTES), prefix, positions, known)
         if known.get(0, (None,))[0] != 0:
             raise _Fallback(f"{names[0]} is not the first member")
 
@@ -327,27 +342,16 @@ async def fetch_tar_members(
         content = whole.content
     except _Fallback as why:
         _LOGGER.debug("Range read of %s fell back to the whole file: %s", url, why)
-        content = await whole_fetch()
+        content = (await fetch(url, {})).content
         remote.requests += 1
         remote.bytes_read += len(content)
 
-    return TarRead(
-        _members_from_archive(content, wanted),
-        remote.requests,
-        remote.bytes_read,
-        whole=True,
+    members = (
+        await extract(content, wanted)
+        if extract is not None
+        else members_from_archive(content, wanted)
     )
-
-
-def _common_prefix_length(names: Sequence[str]) -> int:
-    """Return the length of the name prefix every member shares."""
-    first = names[0]
-    length = len(first)
-    for name in names[1:]:
-        length = min(length, len(name))
-        while name[:length] != first[:length]:
-            length -= 1
-    return length
+    return TarRead(members, remote.requests, remote.bytes_read, whole=True)
 
 
 def member_names(prefix: str, leads: Sequence[int]) -> list[str]:
@@ -355,4 +359,4 @@ def member_names(prefix: str, leads: Sequence[int]) -> list[str]:
     return [f"{prefix}_{lead:03d}-hd5" for lead in leads]
 
 
-__all__ = ["TarRead", "fetch_tar_members", "member_names"]
+__all__ = ["TarRead", "fetch_tar_members", "member_names", "members_from_archive"]
