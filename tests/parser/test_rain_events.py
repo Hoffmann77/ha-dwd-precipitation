@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from rain_events import (
+from radar.rain_events import (
     MAX_UNKNOWN_BRIDGE,
     RainEventsState,
     STEP,
@@ -497,7 +497,7 @@ def test_nodata_steps_are_not_refetched():
 
 
 def test_overall_status_prefers_ongoing_and_ignores_unseen():
-    from rain_events import NO_EVENT, overall_status
+    from radar.rain_events import NO_EVENT, overall_status
 
     def view(*statuses):
         return {"events": [{"status": s} for s in statuses]}

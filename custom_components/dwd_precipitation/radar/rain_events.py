@@ -17,8 +17,8 @@ The state keeps every measured step from the start of the oldest ongoing event
 own steps on every release rather than accumulated: a step filled late is
 simply there next time, and nothing can be counted twice.
 
-Pure and HA-free like dry_streak.py / precipitation_total.py: the coordinator
-owns fetching, filling and persistence.
+Pure and HA-free, like everything in radar/: the coordinator owns fetching,
+filling and persistence.
 """
 
 from __future__ import annotations
@@ -27,14 +27,15 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
+from .isotime import iso, parse_utc
+from .nowcast import LEAD_STEP, LEADS, MM_DECIMALS, STEPS_PER_HOUR
+
 SCHEMA = 1
 
-STEP = timedelta(minutes=5)
-STEPS_PER_HOUR = 12
+STEP = timedelta(minutes=LEAD_STEP)
 WINDOW_STEPS = STEPS_PER_HOUR  # measured steps published: the hour ending at T
-FORECAST_STEPS = 24  # leads 5..120
+FORECAST_STEPS = len(LEADS) - 1  # leads 5..120
 PAIR_STEPS = 2
-MM_DECIMALS = 3
 
 # An upcoming event continues as the run whose window overlaps its own,
 # widened by this much on either side.
@@ -83,12 +84,20 @@ def is_wet(value: float | None, milli: int) -> bool:
     return value is not None and round(value * 1000) > milli
 
 
-def _iso(dt: datetime | None) -> str | None:
-    return dt.isoformat() if dt is not None else None
+_iso = iso
 
 
 def _parse(raw: str | None) -> datetime | None:
-    return datetime.fromisoformat(raw) if raw else None
+    """Parse a stored timestamp (UTC); raise on one that cannot be read.
+
+    Raising, unlike parse_utc, is what makes an unreadable store be discarded
+    as a whole rather than half restored.
+    """
+    if not raw:
+        return None
+    if (ts := parse_utc(raw)) is None:
+        raise ValueError(f"unreadable timestamp {raw!r}")
+    return ts
 
 
 def _mm(value: float) -> float:

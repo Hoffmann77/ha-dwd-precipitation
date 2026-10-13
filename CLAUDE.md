@@ -26,24 +26,28 @@ precipitation_total.py
                       (with its pending backfill), the reading filter, and the
                       missed-release walk used by the PrecipitationTotalSensor
                       in sensor.py.
-rain_events.py        Pure rain-event tracker behind the Rain events sensor
-                      (see "Rain events"). HA-free,
-                      no relative imports: the parser tier tests it.
 config_flow.py        UI config flow: collects name + lat/lon; options form
                       with a collapsed Advanced section, stored flat.
 const.py              DWD OpenData base URLs and HA constants.
 utils.py              async_get() HTTP helper (headers, status, separate 206
-                      cap, stall timeout); iso()/parse_utc() for restore
-                      payloads. HA-free.
+                      cap, stall timeout); FailureLatch. HA-free.
 release_grid.py       ReleaseGrid: a product's release times on its own
                       clock (see "Release timing"). HA-free, no relative
                       imports: scripts/check_release_delay.py uses it too.
-radar/                Embedded parsers (no heavy external deps).
+radar/                The HA-free core: parsers and pure domain logic (no
+                      heavy external deps). Its modules import each other
+                      relatively, which works both inside HA and in the
+                      parser tier (which imports it as `radar`).
   odim.py             ODIM_H5 (HDF5) reader for every product (RS, RV,
                       HymecNG, RW/SF in their HDF5 edition) and the DE1200
                       grid lookup.
   tar_range.py        Reads selected members of a remote tar by HTTP range
-                      requests (see "Range reads"). HA-free.
+                      requests (see "Range reads").
+  nowcast.py          RV lead grid and the nowcast logic: start/end
+                      detection, peak intensities, rolling-hour sums.
+  rain_events.py      Rain-event tracker behind the Rain events sensor
+                      (see "Rain events").
+  isotime.py          iso()/parse_utc() for attributes and stored payloads.
 ```
 
 ## Data flow
@@ -577,7 +581,7 @@ of the bytes (archives are 3.5-17.5 MB), an RV analysis 1-2 requests and 4-7 %.
 The `Rain events` sensor (`sensor.<device>_rain_events`, key
 `radvor_rv_rain_events`) publishes the tracker's view (schema 1) as its
 attributes, a contract with blueprints: field names and semantics in the
-README section "Rain events". `rain_events.py` holds the logic; `RadvorRV` the
+README section "Rain events". `radar/rain_events.py` holds the logic; `RadvorRV` the
 glue; `RainEventsSensor` in sensor.py the entity.
 
 - **Opt-in.** The `rain_events` option (Advanced, default off) gates all of it:

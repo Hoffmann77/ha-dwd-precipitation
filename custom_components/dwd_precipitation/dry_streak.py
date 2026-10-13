@@ -13,7 +13,7 @@ from typing import Any
 
 from homeassistant.helpers.restore_state import ExtraStoredData
 
-from .utils import iso, parse_utc
+from .radar.isotime import iso, parse_utc
 
 
 @dataclass

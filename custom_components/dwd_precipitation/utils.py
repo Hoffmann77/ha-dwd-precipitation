@@ -5,8 +5,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
-from typing import Any
 from urllib.parse import urlsplit
 
 import aiohttp
@@ -32,26 +30,6 @@ _READ_CHUNK = 64 * 1024
 # can legitimately take longer than any cap short enough to help. So bound
 # the connect and the silence between reads, and nothing else.
 REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=None, sock_connect=15, sock_read=30)
-
-
-def iso(dt: datetime | None) -> str | None:
-    """Serialize a timestamp for a state attribute or a restore payload."""
-    return dt.isoformat() if dt is not None else None
-
-
-def parse_utc(raw: Any) -> datetime | None:
-    """Parse a stored ISO timestamp as an aware datetime; naive counts as UTC.
-
-    Anything that is not a readable timestamp is None, so a damaged restore
-    payload loses that one field rather than the whole entity.
-    """
-    if not isinstance(raw, str):
-        return None
-    try:
-        ts = datetime.fromisoformat(raw)
-    except ValueError:
-        return None
-    return ts if ts.tzinfo is not None else ts.replace(tzinfo=UTC)
 
 
 class FailureLatch:
