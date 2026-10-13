@@ -536,7 +536,11 @@ hour; `RadolanRW10` (`rw_10min`) is the same file family on a 10-minute grid
   for anything new.
 - **`rw_10min` is built only when used** (`is_needed(options)`, checked in
   `async_setup_entry`): when the dry streak counts RW. Otherwise the entry
-  makes no extra requests. No sensor shows the sliding RW hour: as a "last 60
+  makes no extra requests. When built, its :00 run is the file `rw` fetches
+  too; both go through the entry's `DownloadCache` (`SHARES_FILES` on the
+  RADOLAN products, which also covers `sf`/`sf_2350`), which downloads a URL
+  once and keeps it for `SHARED_DOWNLOAD_TTL` (5 min). Failures are not kept,
+  and the multi-MB RADVOR tars never go through it. No sensor shows the sliding RW hour: as a "last 60
   min" it would be 28-38 min behind, where RS is 4-9 min, and gauge accuracy is
   what `Precipitation previous hour` is for. A pre-release had a
   `rw_last_hour_mode` option for it; it never shipped, and a stored value is

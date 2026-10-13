@@ -706,3 +706,22 @@ async def test_rain_events_off_runs_no_tracker_and_leaves_nothing(
     assert entry.runtime_data.coordinators["rv"]._rain_tracker is None
     assert er.async_get(hass).async_get_entity_id("sensor", DOMAIN, unique_id) is None
     assert key not in hass_storage
+
+
+@pytest.mark.asyncio
+async def test_the_entrys_products_share_one_download_cache(hass: HomeAssistant) -> None:
+    """rw/rw_10min and sf/sf_2350 can only share downloads through one cache."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"name": "Home", "latitude": 51.05, "longitude": 13.73},
+        options={CONF_DRY_STREAK_SOURCE: "rw"},
+    )
+    entry.add_to_hass(hass)
+    with _patched_products():
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    coordinators = entry.runtime_data.coordinators
+    assert "rw_10min" in coordinators
+    caches = {id(c.download_cache) for c in coordinators.values()}
+    assert len(caches) == 1 and None not in {c.download_cache for c in coordinators.values()}

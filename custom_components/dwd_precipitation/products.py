@@ -6,7 +6,7 @@ import logging
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
 from functools import cached_property
-from typing import Any
+from typing import Any, ClassVar
 from io import BytesIO
 
 import numpy as np
@@ -18,7 +18,7 @@ from .coordinator import (
 )
 from .radar.isotime import iso
 from .radar.urls import product_url, radvor_prefix
-from .utils import FailureLatch, async_get
+from .utils import DownloadCache, FailureLatch, async_get
 from .radar.tar_range import fetch_tar_members, member_names, members_from_archive
 from .radar import (
     read_odim_composite_cell,
@@ -228,6 +228,11 @@ class WholeFileProduct(BaseProductUpdateCoordinator, ABC):
     event loop, decode it with ``_parse(content, ts)`` in the executor.
     """
 
+    # Whether another product of the entry reads the same files, so they go
+    # through the entry's download_cache (set up by async_setup_entry).
+    SHARES_FILES: ClassVar[bool] = False
+    download_cache: DownloadCache | None = None
+
     def _get_url(self, ts: datetime) -> str:
         """Return the URL of release ``ts`` (see radar/urls.py)."""
         return product_url(self.PRODUCT_KEY, ts)
@@ -238,7 +243,13 @@ class WholeFileProduct(BaseProductUpdateCoordinator, ABC):
 
     async def _fetch_and_parse(self, ts: datetime) -> tuple[Any, Any]:
         """Fetch the release's file and decode it off the event loop."""
-        response = await async_get(self._get_url(ts), self.async_client)
+        url = self._get_url(ts)
+        if self.SHARES_FILES and self.download_cache is not None:
+            response = await self.download_cache.async_get(
+                url, lambda: async_get(url, self.async_client)
+            )
+        else:
+            response = await async_get(url, self.async_client)
         return await self.hass.async_add_executor_job(
             self._parse, response.content, ts
         )
@@ -697,6 +708,9 @@ class RadolanProduct(WholeFileProduct, ABC):
     URL follows from the key (radar/urls.py).
     precipitation -> float, metadata -> ProductMetadata
     """
+
+    # rw/rw_10min and sf/sf_2350 read the same files (small, ~30 KB).
+    SHARES_FILES = True
 
     def _parse(
         self, content: bytes, ts: datetime

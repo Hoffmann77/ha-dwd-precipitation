@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+import time
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
+from functools import partial
 from urllib.parse import urlsplit
 
 import aiohttp
@@ -30,6 +32,51 @@ _READ_CHUNK = 64 * 1024
 # can legitimately take longer than any cap short enough to help. So bound
 # the connect and the silence between reads, and nothing else.
 REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=None, sock_connect=15, sock_read=30)
+
+
+class DownloadCache:
+    """Download a URL once for every product of a config entry that asks.
+
+    Some products read the same files on different release grids: RW's :00
+    run is also one of RW's 10-minute runs, and sf_2350's file is one of SF's.
+    Their coordinators fetch it within their fetch jitter of each other. A
+    URL being downloaded is awaited rather than fetched again, and a finished
+    download is kept for ``ttl`` seconds. Failures are not kept: the next ask
+    downloads again.
+
+    Each waiter awaits the download through a shield, so one caller being
+    cancelled (an unloading entry) does not abort it for the others.
+    """
+
+    def __init__(
+        self, ttl: float, clock: Callable[[], float] = time.monotonic
+    ) -> None:
+        """Keep finished downloads for ``ttl`` seconds of ``clock``."""
+        self._ttl = ttl
+        self._clock = clock
+        self._done: dict[str, tuple[float, AsyncResponse]] = {}
+        self._pending: dict[str, asyncio.Task[AsyncResponse]] = {}
+
+    async def async_get(
+        self, url: str, fetch: Callable[[], Awaitable[AsyncResponse]]
+    ) -> AsyncResponse:
+        """Return ``url``'s response, downloading it with ``fetch`` only if needed."""
+        now = self._clock()
+        self._done = {u: hit for u, hit in self._done.items() if hit[0] > now}
+        if (hit := self._done.get(url)) is not None:
+            return hit[1]
+        task = self._pending.get(url)
+        if task is None:
+            task = asyncio.get_running_loop().create_task(fetch())
+            self._pending[url] = task
+            task.add_done_callback(partial(self._finished, url))
+        return await asyncio.shield(task)
+
+    def _finished(self, url: str, task: asyncio.Task[AsyncResponse]) -> None:
+        """Keep a successful download; forget a failed or cancelled one."""
+        self._pending.pop(url, None)
+        if not task.cancelled() and task.exception() is None:
+            self._done[url] = (self._clock() + self._ttl, task.result())
 
 
 class FailureLatch:

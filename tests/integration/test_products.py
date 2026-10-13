@@ -1102,3 +1102,32 @@ def test_every_product_class_has_a_url() -> None:
     from custom_components.dwd_precipitation.radar.urls import PRODUCT_URLS
 
     assert {cls.PRODUCT_KEY for cls in PRODUCT_CLASSES} == set(PRODUCT_URLS)
+
+
+@pytest.mark.asyncio
+async def test_products_reading_the_same_file_download_it_once() -> None:
+    """RW's :00 run is one of RW-10min's; one download serves both."""
+    from custom_components.dwd_precipitation.utils import DownloadCache
+
+    ts = datetime(2026, 10, 12, 12, 0, tzinfo=timezone.utc)
+    content = (Path(__file__).parents[1] / "fixtures" / "radolan_rw_sample.hdf5").read_bytes()
+    downloads: list[str] = []
+
+    async def fake_get(url, _client, **_kw):
+        downloads.append(url)
+        await asyncio.sleep(0)
+        return AsyncResponse(content=content)
+
+    cache = DownloadCache(ttl=300)
+    rw, rw10, rs = _coord(RadolanRW), _coord(products.RadolanRW10), _coord(RadvorRS)
+    for coord in (rw, rw10, rs):
+        coord.download_cache = cache
+    with patch.object(products, "async_get", side_effect=fake_get):
+        hourly, sliding = await asyncio.gather(
+            rw._fetch_and_parse(ts), rw10._fetch_and_parse(ts)
+        )
+        await rw10._fetch_and_parse(ts)  # later: still within the TTL
+    assert downloads == [rw._get_url(ts)]
+    assert hourly[0] == sliding[0]
+    # RADVOR archives are not shared, so they never sit in the cache.
+    assert not RadvorRS.SHARES_FILES and not RadvorRV.SHARES_FILES

@@ -317,8 +317,7 @@ The base the next three PRs stand on. *(TD 1, 3, 6, 10, 18; S-altitude 2, 6, 9, 
 - Release-delay probe covers RV (live: 3m58s observed vs 4m10s); `sf_2350`
   pinned to SF's delay instead (same files); drift guard over all classes.
 - Live test of RS's range read (no fallback, <= 6 requests; passes today).
-- *Open:* D2 (duplicate fetches rw/rw_10min, sf/sf_2350) - waiting on the
-  decision whether `rw_10min` should stay. *Moved to step 9:* a shared
+- D2 done afterwards: `DownloadCache` (entry-scoped, 5 min, RADOLAN only). *Moved to step 9:* a shared
   `tests/live_common.py` for the duplicated candidate walks.
 
 ## PR 9 — Tests
@@ -353,7 +352,7 @@ The base the next three PRs stand on. *(TD 1, 3, 6, 10, 18; S-altitude 2, 6, 9, 
 | # | Question | Recommendation |
 |---|---|---|
 | D1 | Derive RS `next_60` / `next_60_120` / `next_120` from RV's rolling sums and range-read only RS `_000`? Saves ~0.5-2.6 MB and 2 inflates per release, but RS forecast entities would then depend on RV's availability and timing. *(S-efficiency 1)* | **Not now.** Revisit after PR 7; the coupling cost is real and RS/RV are separate products on purpose. |
-| D2 | How to dedupe the files fetched by two coordinators | Entry-scoped in-flight + short-TTL cache around `async_get` (also benefits backfill), not a "subsampled coordinator". |
+| D2 | How to dedupe the files fetched by two coordinators | **Decided: keep `rw_10min`, add the short-lived cache** (done, RADOLAN products only). |
 | D3 | `ReleaseGrid` in a new HA-free module vs keeping the arithmetic on the coordinator | **Decided: new module**; the `ast` reading of class constants stays as is. |
 | D4 | Move `rain_events.py` into `radar/` | Yes — it is already HA-free and tested by the parser tier. |
 | D5 | Binary sensor: should `forecast_5min` follow the extra-attributes option? | Yes, but it is a visible change → call it out in release notes. |
