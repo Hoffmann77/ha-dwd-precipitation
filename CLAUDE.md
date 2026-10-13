@@ -28,6 +28,10 @@ precipitation_total.py
                       in sensor.py.
 config_flow.py        UI config flow: collects name + lat/lon; options form
                       with a collapsed Advanced section, stored flat.
+options.py            DwdOptions: the entry's options as one typed snapshot,
+                      with every option's default in DEFAULT_OPTIONS. Read as
+                      coordinator.options / entry.runtime_data.options; never
+                      entry.options.get() elsewhere.
 const.py              DWD OpenData base URLs and HA constants.
 utils.py              async_get() HTTP helper (headers, status, separate 206
                       cap, stall timeout); FailureLatch. HA-free.
@@ -666,8 +670,11 @@ The options form nests rarely needed options in a collapsed `advanced_options`
 section (`data_entry_flow.section`): `rain_events`, `rain_event_threshold`,
 `precipitation_end_algorithm`, `full_rolling_series`, `unavailable_when_stale`.
 Only the *form* is nested: `async_step_init` flattens the section before
-saving, so every key stays where `entry.options.get(...)` looks for it and no
-migration is needed. Translations live under
+saving, so every key stays flat in `entry.options` and no migration is
+needed. A new option gets its key and default in `DEFAULT_OPTIONS` and a field
+on `DwdOptions` (a test checks they match); the form and every consumer take
+the default from there. `DwdOptions` is a snapshot, which is enough because
+saving the options reloads the entry. Translations live under
 `options.step.init.sections.advanced_options`. HA 2026.10 installs `probatio`
 as `voluptuous` at import time, which is why `vol.Schema` inside `section`
 serializes; a script importing `voluptuous` before `homeassistant` sees the

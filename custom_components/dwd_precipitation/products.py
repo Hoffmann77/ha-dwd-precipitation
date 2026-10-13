@@ -18,6 +18,7 @@ from .coordinator import (
 )
 from .radar.isotime import iso
 from .radar.urls import product_url, radvor_prefix
+from .options import DwdOptions
 from .utils import DownloadCache, FailureLatch, async_get
 from .radar.tar_range import fetch_tar_members, member_names, members_from_archive
 from .radar import (
@@ -40,20 +41,8 @@ from .radar.nowcast import (
 )
 from .rain_events_tracker import RainEventsTracker
 from .const import (
-    CONF_DRY_STREAK_SOURCE,
-    DEFAULT_DRY_STREAK_SOURCE,
-    DRY_STREAK_SOURCE_RW,
-    DRY_STREAK_SOURCES,
-    RW_SLIDING_KEY,
-    CONF_RAIN_EVENTS,
-    DEFAULT_RAIN_EVENTS,
-    CONF_FULL_ROLLING_SERIES,
-    DEFAULT_FULL_ROLLING_SERIES,
-    CONF_PRECIPITATION_THRESHOLD,
-    DEFAULT_PRECIPITATION_THRESHOLD,
-    CONF_PRECIPITATION_END_ALGORITHM,
-    DEFAULT_PRECIPITATION_END_ALGORITHM,
     PRECIP_TYPE_BY_INDEX,
+    RW_SLIDING_KEY,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -87,25 +76,6 @@ RS_HOURLY_LEADS = (0, 60, 120)
 # A 206 answer is one window of a RADVOR tar, at most a few members of under
 # 1 MB each; anything near this cap is not what was asked for.
 RANGE_MAX_BYTES = 8 * 1024 * 1024
-
-def dry_streak_coordinator_key(options) -> str:
-    """Return the key of the coordinator the dry streak counts.
-
-    The option's values are product keys, except that RW counts its 10-minute
-    runs. An unknown stored value counts as the default. RadolanRW10.is_needed
-    and the sensor setup both ask this, so the coordinator the sensor binds to
-    is always one that was built.
-    """
-    source = options.get(CONF_DRY_STREAK_SOURCE, DEFAULT_DRY_STREAK_SOURCE)
-    if source not in DRY_STREAK_SOURCES:
-        source = DEFAULT_DRY_STREAK_SOURCE
-    return RW_SLIDING_KEY if source == DRY_STREAK_SOURCE_RW else source
-
-
-def rain_events_enabled(options) -> bool:
-    """Whether the entry tracks rain events (the "Rain events" sensor)."""
-    return bool(options.get(CONF_RAIN_EVENTS, DEFAULT_RAIN_EVENTS))
-
 
 def _tar_members(content: bytes, prefix: str, leads) -> dict[str, bytes]:
     """Return the requested members of a whole RADVOR tar, by name (blocking)."""
@@ -359,9 +329,7 @@ class RadvorRS(RadvorProduct):
     @property
     def full_rolling_series(self) -> bool:
         """Whether this entry decodes every member for the rolling-hour series."""
-        return self.config_entry.options.get(
-            CONF_FULL_ROLLING_SERIES, DEFAULT_FULL_ROLLING_SERIES
-        )
+        return self.options.full_rolling_series
 
     async def _fetch_and_parse(self, ts: datetime) -> tuple[list, list]:
         """Fetch the members this entry decodes, then decode them off the loop.
@@ -460,9 +428,13 @@ class RadvorRV(RadvorProduct):
     def __init__(self, hass, entry, async_client, lat, lon) -> None:
         """Initialize the coordinator and, if the entry tracks them, rain events."""
         super().__init__(hass, entry, async_client, lat, lon)
-        if rain_events_enabled(entry.options):
+        if self.options.rain_events:
             self._rain_tracker = RainEventsTracker(
-                hass, entry, self._async_fetch_analysis, self._publish_rain_view
+                hass,
+                entry,
+                self.options.rain_event_threshold,
+                self._async_fetch_analysis,
+                self._publish_rain_view,
             )
 
     async def _async_on_new_release(
@@ -528,13 +500,8 @@ class RadvorRV(RadvorProduct):
 
         # The user configures the threshold as an intensity (mm/h); the
         # detection works on 5-minute accumulations, so convert back to mm/5min.
-        threshold_mmh = self.config_entry.options.get(
-            CONF_PRECIPITATION_THRESHOLD, DEFAULT_PRECIPITATION_THRESHOLD
-        )
-        threshold = threshold_mmh / STEPS_PER_HOUR
-        end_algorithm = self.config_entry.options.get(
-            CONF_PRECIPITATION_END_ALGORITHM, DEFAULT_PRECIPITATION_END_ALGORITHM
-        )
+        threshold = self.options.precipitation_threshold / STEPS_PER_HOUR
+        end_algorithm = self.options.precipitation_end_algorithm
         start_in, end_in = detect_start_end(values, threshold, end_algorithm)
 
         def _at(minutes: int | None) -> datetime | None:
@@ -778,9 +745,9 @@ class RadolanRW10(RadolanRW):
     OVERDUE_GRACE = DEFAULT_OVERDUE_GRACE
 
     @classmethod
-    def is_needed(cls, options) -> bool:
+    def is_needed(cls, options: DwdOptions) -> bool:
         """Whether the dry streak counts RW, the only user of the sliding hour."""
-        return dry_streak_coordinator_key(options) == cls.PRODUCT_KEY
+        return options.dry_streak_coordinator_key == cls.PRODUCT_KEY
 
 class RadolanSF(RadolanProduct):
     """DWD RADOLAN SF: 24-hour precipitation analysis."""

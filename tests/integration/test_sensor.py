@@ -20,6 +20,7 @@ from custom_components.dwd_precipitation.const import (
     START_END_MODE_DURATION,
     START_END_MODE_TIMESTAMP,
 )
+from custom_components.dwd_precipitation.options import DwdOptions
 from custom_components.dwd_precipitation.coordinator import (
     CoordinatorData,
     ProductMetadata,
@@ -56,6 +57,7 @@ def _make_sensor_with_desc(
     sensor.entity_description = desc
     sensor.coordinator = SimpleNamespace(
         config_entry=SimpleNamespace(options={CONF_EXTRA_ATTRIBUTES: extra}),
+        options=DwdOptions.from_options({CONF_EXTRA_ATTRIBUTES: extra}),
         data=CoordinatorData(data=data, metadata=metadata or {}),
     )
     return sensor
@@ -138,6 +140,7 @@ def _days_sensor_on(
     sensor.coordinator = SimpleNamespace(
         PRODUCT_KEY=product_key,
         config_entry=SimpleNamespace(options={CONF_PRECIPITATION_RESET_THRESHOLD: threshold}),
+        options=DwdOptions.from_options({CONF_PRECIPITATION_RESET_THRESHOLD: threshold}),
         data=data,
     )
     return sensor

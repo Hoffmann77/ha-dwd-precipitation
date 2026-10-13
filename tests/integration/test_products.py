@@ -415,8 +415,9 @@ async def test_rv_end_algorithm_option_selects_clearing() -> None:
     assert episode["start_in"] == 5
     assert episode["end_in"] == 10
 
-    # Clearing: waits out the lull to the boundary after the lead-60 wave.
-    coord.config_entry = SimpleNamespace(options={"precipitation_end_algorithm": "clearing"})
+    # Clearing: waits out the lull to the boundary after the lead-60 wave. A
+    # new coordinator, as an options change reloads the entry.
+    coord = _coord(RadvorRV, {"precipitation_end_algorithm": "clearing"})
     clearing_reads = _make_reads()
     with (
         patch.object(
@@ -793,6 +794,7 @@ def _rv_tracked(store=None, options=None):
     coord._rain_tracker = RainEventsTracker(
         coord.hass,
         coord.config_entry,
+        coord.options.rain_event_threshold,
         coord._async_fetch_analysis,
         coord._publish_rain_view,
         store=store if store is not None else _FakeStore(),

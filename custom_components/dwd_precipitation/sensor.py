@@ -27,18 +27,7 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.util import dt as dt_util
 
 from .const import (
-    CONF_EXTRA_ATTRIBUTES,
-    DEFAULT_EXTRA_ATTRIBUTES,
-    CONF_FULL_ROLLING_SERIES,
-    DEFAULT_FULL_ROLLING_SERIES,
-    CONF_PRECIPITATION_RESET_THRESHOLD,
-    DEFAULT_PRECIPITATION_RESET_THRESHOLD,
-    CONF_DRY_STREAK_SOURCE,
-    DEFAULT_DRY_STREAK_SOURCE,
     DRY_STREAK_SOURCE_RS,
-    DRY_STREAK_SOURCES,
-    CONF_START_END_MODE,
-    DEFAULT_START_END_MODE,
     START_END_MODE_DURATION,
     PRECIP_TYPE_OPTIONS,
     DOMAIN,
@@ -51,7 +40,6 @@ from .dry_streak import (
     scalar_reading,
 )
 from .entity import DwdCoordinatorEntity, unique_id_for
-from .products import dry_streak_coordinator_key, rain_events_enabled
 from .radar.isotime import iso
 from .radar.rain_events import NO_EVENT, ONGOING, UPCOMING, VIEW_KEYS, overall_status
 from .precipitation_total import (
@@ -360,17 +348,13 @@ async def async_setup_entry(
 ) -> None:
     """Set up the sensor platform."""
     coordinators = entry.runtime_data.coordinators
-
-    mode = entry.options.get(CONF_START_END_MODE, DEFAULT_START_END_MODE)
-    full_rolling_series = entry.options.get(
-        CONF_FULL_ROLLING_SERIES, DEFAULT_FULL_ROLLING_SERIES
-    )
+    options = entry.runtime_data.options
 
     entity_descriptions = (
         RADVOR_SENSORS
-        + (_peak_hour_sensor(full_rolling_series),)
+        + (_peak_hour_sensor(options.full_rolling_series),)
         + RADVOR_RV_SENSORS
-        + _rv_timing_sensors(mode)
+        + _rv_timing_sensors(options.start_end_mode)
         + HYMECNG_SENSORS
         + RADOLAN_SENSORS
     )
@@ -388,7 +372,7 @@ async def async_setup_entry(
     )
     # Rain events are opt-in. With the option off there is no tracker, so the
     # entity goes too, rather than lingering as "no longer provided".
-    if rain_events_enabled(entry.options):
+    if options.rain_events:
         entities.append(RainEventsSensor(coordinators["rv"], RAIN_EVENTS_SENSOR))
     else:
         registry = er.async_get(hass)
@@ -401,20 +385,17 @@ async def async_setup_entry(
     # The unique id does not depend on it, so the entity and its persisted
     # dry_since survive a switch. RW counts its 10-minute runs: as strongly
     # gauge-adjusted as the hourly run, and a reset shows up to an hour sooner.
-    dry_streak_source = entry.options.get(
-        CONF_DRY_STREAK_SOURCE, DEFAULT_DRY_STREAK_SOURCE
-    )
-    if dry_streak_source not in DRY_STREAK_SOURCES:
+    if options.unknown_dry_streak_source is not None:
         _LOGGER.warning(
             "Unknown dry streak source %r in the options of %s; counting %r "
             "instead. Saving the options again fixes it",
-            dry_streak_source,
+            options.unknown_dry_streak_source,
             entry.title,
-            DEFAULT_DRY_STREAK_SOURCE,
+            options.dry_streak_source,
         )
     entities.append(
         TimespanWithoutPrecipitationSensor(
-            coordinators[dry_streak_coordinator_key(entry.options)]
+            coordinators[options.dry_streak_coordinator_key]
         )
     )
 
@@ -478,9 +459,7 @@ class PrecipitationSensorEntity(DwdCoordinatorEntity, SensorEntity):
             )
 
         # Diagnostic metadata is opt-in via the integration options.
-        if not self.coordinator.config_entry.options.get(
-            CONF_EXTRA_ATTRIBUTES, DEFAULT_EXTRA_ATTRIBUTES
-        ):
+        if not self.coordinator.options.extra_attributes:
             return attrs
 
         if metadata is None:
@@ -776,9 +755,7 @@ class TimespanWithoutPrecipitationSensor(
     @property
     def _threshold(self) -> float:
         """Return the configured rain reset threshold in mm."""
-        return self.coordinator.config_entry.options.get(
-            CONF_PRECIPITATION_RESET_THRESHOLD, DEFAULT_PRECIPITATION_RESET_THRESHOLD
-        )
+        return self.coordinator.options.precipitation_reset_threshold
 
     def _reading(self) -> tuple[Any, ProductMetadata | None]:
         """Return the source's past-hour total and its metadata, unconverted.

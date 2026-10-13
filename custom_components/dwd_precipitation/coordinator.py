@@ -7,7 +7,6 @@ import logging
 import random
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from functools import cached_property
@@ -29,7 +28,7 @@ from homeassistant.helpers.event import (
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
-from .const import CONF_UNAVAILABLE_WHEN_STALE, DEFAULT_UNAVAILABLE_WHEN_STALE
+from .options import DwdOptions
 from .radar import get_rs_grid_index
 from .release_grid import ReleaseGrid
 
@@ -219,7 +218,7 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
     USE_LOCAL_TIME: ClassVar[bool] = False
 
     @classmethod
-    def is_needed(cls, options: Mapping[str, Any]) -> bool:
+    def is_needed(cls, options: DwdOptions) -> bool:
         """Whether an entry with these options uses this product at all.
 
         Every product is, except those that exist for one option; skipping
@@ -337,12 +336,15 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
 
         return deadline is None or now > deadline
 
+    @cached_property
+    def options(self) -> DwdOptions:
+        """Return the entry's options (a snapshot: a change reloads the entry)."""
+        return DwdOptions.from_options(self.config_entry.options)
+
     @property
     def unavailable_when_stale(self) -> bool:
         """Return whether a value past its deadline should be hidden."""
-        return self.config_entry.options.get(
-            CONF_UNAVAILABLE_WHEN_STALE, DEFAULT_UNAVAILABLE_WHEN_STALE
-        )
+        return self.options.unavailable_when_stale
 
     def _data_is_reportable(self, now: datetime) -> bool:
         """Return True if what we hold may still be shown to the user.

@@ -20,7 +20,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
-from .const import CONF_RAIN_EVENT_THRESHOLD, DEFAULT_RAIN_EVENT_THRESHOLD, DOMAIN
+from .const import DOMAIN
 from .radar.rain_events import (
     RainEventsState,
     at_stake,
@@ -88,6 +88,7 @@ class RainEventsTracker:
         self,
         hass: HomeAssistant,
         entry: ConfigEntry,
+        threshold_mmh: float,
         fetch_analysis: Callable[[datetime], Awaitable[float | None]],
         publish: Callable[[dict[str, Any]], None],
         store: Store | None = None,
@@ -100,6 +101,9 @@ class RainEventsTracker:
         """
         self._hass = hass
         self._entry = entry
+        # The entry's rain_event_threshold as a wet-step limit; changing it
+        # reloads the entry, and the tracker starts new events for it.
+        self._milli = wet_step_milli(threshold_mmh)
         self._fetch_analysis = fetch_analysis
         self._publish = publish
         self.store = store if store is not None else rain_events_store(hass, entry.entry_id)
@@ -147,11 +151,7 @@ class RainEventsTracker:
         except Exception:
             self._failed()
             return None
-        milli = wet_step_milli(
-            self._entry.options.get(
-                CONF_RAIN_EVENT_THRESHOLD, DEFAULT_RAIN_EVENT_THRESHOLD
-            )
-        )
+        milli = self._milli
         running = self.fill_task is not None and not self.fill_task.done()
         if running or steps_to_fill(state, base):
             self.fill_task = self._entry.async_create_background_task(

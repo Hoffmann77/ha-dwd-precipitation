@@ -13,11 +13,11 @@ from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .coordinator import BaseProductUpdateCoordinator
+from .options import DwdOptions
 from .utils import DownloadCache
 from .const import CONF_DRY_STREAK_SOURCE, LEGACY_DRY_STREAK_SOURCE, PLATFORMS
 from .rain_events_tracker import RainEventsTracker
 from .products import (
-    rain_events_enabled,
     RadvorRS,
     RadvorRV,
     HymecNG,
@@ -52,6 +52,7 @@ class MyData:
     """Runtime data definition."""
 
     coordinators: dict[str, BaseProductUpdateCoordinator]
+    options: DwdOptions
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: MyConfigEntry) -> bool:
@@ -63,10 +64,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: MyConfigEntry) -> bool:
 
     # Products that exist for one option are only built when it is in use, so
     # an entry never fetches what none of its entities show.
+    options = DwdOptions.from_options(entry.options)
     product_coordinators: list[BaseProductUpdateCoordinator] = [
         cls(hass, entry, client, lat, lon)
         for cls in PRODUCT_CLASSES
-        if cls.is_needed(entry.options)
+        if cls.is_needed(options)
     ]
     # Products that read the same files share one download of each.
     downloads = DownloadCache(SHARED_DOWNLOAD_TTL.total_seconds())
@@ -107,12 +109,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: MyConfigEntry) -> bool:
     for coordinator in product_coordinators:
         coordinator.async_track_releases()
 
-    if not rain_events_enabled(entry.options):
+    if not options.rain_events:
         # Turned off: drop what the tracker stored, so turning it on again
         # starts clean rather than from a state days out of date.
         await RainEventsTracker.async_remove(hass, entry.entry_id)
 
-    entry.runtime_data = MyData({c.PRODUCT_KEY: c for c in product_coordinators})
+    entry.runtime_data = MyData(
+        {c.PRODUCT_KEY: c for c in product_coordinators}, options
+    )
     entry.async_on_unload(entry.add_update_listener(update_listener))
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
