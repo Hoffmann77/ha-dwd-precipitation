@@ -25,8 +25,8 @@ from custom_components.dwd_precipitation.const import DOMAIN
 from custom_components.dwd_precipitation.coordinator import CoordinatorData
 from custom_components.dwd_precipitation.precipitation_total import (
     PrecipitationTotalExtraData,
+    counted_on_grid,
     countable,
-    first_uncounted_release,
     missed_releases,
     split_fetchable,
 )
@@ -34,6 +34,7 @@ from custom_components.dwd_precipitation.products import (
     RadolanRW,
     RadolanSFLastYesterday,
 )
+from custom_components.dwd_precipitation.release_grid import ReleaseGrid
 from custom_components.dwd_precipitation.sensor import (
     TOTAL_SENSORS,
     PrecipitationTotalSensor,
@@ -47,26 +48,12 @@ BERLIN = ZoneInfo("Europe/Berlin")
 RW_DESC, SF_DESC = TOTAL_SENSORS
 
 
-class _Grid:
-    """Just enough coordinator to walk a product's release grid."""
-
-    def __init__(self, product: type) -> None:
-        self.USE_LOCAL_TIME = product.USE_LOCAL_TIME
-        self.RELEASE_INTERVAL = product.RELEASE_INTERVAL
-        self.RELEASE_OFFSET = product.RELEASE_OFFSET
-
-    grid = RadolanRW.grid
-    _next_release_after = RadolanRW._next_release_after
-    _release_at_or_before = RadolanRW._release_at_or_before
-
-
-@pytest.fixture
-def berlin_time_zone():
-    """Run with Home Assistant's local time zone set to Germany's."""
-    previous = dt_util.get_default_time_zone()
-    dt_util.set_default_time_zone(BERLIN)
-    yield
-    dt_util.set_default_time_zone(previous)
+RW_GRID = ReleaseGrid(RadolanRW.RELEASE_INTERVAL, RadolanRW.RELEASE_OFFSET)
+SF_2350_GRID = ReleaseGrid(
+    RadolanSFLastYesterday.RELEASE_INTERVAL,
+    RadolanSFLastYesterday.RELEASE_OFFSET,
+    BERLIN,
+)
 
 
 def _make_total_sensor(
@@ -74,7 +61,6 @@ def _make_total_sensor(
 ) -> tuple[PrecipitationTotalSensor, list]:
     """Return a total sensor on a stub RW coordinator, and its started tasks."""
     tasks: list = []
-    grid = _Grid(RadolanRW)
 
     def _create_task(_hass, coro, _name):
         tasks.append(coro)
@@ -91,8 +77,7 @@ def _make_total_sensor(
     sensor.coordinator = SimpleNamespace(
         curr_release=release,
         data=None if release is None else CoordinatorData(data=value, metadata={}),
-        _next_release_after=lambda r: grid._next_release_after(r),
-        _release_at_or_before=lambda m: grid._release_at_or_before(m),
+        grid=RW_GRID,
         _fetch_and_parse=AsyncMock(return_value=(1.0, {})),
         config_entry=SimpleNamespace(async_create_background_task=_create_task),
     )
@@ -144,21 +129,19 @@ def test_split_fetchable_gives_up_beyond_the_backfill_window():
     recent = current - timedelta(hours=1)
 
     keep, drop = split_fetchable(
-        _Grid(RadolanRW), [recent, too_old, oldest_kept, recent], current, 48
+        RW_GRID, [recent, too_old, oldest_kept, recent], current, 48
     )
     assert keep == [oldest_kept, recent]
     assert drop == [too_old]
 
 
-def test_split_fetchable_counts_local_days_across_dst(berlin_time_zone):
+def test_split_fetchable_counts_local_days_across_dst():
     """sf_2350's window is 7 releases even when one of the days has 25 hours."""
     current = dt_util.as_utc(datetime(2026, 10, 27, 23, 50, tzinfo=BERLIN))
     week = dt_util.as_utc(datetime(2026, 10, 20, 23, 50, tzinfo=BERLIN))
     eight_days = dt_util.as_utc(datetime(2026, 10, 19, 23, 50, tzinfo=BERLIN))
 
-    keep, drop = split_fetchable(
-        _Grid(RadolanSFLastYesterday), [week, eight_days], current, 7
-    )
+    keep, drop = split_fetchable(SF_2350_GRID, [week, eight_days], current, 7)
     assert keep == [week]
     assert drop == [eight_days]
 
@@ -167,63 +150,83 @@ def test_missed_releases_hourly():
     last = datetime(2026, 7, 3, 8, 0, tzinfo=UTC)
     current = datetime(2026, 7, 3, 11, 0, tzinfo=UTC)
 
-    assert missed_releases(_Grid(RadolanRW), last, current, limit=48) == [
-        datetime(2026, 7, 3, 9, 0, tzinfo=UTC),
-        datetime(2026, 7, 3, 10, 0, tzinfo=UTC),
-    ]
+    assert missed_releases(RW_GRID, last, current, limit=48) == (
+        [datetime(2026, 7, 3, 9, 0, tzinfo=UTC), datetime(2026, 7, 3, 10, 0, tzinfo=UTC)],
+        None,
+    )
     # Consecutive releases leave nothing to backfill.
-    assert missed_releases(_Grid(RadolanRW), last, last + timedelta(hours=1), 48) == []
+    assert missed_releases(RW_GRID, last, last + timedelta(hours=1), 48) == ([], None)
 
 
 def test_missed_releases_keeps_only_the_newest():
     last = datetime(2026, 7, 1, 0, 0, tzinfo=UTC)
     current = datetime(2026, 7, 3, 11, 0, tzinfo=UTC)
 
-    missed = missed_releases(_Grid(RadolanRW), last, current, limit=3)
+    missed, lost = missed_releases(RW_GRID, last, current, limit=3)
     assert missed == [current - timedelta(hours=h) for h in (3, 2, 1)]
+    # The rest is reported, not walked: from 01:00 on the 1st to 07:00 on the 3rd.
+    assert lost == (last + timedelta(hours=1), current - timedelta(hours=4))
 
 
-def test_first_uncounted_release_skips_the_overlap_after_the_grid_moved():
+def test_missed_releases_walks_only_the_fetchable_window():
+    """A year down costs as many steps as the backfill window, not 8760."""
+    steps = 0
+
+    class Counting(ReleaseGrid):
+        def next_after(self, release):
+            nonlocal steps
+            steps += 1
+            return super().next_after(release)
+
+    grid = Counting(RadolanRW.RELEASE_INTERVAL, RadolanRW.RELEASE_OFFSET)
+    current = datetime(2026, 7, 3, 11, 0, tzinfo=UTC)
+    missed, lost = missed_releases(grid, current - timedelta(days=365), current, 48)
+
+    assert len(missed) == 48
+    assert lost is not None
+    assert steps < 100
+
+
+def test_counted_on_grid_skips_the_overlap_after_the_grid_moved():
     """A total stored on RW's old HH:50 grid resumes without counting twice.
 
     After 08:50 (window 07:50-08:50) the HH:00 release 09:00 covers 08:00-09:00,
     50 minutes of it already counted; 10:00 (09:00-10:00) is the first window
-    wholly after it. 08:50-09:00 is left out, once.
+    wholly after it, so 09:00 counts as counted. 08:50-09:00 is left out, once.
     """
-    grid = _Grid(RadolanRW)
     last = datetime(2026, 7, 3, 8, 50, tzinfo=UTC)
+    counted = counted_on_grid(RW_GRID, last)
 
-    assert first_uncounted_release(grid, last) == datetime(2026, 7, 3, 10, 0, tzinfo=UTC)
-    assert missed_releases(grid, last, datetime(2026, 7, 3, 12, 0, tzinfo=UTC), 48) == [
-        datetime(2026, 7, 3, 10, 0, tzinfo=UTC),
-        datetime(2026, 7, 3, 11, 0, tzinfo=UTC),
-    ]
-    # On the grid it is simply the next release.
+    assert counted == datetime(2026, 7, 3, 9, 0, tzinfo=UTC)
+    assert missed_releases(RW_GRID, counted, datetime(2026, 7, 3, 12, 0, tzinfo=UTC), 48) == (
+        [datetime(2026, 7, 3, 10, 0, tzinfo=UTC), datetime(2026, 7, 3, 11, 0, tzinfo=UTC)],
+        None,
+    )
+    # On the grid it is itself.
     on_grid = datetime(2026, 7, 3, 9, 0, tzinfo=UTC)
-    assert first_uncounted_release(grid, on_grid) == on_grid + timedelta(hours=1)
+    assert counted_on_grid(RW_GRID, on_grid) == on_grid
 
 
-def test_first_uncounted_release_is_the_next_one_across_dst(berlin_time_zone):
+def test_counted_on_grid_keeps_local_days_across_dst():
     """sf_2350's 23- and 25-hour days are on its grid, not a grid move."""
-    grid = _Grid(RadolanSFLastYesterday)
     for day in (datetime(2026, 3, 28, 23, 50, tzinfo=BERLIN),
-                datetime(2026, 10, 24, 23, 50, tzinfo=BERLIN)):
-        nxt = first_uncounted_release(grid, dt_util.as_utc(day))
-        assert dt_util.as_local(nxt).strftime("%m-%d %H:%M") == (
-            day + timedelta(days=1)
-        ).strftime("%m-%d %H:%M")
+                datetime(2026, 10, 24, 23, 50, tzinfo=BERLIN),
+                datetime(2026, 10, 25, 23, 50, tzinfo=BERLIN)):
+        release = day.astimezone(UTC)
+        assert counted_on_grid(SF_2350_GRID, release) == release
 
 
-def test_missed_daily_releases_follow_local_time_across_dst(berlin_time_zone):
+def test_missed_daily_releases_follow_local_time_across_dst():
     """sf_2350 sits at 23:50 local, so its UTC releases shift on DST days."""
     last = datetime(2026, 10, 23, 23, 50, tzinfo=BERLIN)  # CEST, UTC+2
     current = datetime(2026, 10, 27, 23, 50, tzinfo=BERLIN)  # CET, UTC+1
 
-    missed = missed_releases(
-        _Grid(RadolanSFLastYesterday), dt_util.as_utc(last), dt_util.as_utc(current), 7
+    missed, lost = missed_releases(
+        SF_2350_GRID, last.astimezone(UTC), current.astimezone(UTC), 7
     )
 
-    assert [dt_util.as_local(r).strftime("%m-%d %H:%M") for r in missed] == [
+    assert lost is None
+    assert [r.astimezone(BERLIN).strftime("%m-%d %H:%M") for r in missed] == [
         "10-24 23:50",
         "10-25 23:50",
         "10-26 23:50",
@@ -321,14 +324,15 @@ def test_gap_starts_a_backfill_of_the_missed_releases():
 def test_release_overlapping_an_old_grid_total_is_not_counted():
     """Upgraded from RW's HH:50 grid: 11:00 overlaps 10:50, 12:00 does not."""
     old = datetime(2026, 7, 3, 10, 50, tzinfo=UTC)
-    sensor, tasks = _make_total_sensor(
-        release=RELEASE, value=2.5, total=10.0, last_release=old
-    )
+    sensor, tasks = _make_total_sensor(release=RELEASE, value=2.5)
+    sensor._restore(PrecipitationTotalExtraData(total=10.0, last_release=old))
 
+    # Restored onto the new grid: 11:00 stands for it, so it is not counted.
+    assert sensor._last_release == RELEASE
     sensor._count_new_release()
 
     assert sensor.native_value == approx(10.0)
-    assert sensor._last_release == old
+    assert sensor._last_release == RELEASE
 
     sensor.coordinator.curr_release = RELEASE + timedelta(hours=1)
     sensor._count_new_release()

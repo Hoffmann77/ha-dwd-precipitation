@@ -145,7 +145,8 @@ that from turning into noise:
   just as promptly as the 5-minute ones, because the question is how long DWD is
   given to publish, not how stale the value is allowed to be.
 
-  `_next_release_after()` walks the release grid in the product's *own* time
+  The coordinator's `grid` (`ReleaseGrid`, see "Release timing") walks the
+  release grid in the product's *own* time
   reference. `sf_2350` is `USE_LOCAL_TIME`, so its releases are 23 or 25 hours
   apart on DST changeover days; adding `RELEASE_INTERVAL` to a UTC timestamp
   would put the autumn deadline before the file it is waiting for could exist.
@@ -274,10 +275,12 @@ for the cell), so a restart resumes the list (`_start_backfill` at startup)
 and a failed fetch is retried with the next counted release. A new release is
 the retry trigger, not every coordinator update: during a DWD outage the
 coordinator's own fast-poll retries would otherwise refetch the backlog each
-minute. `split_fetchable` gives up on entries older than `max_backfill`
-releases, walking the grid so DST days count as one release, and logs once
-per batch dropped. One round runs at a time; releases that join meanwhile are
-picked up by the running round.
+minute. Both `missed_releases` and `split_fetchable` cut at the same release,
+`grid.back(current, max_backfill)`, so a DST day counts as one release and the
+walk never goes further back than the window however long the outage: a gap
+older than it is logged once (INFO) and left out, as is a pending entry that
+aged out. One round runs at a time; releases that join meanwhile are picked up
+by the running round, and the state is written once per round.
 
 `Peak intensity next 60 min` / `next 60–120 min` drop the `Precipitation` head
 noun on purpose: they are mm/h rather than mm, and the shorter head stops them
@@ -522,11 +525,12 @@ hour; `RadolanRW10` (`rw_10min`) is the same file family on a 10-minute grid
   missed-release walk stay on the hourly grid of `rw`. The startup downtime
   correction of the dry streak also keeps using `rw`.
 - **The grid move.** A total stored by 2026.10.0 has a `last_release` at :50,
-  off the new grid. `first_uncounted_release()` notices that
-  (`_release_at_or_before` does not map it to itself) and resumes at the first
-  :00 release whose window starts after it: the 10 minutes in between are left
-  out once, rather than 50 counted twice. On-grid releases, including
-  `sf_2350`'s 23- and 25-hour DST days, are unaffected.
+  off the new grid. Restoring it maps it once with `counted_on_grid()`
+  (`grid.at_or_before` does not map it to itself) onto the :00 release before
+  the first window that starts after it, so counting resumes there: the 10
+  minutes in between are left out once, rather than 50 counted twice
+  (`counted_until` reads 10 minutes ahead until the next release). On-grid
+  releases, including `sf_2350`'s 23- and 25-hour DST days, are unaffected.
 
 ## Range reads
 

@@ -272,7 +272,7 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
         everything that asks "which release is ours by now" has to ask in the
         same reference. One helper rather than the ternary at each site: the
         cost of getting this wrong is a product fetched hours off its schedule
-        (see _next_release_after), and a missed branch is the way that happens.
+        (see grid), and a missed branch is the way that happens.
         """
         return dt_util.now() if self.USE_LOCAL_TIME else dt_util.utcnow()
 
@@ -315,23 +315,14 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
         if self.curr_release is None:
             return None
 
+        # On the product's own clock (see grid): adding 24 h to a UTC
+        # timestamp would put the autumn deadline before the file it waits
+        # for can exist.
         return (
-            self._next_release_after(self.curr_release)
+            self.grid.next_after(self.curr_release)
             + self.release_delay
             + self.OVERDUE_GRACE
         )
-
-    def _next_release_after(self, release: datetime) -> datetime:
-        """Return the first scheduled release after the given one.
-
-        On the product's own clock (see grid): adding 24 h to a UTC timestamp
-        would put the autumn deadline before the file it waits for can exist.
-        """
-        return self.grid.next_after(release)
-
-    def _release_at_or_before(self, moment: datetime) -> datetime:
-        """Return the newest scheduled release at or before the given moment."""
-        return self.grid.at_or_before(moment)
 
     def _data_is_stale(self, now: datetime) -> bool:
         """Return True if the overdue release has gone unfetched for too long."""

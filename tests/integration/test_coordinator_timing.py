@@ -112,12 +112,12 @@ def test_rw_get_latest_release():
 
 def test_release_at_or_before_maps_the_grid():
     """A release maps to itself; anything off the grid to the release before it."""
-    coord = RadolanRW.__new__(RadolanRW)
+    grid = RadolanRW.__new__(RadolanRW).grid
     release = datetime(2025, 6, 1, 12, 0, tzinfo=UTC)
-    assert coord._release_at_or_before(release) == release
+    assert grid.at_or_before(release) == release
     # A timestamp from RW's old HH:50 grid is off it.
     old = datetime(2025, 6, 1, 12, 50, tzinfo=UTC)
-    assert coord._release_at_or_before(old) == release
+    assert grid.at_or_before(old) == release
 
 
 def test_stale_deadline_runs_from_the_overdue_release():

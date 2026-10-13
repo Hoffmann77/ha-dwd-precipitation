@@ -23,6 +23,7 @@ from typing import Any
 
 from homeassistant.helpers.restore_state import ExtraStoredData
 
+from .release_grid import ReleaseGrid
 from .utils import iso, parse_utc
 
 
@@ -78,52 +79,48 @@ def countable(value: Any) -> float | None:
     return value
 
 
-def first_uncounted_release(coordinator: Any, last_counted: datetime) -> datetime:
-    """Return the first release whose window starts at or after last_counted.
+def counted_on_grid(grid: ReleaseGrid, last_counted: datetime) -> datetime:
+    """Return the release on ``grid`` that a stored ``last_counted`` stands for.
 
-    Normally simply the release after it. If last_counted is off the product's
-    grid, the grid moved under a stored total: RW went from the HH:50 run to
-    the HH:00 one in 2026.10.1. The first new-grid release after it would
-    overlap what is already counted (10:00-11:00 after 09:50-10:50), so the
-    count resumes one release later. That leaves the minutes between the two
-    grids out once (10:50-11:00), where the overlap would count 50 twice.
+    A release on the grid stands for itself. One that is not was stored on an
+    older grid: RW moved from the HH:50 run to the HH:00 one in 2026.10.1. The
+    first new-grid release after it would overlap what is already counted
+    (10:00-11:00 after 09:50-10:50), so the total treats the release before
+    the first window wholly after it as counted: 10:00 for 09:50. That leaves
+    the minutes between the two grids out once (10:50-11:00), where the
+    overlap would count 50 twice. Applied once, when the total is restored.
     """
-    release = coordinator._next_release_after(last_counted)
-    on_grid = coordinator._release_at_or_before(release)
-    if on_grid == release:
-        return release
+    if grid.at_or_before(last_counted) == last_counted:
+        return last_counted
 
-    return coordinator._next_release_after(on_grid)
+    return grid.at_or_before(grid.next_after(last_counted))
 
 
 def missed_releases(
-    coordinator: Any,
+    grid: ReleaseGrid,
     last_counted: datetime,
     current: datetime,
     limit: int,
-) -> list[datetime]:
-    """Return the uncounted releases from last_counted up to current, oldest first.
+) -> tuple[list[datetime], tuple[datetime, datetime] | None]:
+    """Return the uncounted releases still fetchable, and the stretch that is not.
 
-    These are the windows nobody counted: Home Assistant was down, or the
-    product failed for longer than one release. Walked with the coordinator's
-    own _next_release_after, so a local-time product steps over DST changeovers
-    exactly as its schedule does, starting at first_uncounted_release. Only the
-    newest ``limit`` are returned; older files are unlikely to still be on
-    OpenData, and a long outage should not turn into a burst of downloads at
-    startup.
+    Uncounted are the releases after ``last_counted`` and before ``current``:
+    Home Assistant was down, or the product failed for longer than one
+    release. Only the ``limit`` newest are fetchable (what OpenData keeps), so
+    they are returned oldest first; an older stretch comes back as its (first,
+    last) release, for the caller to say it is left out. Walked on the grid,
+    so a local-time product steps over DST days as its schedule does, and
+    never further back than ``limit`` however long the gap.
     """
-    missed: list[datetime] = []
-    release = first_uncounted_release(coordinator, last_counted)
+    first = grid.next_after(last_counted)
+    oldest = grid.back(current, limit)
+    lost = (first, grid.previous(oldest)) if first < oldest else None
 
-    while release < current:
-        missed.append(release)
-        release = coordinator._next_release_after(release)
-
-    return missed[-limit:] if limit > 0 else []
+    return grid.walk(max(first, oldest), current), lost
 
 
 def split_fetchable(
-    coordinator: Any,
+    grid: ReleaseGrid,
     pending: list[datetime],
     current: datetime,
     limit: int,
@@ -132,16 +129,12 @@ def split_fetchable(
 
     Fetchable means among the ``limit`` releases before ``current`` -- the same
     window missed_releases draws from, and what DWD keeps on OpenData. Counted
-    by walking the grid, so a local-time product's DST days count as one
-    release each, like everywhere else.
+    on the grid, so a local-time product's DST days count as one release each.
     """
-    keep: list[datetime] = []
-    drop: list[datetime] = []
-    for release in sorted(set(pending)):
-        steps, walk = 0, release
-        while walk < current and steps <= limit:
-            walk = coordinator._next_release_after(walk)
-            steps += 1
-        (keep if steps <= limit else drop).append(release)
+    oldest = grid.back(current, limit)
+    releases = sorted(set(pending))
 
-    return keep, drop
+    return (
+        [r for r in releases if r >= oldest],
+        [r for r in releases if r < oldest],
+    )

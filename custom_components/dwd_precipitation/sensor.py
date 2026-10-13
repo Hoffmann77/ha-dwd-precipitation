@@ -56,8 +56,8 @@ from .utils import iso
 from .rain_events import NO_EVENT, ONGOING, UPCOMING, VIEW_KEYS, overall_status
 from .precipitation_total import (
     PrecipitationTotalExtraData,
+    counted_on_grid,
     countable,
-    first_uncounted_release,
     missed_releases,
     split_fetchable,
 )
@@ -596,17 +596,21 @@ class PrecipitationTotalSensor(DwdCoordinatorEntity, RestoreEntity, SensorEntity
         await super().async_added_to_hass()
 
         if (restored := await self.async_get_last_extra_data()) is not None:
-            data = PrecipitationTotalExtraData.from_dict(restored.as_dict())
-            self._total = data.total
-            if data.total is not None:
-                # Without a total, nothing was counted: start over.
-                self._last_release = data.last_release
-                self._pending = data.pending
+            self._restore(PrecipitationTotalExtraData.from_dict(restored.as_dict()))
 
         # coordinator.data is already populated by the first refresh.
         self._count_new_release()
         # Resume a backfill a restart interrupted, even with no new release.
         self._start_backfill()
+
+    def _restore(self, data: PrecipitationTotalExtraData) -> None:
+        """Adopt a restored total, on the product's current release grid."""
+        self._total = data.total
+        if data.total is None or data.last_release is None:
+            return  # Without a total, nothing was counted: start over.
+
+        self._last_release = counted_on_grid(self.coordinator.grid, data.last_release)
+        self._pending = data.pending
 
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -631,18 +635,20 @@ class PrecipitationTotalSensor(DwdCoordinatorEntity, RestoreEntity, SensorEntity
             self._last_release = release
             return
 
-        if release < first_uncounted_release(self.coordinator, self._last_release):
-            # Overlaps the counted windows: the first release after the RW grid
-            # moved to HH:00. Not counted, and not advanced past, so the next
-            # release still sees the gap as its own.
-            return
-
-        missed = missed_releases(
-            self.coordinator,
+        missed, lost = missed_releases(
+            self.coordinator.grid,
             self._last_release,
             release,
             self.entity_description.max_backfill,
         )
+        if lost:
+            _LOGGER.info(
+                "%s: the DWD releases from %s to %s were missed and are too old "
+                "to fetch now, so the total leaves them out",
+                self.entity_id,
+                lost[0].isoformat(),
+                lost[1].isoformat(),
+            )
 
         if (value := countable(cdata.data)) is not None:
             self._total += value
@@ -659,7 +665,7 @@ class PrecipitationTotalSensor(DwdCoordinatorEntity, RestoreEntity, SensorEntity
             return
 
         self._pending, gone = split_fetchable(
-            self.coordinator,
+            self.coordinator.grid,
             self._pending,
             self._last_release,
             self.entity_description.max_backfill,
@@ -694,6 +700,7 @@ class PrecipitationTotalSensor(DwdCoordinatorEntity, RestoreEntity, SensorEntity
         """
         tried: set[datetime] = set()
         failed = 0
+        added = False
         try:
             while todo := [r for r in self._pending if r not in tried]:
                 release = todo[0]
@@ -717,9 +724,13 @@ class PrecipitationTotalSensor(DwdCoordinatorEntity, RestoreEntity, SensorEntity
                 self._pending.remove(release)
                 if (mm := countable(value)) is not None:
                     self._total += mm
-                    self.async_write_ha_state()
+                    added = True
         finally:
             self._backfilling = False
+            # One state write per round, not one per release: a restart after
+            # two days down backfills 48 releases.
+            if added:
+                self.async_write_ha_state()
 
         if failed:
             _LOGGER.debug(
