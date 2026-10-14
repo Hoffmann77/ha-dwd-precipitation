@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -16,13 +16,16 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
+    UnitOfLength,
     UnitOfPrecipitationDepth,
     UnitOfTime,
     UnitOfVolumetricFlux,
 )
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
@@ -47,6 +50,7 @@ from .dry_streak import (
     scalar_reading,
 )
 from .entity import DwdCoordinatorEntity
+from .warning import WARNING_STATES, WarningSettings, evaluate
 from .precipitation_total import (
     PrecipitationTotalExtraData,
     countable,
@@ -234,6 +238,22 @@ RADVOR_RV_SENSORS = (
         product_key="rv",
         access_fn=lambda d: d["max_120"],
     ),
+    # Closest rain around the location in the latest analysis (radar.area).
+    PrecipitationSensorEntityDescription(
+        key="radvor_rv_nearest_precipitation",
+        translation_key="nearest_precipitation",
+        icon="mdi:map-marker-distance",
+        native_unit_of_measurement=UnitOfLength.KILOMETERS,
+        device_class=SensorDeviceClass.DISTANCE,
+        suggested_display_precision=1,
+        state_class=SensorStateClass.MEASUREMENT,
+        product_key="rv",
+        access_fn=lambda d: d["nearest_km"],
+        attrs_fn=lambda d: {
+            "bearing": d["nearest_bearing"],
+            "direction": d["nearest_direction"],
+        },
+    ),
 )
 
 
@@ -281,6 +301,16 @@ def _rv_timing_sensors(
                 access_fn=lambda d: d["end_in"],
                 attrs_fn=lambda d: {"at": d["end_at"]},
             ),
+            PrecipitationSensorEntityDescription(
+                key="radvor_rv_area_precipitation_start",
+                translation_key="area_precipitation_start",
+                native_unit_of_measurement=UnitOfTime.MINUTES,
+                device_class=SensorDeviceClass.DURATION,
+                state_class=SensorStateClass.MEASUREMENT,
+                product_key="rv",
+                access_fn=lambda d: d["area_start_in"],
+                attrs_fn=lambda d: {"at": d["area_start_at"]},
+            ),
         )
 
     # Default: absolute timestamp, with the minutes-until value as an attribute.
@@ -301,7 +331,22 @@ def _rv_timing_sensors(
             access_fn=lambda d: d["end_at"],
             attrs_fn=lambda d: {"minutes_until": d["end_in"]},
         ),
+        PrecipitationSensorEntityDescription(
+            key="radvor_rv_area_precipitation_start",
+            translation_key="area_precipitation_start",
+            device_class=SensorDeviceClass.TIMESTAMP,
+            product_key="rv",
+            access_fn=lambda d: d["area_start_at"],
+            attrs_fn=lambda d: {"minutes_until": d["area_start_in"]},
+        ),
     )
+
+
+# Entities that exist only with the neighbourhood evaluation on (radar.area).
+AREA_SENSOR_KEYS = frozenset({
+    "radvor_rv_nearest_precipitation",
+    "radvor_rv_area_precipitation_start",
+})
 
 
 def _plain_value(value: Any) -> Any:
@@ -337,6 +382,19 @@ async def async_setup_entry(
         + RADOLAN_SENSORS
     )
 
+    if not coordinators["rv"].neighbourhood:
+        entity_descriptions = tuple(
+            d for d in entity_descriptions if d.key not in AREA_SENSOR_KEYS
+        )
+        # Drop the area entities left over from when the option was on, so
+        # they do not linger as "no longer provided" in the entity list.
+        registry = er.async_get(hass)
+        for key in AREA_SENSOR_KEYS:
+            if entity_id := registry.async_get_entity_id(
+                "sensor", DOMAIN, f"{entry.entry_id}_{key}"
+            ):
+                registry.async_remove(entity_id)
+
     entities: list[SensorEntity] = [
         PrecipitationSensorEntity(
             coordinators[entity_description.product_key],
@@ -349,6 +407,9 @@ async def async_setup_entry(
         for description in TOTAL_SENSORS
     )
     entities.append(TimespanWithoutPrecipitationSensor(coordinators["rs"]))
+    entities.append(
+        RainWarningSensor(coordinators["rv"], coordinators["hymecng"], entry.runtime_data.warning)
+    )
 
     async_add_entities(entities)
 
@@ -698,3 +759,101 @@ class TimespanWithoutPrecipitationSensor(
             "hours_without_precipitation": round(seconds / 3600, 2),
             "dry_since": self._dry_since.isoformat(),
         }
+
+
+class RainWarningSensor(SensorEntity):
+    """Rain warning: dry / soon / rain, with the details a notification needs.
+
+    Evaluated by warning.evaluate from the RV 5-minute forecast (neighbourhood
+    intensity where available) and the HymecNG type. Every value is relative to
+    now, so besides new data and lead-time changes it re-evaluates each minute.
+    """
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "rain_warning"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = WARNING_STATES
+    _attr_should_poll = False
+    _unrecorded_attributes = frozenset({
+        "forecast_age_min", "forecast_remaining_horizon_min", "next_amount_mm",
+    })
+
+    def __init__(
+        self,
+        rv: BaseProductUpdateCoordinator,
+        hymecng: BaseProductUpdateCoordinator,
+        settings: WarningSettings,
+    ) -> None:
+        """Initialize the sensor."""
+        self._rv = rv
+        self._hymecng = hymecng
+        self._settings = settings
+        self._result: dict[str, Any] | None = None
+        entry = rv.config_entry
+        self._attr_unique_id = f"{entry.entry_id}_rain_warning"
+        self._attr_device_info = DeviceInfo(
+            entry_type=DeviceEntryType.SERVICE,
+            identifiers={(DOMAIN, entry.entry_id)},
+            name=entry.title or "DWD Precipitation",
+        )
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to data, lead-time changes and a one-minute tick."""
+        self.async_on_remove(self._rv.async_add_listener(self._refresh))
+        self.async_on_remove(self._hymecng.async_add_listener(self._refresh))
+        self.async_on_remove(self._settings.add_listener(self._refresh))
+        self.async_on_remove(
+            async_track_time_interval(self.hass, self._tick, timedelta(minutes=1))
+        )
+        self._evaluate()
+
+    def _evaluate(self) -> None:
+        samples = None
+        rv_data = self._rv.data
+        if rv_data is not None and rv_data.metadata:
+            meta = rv_data.metadata.get("rain_within_2h")
+            samples = getattr(meta, "samples", None)
+        hy = self._hymecng.data
+        self._result = evaluate(
+            samples,
+            dt_util.utcnow(),
+            lead_time=self._settings.lead_time,
+            use_area=self._rv.neighbourhood,
+            type_here=hy.data if hy is not None else None,
+            type_nearby=getattr(self._hymecng, "nearby_type", None),
+        )
+
+    @callback
+    def _refresh(self) -> None:
+        self._evaluate()
+        self.async_write_ha_state()
+
+    @callback
+    def _tick(self, _now: datetime) -> None:
+        self._refresh()
+
+    @property
+    def available(self) -> bool:
+        """Available while the RV forecast is reportable and yields a state."""
+        return self._rv.data_is_reportable and self._result is not None
+
+    @property
+    def native_value(self) -> str | None:
+        """Return dry / soon / rain."""
+        return self._result["state"] if self._result else None
+
+    @property
+    def icon(self) -> str:
+        """Pouring when raining, rainy when soon, otherwise partly cloudy."""
+        state = self.native_value
+        return {
+            "rain": "mdi:weather-pouring",
+            "soon": "mdi:weather-rainy",
+        }.get(state, "mdi:weather-partly-cloudy")
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Expose the warning details (same names as the former template sensor)."""
+        if not self._result:
+            return {}
+        return {k: v for k, v in self._result.items() if k != "state"}

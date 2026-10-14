@@ -31,6 +31,8 @@ from .const import (
     DEFAULT_PRECIPITATION_RESET_THRESHOLD,
     CONF_FULL_ROLLING_SERIES,
     DEFAULT_FULL_ROLLING_SERIES,
+    CONF_NEIGHBOURHOOD,
+    DEFAULT_NEIGHBOURHOOD,
 )
 from .radar import rs_grid_contains
 
@@ -119,6 +121,12 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     CONF_FULL_ROLLING_SERIES,
                     default=self.config_entry.options.get(
                         CONF_FULL_ROLLING_SERIES, DEFAULT_FULL_ROLLING_SERIES
+                    ),
+                ): selector.BooleanSelector(),
+                vol.Optional(
+                    CONF_NEIGHBOURHOOD,
+                    default=self.config_entry.options.get(
+                        CONF_NEIGHBOURHOOD, DEFAULT_NEIGHBOURHOOD
                     ),
                 ): selector.BooleanSelector(),
             }

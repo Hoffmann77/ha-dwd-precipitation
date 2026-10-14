@@ -13,6 +13,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .coordinator import BaseProductUpdateCoordinator
 from .const import PLATFORMS
+from .warning import WarningSettings
 from .products import (
     RadvorRS,
     RadvorRV,
@@ -41,6 +42,8 @@ class MyData:
     """Runtime data definition."""
 
     coordinators: dict[str, BaseProductUpdateCoordinator]
+    # Lead time of the rain warning, shared by its number and sensor entities.
+    warning: WarningSettings
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: MyConfigEntry) -> bool:
@@ -88,7 +91,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: MyConfigEntry) -> bool:
     for coordinator in product_coordinators:
         coordinator.async_track_releases()
 
-    entry.runtime_data = MyData({c.PRODUCT_KEY: c for c in product_coordinators})
+    entry.runtime_data = MyData(
+        {c.PRODUCT_KEY: c for c in product_coordinators}, WarningSettings()
+    )
     entry.async_on_unload(entry.add_update_listener(update_listener))
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)

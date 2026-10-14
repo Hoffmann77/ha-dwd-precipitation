@@ -23,6 +23,7 @@ from .radar import (
     read_radolan_composite,
     get_radolan_grid_index,
     read_odim_composite_cell,
+    read_odim_composite_window,
     read_odim_classification,
     get_rs_grid_index,
     RS_GRID_SHAPE,
@@ -40,7 +41,13 @@ from .radar.nowcast import (
     peak_rolling_hour,
     rolling_hour_sums,
 )
+from .radar.area import area_max, compass, nearest_class, nearest_rain
 from .const import (
+    AREA_MIN_INTENSITY,
+    AREA_NEAR_RADIUS_KM,
+    AREA_SCAN_RADIUS_KM,
+    CONF_NEIGHBOURHOOD,
+    DEFAULT_NEIGHBOURHOOD,
     CONF_FULL_ROLLING_SERIES,
     DEFAULT_FULL_ROLLING_SERIES,
     CONF_PRECIPITATION_THRESHOLD,
@@ -106,6 +113,35 @@ def _read_tar_cells(
             )
             val = float(val)
             out[lead] = (None if np.isnan(val) else val, what)
+    return out
+
+
+def _read_tar_windows(
+    content: bytes, prefix: str, leads, cell: tuple[int, int], radius: int, label: str
+) -> dict[int, tuple[np.ndarray, tuple[int, int], dict] | None]:
+    """Decode a square of cells around ``cell`` from each member of a RADVOR tar.
+
+    Returns ``{lead: (window, (crow, ccol), dataset_what)}`` with NaN for
+    nodata; a member missing from the archive maps to ``None`` (logged).
+    """
+    row, col = cell
+    out: dict[int, tuple[np.ndarray, tuple[int, int], dict] | None] = {}
+    with tarfile.open(fileobj=BytesIO(content), mode="r") as tf:
+        for lead in leads:
+            member_name = f"{prefix}_{lead:03d}-hd5"
+            try:
+                f = tf.extractfile(member_name)
+            except KeyError:
+                f = None
+            if f is None:
+                _LOGGER.warning("%s tar member not found: %s", label, member_name)
+                out[lead] = None
+                continue
+
+            window, what, center = read_odim_composite_window(
+                BytesIO(f.read()), row, col, radius, expected_shape=RS_GRID_SHAPE
+            )
+            out[lead] = (window, center, what)
     return out
 
 
@@ -322,8 +358,25 @@ class RadvorRV(BaseProductUpdateCoordinator):
 
     def _parse(self, content: bytes, ts: datetime) -> tuple[dict, dict]:
         """Derive the RV entity payloads from the tar bytes (blocking)."""
-        cells = _read_tar_cells(
-            content, f"composite_rv_{ts.strftime('%Y%m%d_%H%M')}", LEADS, self.index, "RV"
+        # The user configures the threshold as an intensity (mm/h); the
+        # detection works on 5-minute accumulations, so convert back to mm/5min.
+        threshold_mmh = self.config_entry.options.get(
+            CONF_PRECIPITATION_THRESHOLD, DEFAULT_PRECIPITATION_THRESHOLD
+        )
+        threshold = threshold_mmh / STEPS_PER_HOUR
+        area_threshold = max(threshold_mmh, AREA_MIN_INTENSITY) / STEPS_PER_HOUR
+        neighbourhood = self.neighbourhood
+
+        # The cells around the location come out of the same inflate as the
+        # location's own cell, so the neighbourhood costs no extra decoding.
+        # With the option off the window is just the own cell.
+        tar_windows = _read_tar_windows(
+            content,
+            f"composite_rv_{ts.strftime('%Y%m%d_%H%M')}",
+            LEADS,
+            self.index,
+            int(AREA_SCAN_RADIUS_KM) if neighbourhood else 0,
+            "RV",
         )
 
         # Per-lead 5-minute cell values (mm) and window bounds, aligned to LEADS.
@@ -331,33 +384,48 @@ class RadvorRV(BaseProductUpdateCoordinator):
         starts: list[datetime | None] = []
         ends: list[datetime | None] = []
         base_ts: datetime | None = None
+        # Same series for the neighbourhood: wettest cell within the near radius
+        # (mm) and the closest rain within the scan radius (km, bearing).
+        area_values: list[float | None] = []
+        nearest: list[tuple[float, float | None] | None] = []
 
         for lead in LEADS:
-            cell = cells[lead]
-            if cell is None:
+            entry = tar_windows[lead]
+            if entry is None:
                 values.append(None)
                 starts.append(None)
                 ends.append(None)
+                area_values.append(None)
+                nearest.append(None)
                 continue
 
-            data_start, data_end = _odim_window(cell[1])
-            values.append(cell[0])
+            window, (crow, ccol), what = entry
+            val = float(window[crow, ccol])
+            data_start, data_end = _odim_window(what)
+            values.append(None if np.isnan(val) else val)
+            if neighbourhood:
+                area_values.append(area_max(window, crow, ccol, AREA_NEAR_RADIUS_KM))
+                nearest.append(
+                    nearest_rain(window, crow, ccol, area_threshold, AREA_SCAN_RADIUS_KM)
+                )
+            else:
+                area_values.append(None)
+                nearest.append(None)
             starts.append(data_start)
             ends.append(data_end)
             # Base run time T = end of the analysis window (lead 0).
             if lead == 0 and data_end is not None:
                 base_ts = data_end
 
-        # The user configures the threshold as an intensity (mm/h); the
-        # detection works on 5-minute accumulations, so convert back to mm/5min.
-        threshold_mmh = self.config_entry.options.get(
-            CONF_PRECIPITATION_THRESHOLD, DEFAULT_PRECIPITATION_THRESHOLD
-        )
-        threshold = threshold_mmh / STEPS_PER_HOUR
         end_algorithm = self.config_entry.options.get(
             CONF_PRECIPITATION_END_ALGORITHM, DEFAULT_PRECIPITATION_END_ALGORITHM
         )
         start_in, end_in = detect_start_end(values, threshold, end_algorithm)
+        area_start_in, area_end_in = (
+            detect_start_end(area_values, area_threshold, end_algorithm)
+            if neighbourhood
+            else (None, None)
+        )
 
         def _at(minutes: int | None) -> datetime | None:
             if minutes is None or base_ts is None:
@@ -369,7 +437,9 @@ class RadvorRV(BaseProductUpdateCoordinator):
             for lead in leads:
                 i = lead // LEAD_STEP
                 value = values[i]
-                out.append({
+                area_value = area_values[i]
+                near = nearest[i]
+                sample = {
                     "lead": lead,
                     "start": starts[i].isoformat() if starts[i] else None,
                     "end": ends[i].isoformat() if ends[i] else None,
@@ -380,7 +450,17 @@ class RadvorRV(BaseProductUpdateCoordinator):
                         if value is not None
                         else None
                     ),
-                })
+                }
+                if neighbourhood:
+                    # Wettest cell within AREA_NEAR_RADIUS_KM, as mm/h.
+                    sample["intensity_area"] = (
+                        round(area_value * STEPS_PER_HOUR, 2)
+                        if area_value is not None
+                        else None
+                    )
+                    # Closest rain within AREA_SCAN_RADIUS_KM (None = none).
+                    sample["nearest_km"] = near[0] if near is not None else None
+                out.append(sample)
             return out
 
         def _bucket_meta(leads: list[int], lead_minutes: int) -> ProductMetadata:
@@ -437,6 +517,32 @@ class RadvorRV(BaseProductUpdateCoordinator):
             "rain_within_2h": rain_meta,
             "peak_1h": peak_meta,
         }
+        if neighbourhood:
+            data.update({
+                "area_start_in": area_start_in,
+                "area_start_at": _at(area_start_in),
+                "area_end_in": area_end_in,
+                "area_end_at": _at(area_end_in),
+                # Latest analysis (lead 0): where the closest rain is right now.
+                "nearest_km": nearest[0][0] if nearest[0] is not None else None,
+                "nearest_bearing": nearest[0][1] if nearest[0] is not None else None,
+                "nearest_direction": (
+                    compass(nearest[0][1]) if nearest[0] is not None else None
+                ),
+            })
+            metadata.update({
+                "area_start_in": timing_meta,
+                "area_start_at": timing_meta,
+                "area_end_in": timing_meta,
+                "area_end_at": timing_meta,
+                "nearest_km": ProductMetadata(
+                    source_product="RV",
+                    source_timestamp=base_ts,
+                    lead_time_minutes=0,
+                    data_start=starts[0],
+                    data_end=ends[0],
+                ),
+            })
         return data, metadata
 
 
@@ -468,6 +574,10 @@ class HymecNG(BaseProductUpdateCoordinator):
     # is still informative.
     OVERDUE_GRACE = DEFAULT_OVERDUE_GRACE
 
+    # Type of the closest precipitation within AREA_SCAN_RADIUS_KM, refreshed
+    # with every parse (see radar.area.nearest_class).
+    nearby_type: str | None = None
+
     @cached_property
     def index(self) -> tuple[int, int]:
         """Return (row, col) in the HymecNG grid (identical to RS/RV)."""
@@ -495,6 +605,18 @@ class HymecNG(BaseProductUpdateCoordinator):
 
         nodata = int(round(float(moment_what.get("nodata", 255))))
         undetect = int(round(float(moment_what.get("undetect", 254))))
+
+        # Type of the closest precipitation around the location (classes 2..10
+        # are actual precipitation). Used by the rain warning to name what is
+        # approaching before it reaches the own cell.
+        nearby = (
+            nearest_class(
+                raw, row, col, range(2, len(PRECIP_TYPE_BY_INDEX)), AREA_SCAN_RADIUS_KM
+            )
+            if self.neighbourhood
+            else None
+        )
+        self.nearby_type = PRECIP_TYPE_BY_INDEX[nearby] if nearby is not None else None
 
         if value == nodata:
             precip_type: str | None = None          # outside radar coverage

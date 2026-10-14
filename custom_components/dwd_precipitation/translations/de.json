@@ -31,7 +31,8 @@
           "start_end_mode": "Anzeige von „Niederschlagsbeginn“ und „Niederschlagsende“",
           "precipitation_end_algorithm": "Wann „Niederschlagsende“ den Regen als beendet ansieht",
           "precipitation_reset_threshold": "Regenmenge, die den Trockenzähler zurücksetzt (mm)",
-          "full_rolling_series": "Vergangene Stunde in die stündliche Vorhersagereihe aufnehmen"
+          "full_rolling_series": "Vergangene Stunde in die stündliche Vorhersagereihe aufnehmen",
+          "neighbourhood_evaluation": "Umgebung des Standorts auswerten"
         },
         "data_description": {
           "extra_state_attributes": "Hängt jedem Sensor den DWD-Produktnamen, den Messzeitpunkt und den abgedeckten Zeitraum als Attribute an. Nützlich in Templates oder beim Melden eines Problems; ansonsten ausgeschaltet lassen.",
@@ -40,7 +41,8 @@
           "start_end_mode": "Ob diese beiden Sensoren eine Uhrzeit („14:25“) oder die Minuten bis zum Ereignis („20“) anzeigen. Die nicht gewählte Variante bleibt als Attribut am selben Sensor verfügbar.",
           "precipitation_end_algorithm": "„Erste trockene Lücke“ meldet das Ende des aktuellen Schauers und springt daher bei Schauerwetter hin und her. „Niederschlag endet innerhalb von 2 h“ wartet, bis kein weiterer Regen vorhergesagt ist – das ist stabiler, bleibt aber länger unbekannt. Der DWD sagt nur zwei Stunden voraus, darüber hinaus ist der Sensor in beiden Fällen „unbekannt“.",
           "precipitation_reset_threshold": "Wie viel Regen „Zeitraum ohne Niederschlag“ auf null zurücksetzt. Verglichen wird mit „Niederschlag aktuell“, also den in der letzten Stunde gefallenen Millimetern – 1 mm bedeutet, dass in der letzten Stunde 1 mm gefallen ist, keine Rate.",
-          "full_rolling_series": "Lässt das Attribut „forecast_rolling_1h“ von „Maximaler Stundenniederschlag nächste 2h“ eine Stunde früher beginnen. Jeder Eintrag ist der Niederschlag in der Stunde, die zu diesem Zeitpunkt beginnt. Die ersten Einträge enthalten damit auch Regen, der bereits gefallen ist, und ein Diagramm zeigt die vergangene Stunde und die Vorhersage als eine durchgehende Kurve. Der Wert des Sensors ist in beiden Fällen gleich, da er nur die kommenden Stunden betrachtet. Eingeschaltet verdoppelt sich etwa die Rechenzeit pro Aktualisierung, was auf kleinen Geräten spürbar sein kann."
+          "full_rolling_series": "Lässt das Attribut „forecast_rolling_1h“ von „Maximaler Stundenniederschlag nächste 2h“ eine Stunde früher beginnen. Jeder Eintrag ist der Niederschlag in der Stunde, die zu diesem Zeitpunkt beginnt. Die ersten Einträge enthalten damit auch Regen, der bereits gefallen ist, und ein Diagramm zeigt die vergangene Stunde und die Vorhersage als eine durchgehende Kurve. Der Wert des Sensors ist in beiden Fällen gleich, da er nur die kommenden Stunden betrachtet. Eingeschaltet verdoppelt sich etwa die Rechenzeit pro Aktualisierung, was auf kleinen Geräten spürbar sein kann.",
+          "neighbourhood_evaluation": "Wertet zusätzlich die Radarzellen rund um deinen Standort aus: Regen im Umkreis von etwa 1 km zählt für die Regenwarnung, und der nächste Niederschlag im 5-km-Umkreis wird mit Entfernung und Richtung gemeldet („Nächster Niederschlag“, „Niederschlagsbeginn Umkreis“). Ausgeschaltet wird nur die eigene 1-km-Zelle genutzt; diese beiden Sensoren werden dann entfernt."
         }
       }
     }
@@ -118,11 +120,30 @@
           "hail": "Hagel",
           "large_hail": "Großer Hagel"
         }
+      },
+      "nearest_precipitation": {
+        "name": "Nächster Niederschlag"
+      },
+      "area_precipitation_start": {
+        "name": "Niederschlagsbeginn Umkreis"
+      },
+      "rain_warning": {
+        "name": "Regenwarnung",
+        "state": {
+          "dry": "Trocken",
+          "soon": "Regen in Kürze",
+          "rain": "Regen"
+        }
       }
     },
     "binary_sensor": {
       "precipitation_expected": {
         "name": "Niederschlag erwartet"
+      }
+    },
+    "number": {
+      "warning_lead_time": {
+        "name": "Vorwarnzeit Regenwarnung"
       }
     }
   }
