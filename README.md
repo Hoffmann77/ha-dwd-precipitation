@@ -213,6 +213,8 @@ All data is derived from the **DWD (Deutscher Wetterdienst)**:
 
 <img src="docs/assets/dwd-logo.png" alt="Deutscher Wetterdienst Logo" width="200"/>
 
+**[Current status of the DWD radar stations](https://www.dwd.de/DE/leistungen/radarniederschlag/rn_info/home_freie_radarstatus_kartendaten.html)**
+
 ## License
 
 This integration is only possible thanks to the great work done by the contributors of the **[wradlib](https://github.com/wradlib/wradlib)** package.
