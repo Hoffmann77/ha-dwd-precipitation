@@ -1,11 +1,11 @@
 # 0002 — RW reads the run ending on the hour, not HH:50
 
-Status: accepted (2026.10.1)
+Status: accepted (2026.11.0)
 
 ## Context
 
 DWD runs RW every 10 minutes, each run the hour ending at that :x0. Up to
-2026.10.0 the integration read the HH:50 run. Nothing recorded why; it is
+2026.10.1 the integration read the HH:50 run. Nothing recorded why; it is
 RADOLAN's traditional hour, and SF is still only published at :50 (OpenData
 has no other SF minute).
 
@@ -25,7 +25,7 @@ minute is published at ~25.7 min (288 runs, 2026-10-13).
 `rw` reads the run ending on the hour. SF stays at :50, so `rw` and `sf`
 windows are now 10 minutes apart.
 
-A total stored by 2026.10.0 has a `last_release` at :50, off the new grid.
+A total stored before 2026.11.0 has a `last_release` at :50, off the new grid.
 Restoring it maps it once with `counted_on_grid()` onto the :00 release before
 the first window that starts after it, so counting resumes there: the 10
 minutes in between are left out once, rather than 50 counted twice

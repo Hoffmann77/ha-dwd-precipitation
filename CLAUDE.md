@@ -225,7 +225,7 @@ English name, so the name is also the id: `Precipitation next 60–120 min` →
 `sensor.<device>_precipitation_next_60_120_min`. Keep names slug-friendly.
 
 A name states a window only when the window is part of the *value* (ADR 0001
-has the reasoning and the names before 2026.10.1). Three forms:
+has the reasoning and the names before 2026.11.0). Three forms:
 
 | form | meaning | examples |
 |------|---------|----------|
@@ -585,7 +585,7 @@ hour; `RadolanRW10` (`rw_10min`) is the same file family on a 10-minute grid
   them counts each hour six times; `Precipitation total` and its
   missed-release walk stay on the hourly grid of `rw`. The startup downtime
   correction of the dry streak also keeps using `rw`.
-- **Off-grid restored totals.** A total stored by 2026.10.0 has a
+- **Off-grid restored totals.** A total stored before 2026.11.0 has a
   `last_release` at :50. `counted_on_grid()` maps it once onto the :00 release
   before the first window that starts after it (ADR 0002), so 10 minutes are
   left out once rather than 50 counted twice. On-grid releases, including

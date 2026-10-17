@@ -1,6 +1,6 @@
 # 0003 — RW's 10-minute runs feed the dry streak, nothing else
 
-Status: accepted (2026.10.1)
+Status: accepted (2026.11.0)
 
 ## Context
 

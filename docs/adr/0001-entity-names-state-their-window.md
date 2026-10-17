@@ -1,13 +1,13 @@
 # 0001 — Entity names state their window; a released id is never reused
 
-Status: accepted (2026.10.1)
+Status: accepted (2026.11.0)
 
 ## Context
 
 HA derives an entity id by slugifying the English name, so a name is also an
-id. Up to 2026.10.0 the names were:
+id. Up to 2026.10.1 the names were:
 
-| key | 2026.10.0 name | id |
+| key | 2026.10.1 name | id |
 |-----|----------------|----|
 | `radvor_rs_000` | Precipitation now | `precipitation_now` |
 | `radvor_rs_060` | Precipitation next 1h | `precipitation_next_1h` |
@@ -63,6 +63,6 @@ ids" on an old install cannot collide.
 
 ## Consequences
 
-The README lists the old ids for installs from 2026.10.0; a test checks it
-names every renamed one (`tests/parser/test_docs.py`). The setup test checks a
-new install's ids, and that none is an old id of another key.
+The README lists the old ids for installs from before 2026.11.0; a test checks
+it names every renamed one (`tests/parser/test_docs.py`). The setup test
+checks a new install's ids, and that none is an old id of another key.

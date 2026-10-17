@@ -1,6 +1,6 @@
 # 0005 — Running totals are keyed on the release, and RW backs the main one
 
-Status: accepted (2026.10.1)
+Status: accepted (2026.11.0)
 
 ## Context
 

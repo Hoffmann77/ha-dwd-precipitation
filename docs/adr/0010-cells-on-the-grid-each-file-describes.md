@@ -1,10 +1,10 @@
 # 0010 — Each product reads its cell on the grid its file describes
 
-Status: accepted (2026.10.1)
+Status: accepted (2026.11.0)
 
 ## Context
 
-Up to 2026.10.0 the integration carried its own copy of DWD's DE1200 grid
+Up to 2026.10.1 the integration carried its own copy of DWD's DE1200 grid
 (`RS_WHERE` and hard-coded projection constants in `radar/odim.py`), computed
 each coordinator's cell from it once, and read that row and column from every
 file. Each file also describes its grid itself, in its ODIM `/where` group. Had

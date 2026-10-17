@@ -897,7 +897,7 @@ class RadolanRW(RadolanProduct):
     DWD runs RW every 10 minutes (see RadolanRW10); this reads the run ending
     on the hour, so each value is a clock hour (11:00-12:00), the one
     "Precipitation previous hour" shows and the hourly total adds up. Up to
-    2026.10.0 it read the HH:50 run, the minute SF is still published at;
+    2026.10.1 it read the HH:50 run, the minute SF is still published at;
     nothing ties RW to it, and the :00 run is gauge-adjusted as strongly and
     published as quickly (~25.5 min after the hour, 48 runs, 2026-10-13).
 

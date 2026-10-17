@@ -1,6 +1,6 @@
 # 0006 — Rain events are their own opt-in entity, recomputed every release
 
-Status: accepted (2026.10.1)
+Status: accepted (2026.11.0)
 
 ## Context
 
@@ -16,7 +16,7 @@ gap the integration fills by fetching that analysis later.
   `Rain events` sensor, whose state (`ongoing` / `upcoming` / `none`) a
   blueprint can trigger on.
 - **Opt-in.** The `rain_events` option (Advanced, default off) gates all of
-  it: no tracker, no fill requests, no store. Nothing on 2026.10.0 had it, so
+  it: no tracker, no fill requests, no store. No release before 2026.11.0 had it, so
   it is off for existing installs as well. Turning it off removes the entity
   from the registry and deletes the store, so turning it on again starts clean.
 - **Recomputed, not accumulated.** Each release rebuilds the timeline from

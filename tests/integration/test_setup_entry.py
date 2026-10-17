@@ -417,7 +417,7 @@ async def test_entry_from_a_newer_major_version_is_not_migrated(
 async def test_renamed_sensor_keeps_an_existing_entity_id(make_entry, hass: HomeAssistant) -> None:
     """The renames change names, never the entity ids users already have.
 
-    Up to 2026.10.0 RS was "Precipitation now" and RW "Precipitation last 1h".
+    Up to 2026.10.1 RS was "Precipitation now" and RW "Precipitation last 1h".
     New installs get new ids for both; an existing one keeps the old ones.
     """
     entry = make_entry()

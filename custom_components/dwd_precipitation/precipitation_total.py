@@ -99,7 +99,7 @@ def counted_on_grid(grid: ReleaseGrid, last_counted: datetime) -> datetime:
     """Return the release on ``grid`` that a stored ``last_counted`` stands for.
 
     A release on the grid stands for itself. One from an older grid (RW's HH:50
-    run, before 2026.10.1) maps to the new-grid release before the first window
+    run, before 2026.11.0) maps to the new-grid release before the first window
     wholly after it, so ten minutes are left out once instead of fifty counted
     twice (ADR 0002). Applied once, when the total is restored, so the counting
     continues on the current grid.

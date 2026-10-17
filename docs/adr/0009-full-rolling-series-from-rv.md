@@ -1,6 +1,6 @@
 # 0009 — The full rolling-hour series is built from RV
 
-Status: accepted (2026.10.1)
+Status: accepted (2026.11.0)
 
 ## Context
 
