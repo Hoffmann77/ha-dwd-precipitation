@@ -18,7 +18,7 @@ from .coordinator import (
     ProductMetadata,
 )
 from .radar.isotime import iso
-from .radar.urls import product_url, radvor_prefix
+from .radar.urls import radvor_prefix
 from .options import DwdOptions
 from .utils import DownloadCache, FailureLatch, async_get
 from .radar.tar_range import fetch_tar_members, member_names, members_from_archive
@@ -33,6 +33,7 @@ from .radar.nowcast import (
     HOUR2_LEADS,
     LEAD_STEP,
     LEADS,
+    PAST_STEPS,
     STEPS_PER_HOUR,
     bucket_max_intensity,
     MM_DECIMALS,
@@ -48,7 +49,6 @@ from .const import (
     KEY_NEXT_60,
     KEY_NEXT_60_120,
     KEY_NEXT_120,
-    KEY_PEAK_1H,
     KEY_PRECIPITATION_TYPE,
     PRECIP_TYPE_BY_INDEX,
     RW_SLIDING_KEY,
@@ -87,9 +87,8 @@ RS_HOURLY_LEADS = tuple(_RS_HOURS.values())
 # 1 MB each; anything near this cap is not what was asked for.
 RANGE_MAX_BYTES = 8 * 1024 * 1024
 
-def _tar_members(content: bytes, prefix: str, leads) -> dict[str, bytes]:
-    """Return the requested members of a whole RADVOR tar, by name (blocking)."""
-    return members_from_archive(content, member_names(prefix, leads))
+# One RADVOR step: the releases are 5 minutes apart, and so are the steps.
+_STEP = timedelta(minutes=LEAD_STEP)
 
 
 def _decode_cells(
@@ -152,8 +151,7 @@ def _peak_hour_payload(
 
     ``sums`` (rolling 60-minute totals, mm) and ``windows`` are aligned to
     LEADS; ``series_leads`` picks the points exposed as ``rolling_1h``;
-    ``base`` names the product and release. RS and RV both land here, so the
-    two sources cannot drift apart in shape.
+    ``base`` names the product and release.
     """
     rolling_1h = [
         {
@@ -217,10 +215,6 @@ class WholeFileProduct(BaseProductUpdateCoordinator, ABC):
     SHARES_FILES: ClassVar[bool] = False
     download_cache: DownloadCache | None = None
 
-    def _get_url(self, ts: datetime) -> str:
-        """Return the URL of release ``ts`` (see radar/urls.py)."""
-        return product_url(self.PRODUCT_KEY, ts)
-
     @abstractmethod
     def _parse(self, content: bytes, ts: datetime) -> Payload:
         """Return (data, metadata) from the file's bytes (blocking)."""
@@ -239,11 +233,12 @@ class WholeFileProduct(BaseProductUpdateCoordinator, ABC):
         )
 
 
-class RadvorProduct(WholeFileProduct, ABC):
+class RadvorProduct(BaseProductUpdateCoordinator, ABC):
     """A RADVOR nowcast (RS, RV): one tar of 25 ODIM_H5 members per release.
 
     The tar is ``<prefix>.tar`` under the product's key, its members
-    ``<prefix>_<lead>-hd5``.
+    ``<prefix>_<lead>-hd5``. RS reads three members by range, RV the whole
+    archive.
     """
 
     def _prefix(self, ts: datetime) -> str:
@@ -312,18 +307,17 @@ class RadvorRS(RadvorProduct):
     0..120 min, 5-min steps). Each member is a *rolling 60-minute* accumulation
     (mm) ending at T+lead, so consecutive members overlap by 55 minutes.
 
-    data and metadata are keyed by:
+    Only the three members the sensors show are read, by range (~20 % of the
+    archive). data and metadata are keyed by:
 
     * ``last_60`` / ``next_60`` / ``next_60_120`` — the non-overlapping hours:
       leads 0 / 60 / 120.
-    * ``peak_1h`` — the wettest rolling hour wholly in the future, with the
-      full 25-point rolling-hour series as ``rolling_1h`` on its metadata.
-      Only filled with the ``full_rolling_series`` option on, since it needs
-      all 25 members decoded; otherwise ``None`` and RV provides the sensor
-      (see RadvorRV).
     * ``next_120`` — the whole 120-minute forecast: leads 60 + 120, so it is
       exactly the sum of the two forecast sensors. ``None`` unless both are
       present.
+
+    Every member is the sum of RV's twelve 5-minute steps in its hour, so the
+    peak hour and its series come from RV, which decodes those steps anyway.
     """
 
     PRODUCT_KEY = "rs"
@@ -341,66 +335,27 @@ class RadvorRS(RadvorProduct):
     # "how much fell in the last hour".
     OVERDUE_GRACE = DEFAULT_OVERDUE_GRACE
 
-    @property
-    def full_rolling_series(self) -> bool:
-        """Whether this entry decodes every member for the rolling-hour series."""
-        return self.options.full_rolling_series
-
     async def _fetch_and_parse(self, ts: datetime) -> Payload:
-        """Fetch the members this entry decodes, then decode them off the loop.
-
-        All 25 for the full rolling series, so the whole archive; otherwise
-        only the three fixed hours, read by range (~20 % of the bytes).
-        """
-        if self.full_rolling_series:
-            return await super()._fetch_and_parse(ts)
+        """Read the three hours' members by range, then decode them off the loop."""
         members = await self._async_read_members(ts, RS_HOURLY_LEADS)
         return await self.hass.async_add_executor_job(self._parse_members, members, ts)
 
-    def _parse(self, content: bytes, ts: datetime) -> Payload:
-        """Derive the RS entity payloads from a whole tar (blocking)."""
-        return self._parse_members(_tar_members(content, self._prefix(ts), LEADS), ts)
-
     def _parse_members(self, members: dict[str, bytes], ts: datetime) -> Payload:
         """Derive the RS entity payloads from its members' bytes (blocking)."""
-        full = self.full_rolling_series
-        cells = _decode_cells(
-            members,
-            self._prefix(ts),
-            LEADS if full else RS_HOURLY_LEADS,
-            self.index,
-            "RS",
-        )
+        cells = _decode_cells(members, self._prefix(ts), RS_HOURLY_LEADS, self.index, "RS")
 
-        per_lead = {
-            lead: _odim_metadata(cell[1], lead) if cell else None
-            for lead, cell in cells.items()
-        }
+        data: dict[str, Any] = {}
+        metadata: dict[str, ProductMetadata | None] = {}
+        for key, lead in _RS_HOURS.items():
+            cell = cells[lead]
+            data[key] = cell[0] if cell else None
+            metadata[key] = _odim_metadata(cell[1], lead) if cell else None
 
-        data: dict[str, Any] = {
-            key: cell[0] if (cell := cells[lead]) else None
-            for key, lead in _RS_HOURS.items()
-        }
-        metadata = {key: per_lead[lead] for key, lead in _RS_HOURS.items()}
         data[KEY_NEXT_120], metadata[KEY_NEXT_120] = _next_120(
             data[KEY_NEXT_60],
             data[KEY_NEXT_60_120],
             metadata[KEY_NEXT_60],
             metadata[KEY_NEXT_60_120],
-        )
-        data[KEY_PEAK_1H] = metadata[KEY_PEAK_1H] = None
-
-        if not full:
-            return data, metadata
-
-        sums = [_mm(cell[0]) if (cell := cells[lead]) else None for lead in LEADS]
-        windows = [
-            (m.data_start, m.data_end) if (m := per_lead[lead]) else (None, None)
-            for lead in LEADS
-        ]
-        base = next((m for m in per_lead.values() if m is not None), None)
-        data[KEY_PEAK_1H], metadata[KEY_PEAK_1H] = _peak_hour_payload(
-            sums, windows, LEADS, base
         )
         return data, metadata
 
@@ -425,10 +380,9 @@ class RadvorRV(RadvorProduct):
       carries the full 25-point 5-minute forecast series as ``samples``.
     * ``peak_1h`` — the wettest rolling hour wholly in the future, summed from
       twelve 5-minute steps (identical to the RS member for that window). Its
-      metadata carries those 13 rolling hours as ``rolling_1h``. Used unless
-      the ``full_rolling_series`` option hands the sensor to RS.
-
-    precipitation → dict[str, value], metadata → dict[str, ProductMetadata]
+      metadata carries those 13 rolling hours as ``rolling_1h``; with the
+      ``full_rolling_series`` option, the 12 hours that started before T as
+      well, from the analyses of the releases adopted in the past hour.
     """
 
     PRODUCT_KEY = "rv"
@@ -452,6 +406,9 @@ class RadvorRV(RadvorProduct):
     def __init__(self, hass, entry, async_client, lat, lon) -> None:
         """Initialize the coordinator and, if the entry tracks them, rain events."""
         super().__init__(hass, entry, async_client, lat, lon)
+        # The analysis (mm, None for no data) of each release adopted in the
+        # past hour, by release time; kept for the full rolling-hour series.
+        self._analyses: dict[datetime, float | None] = {}
         if self.options.rain_events:
             self._rain_tracker = RainEventsTracker(
                 hass,
@@ -464,9 +421,34 @@ class RadvorRV(RadvorProduct):
     async def _async_on_new_release(
         self, release: datetime, data: dict, metadata: dict
     ) -> None:
-        """Feed the release to the rain-events tracker, if the entry has one."""
+        """Keep the analysis for the full series; feed the rain-events tracker."""
+        if self.options.full_rolling_series:
+            self._analyses[release] = data["amount_000"]
+            oldest = release - PAST_STEPS * _STEP
+            self._analyses = {t: v for t, v in self._analyses.items() if t >= oldest}
         if self._rain_tracker is not None:
             data["rain_events"] = await self._rain_tracker.async_track(release, metadata)
+
+    def _past_hour(self, release: datetime) -> list[float | None] | None:
+        """Return the analyses of the PAST_STEPS releases before ``release``.
+
+        Oldest first, and only if every one was adopted: right after a restart,
+        or after a release DWD did not publish in time, there is no past hour
+        until those releases are in again (up to an hour). The steps are not
+        fetched to fill the gap; the series simply starts at T until then.
+        """
+        steps = [release - k * _STEP for k in range(PAST_STEPS, 0, -1)]
+        if any(step not in self._analyses for step in steps):
+            return None
+        return [self._analyses[step] for step in steps]
+
+    async def _fetch_and_parse(self, ts: datetime) -> Payload:
+        """Fetch the whole archive (all 25 members are used) and decode it off the loop."""
+        response = await async_get(self._get_url(ts), self.async_client)
+        past = self._past_hour(ts) if self.options.full_rolling_series else None
+        return await self.hass.async_add_executor_job(
+            self._parse, response.content, ts, past
+        )
 
     def _publish_rain_view(self, view: RainEventsView) -> None:
         """Publish a view the tracker finished after the RV update (a fill)."""
@@ -493,11 +475,18 @@ class RadvorRV(RadvorProduct):
             raise ValueError(f"{prefix} analysis ends at {end}, not {step_end}")
         return _mm(cell[0])
 
-    def _parse(self, content: bytes, ts: datetime) -> Payload:
-        """Derive the RV entity payloads from the tar bytes (blocking)."""
+    def _parse(
+        self, content: bytes, ts: datetime, past: list[float | None] | None = None
+    ) -> Payload:
+        """Derive the RV entity payloads from the tar bytes (blocking).
+
+        ``past`` is the analyses of the releases before ``ts`` (see
+        _past_hour); with it the rolling-hour series starts an hour earlier.
+        """
         prefix = self._prefix(ts)
+        names = member_names(prefix, LEADS)
         cells = _decode_cells(
-            _tar_members(content, prefix, LEADS), prefix, LEADS, self.index, "RV"
+            members_from_archive(content, names), prefix, LEADS, self.index, "RV"
         )
 
         # Per-lead 5-minute cell values (mm) and window bounds, aligned to LEADS.
@@ -575,18 +564,22 @@ class RadvorRV(RadvorProduct):
             samples=_samples(LEADS),
         )
 
-        # Rolling hour ending at T+L = the twelve 5-minute steps L-55..L.
+        # Rolling hour ending at T+L = the twelve 5-minute steps ending at
+        # T+L-55..T+L. Wholly in this release from L = 60; with the past hour,
+        # every lead, the earlier steps being the analyses before T.
+        series_leads = LEADS if past is not None else FUTURE_HOUR_LEADS
         windows: list[tuple[datetime | None, datetime | None]] = [
             (None, None)
         ] * len(LEADS)
-        for lead in FUTURE_HOUR_LEADS:
-            start = starts[(lead - 60 + LEAD_STEP) // LEAD_STEP]
+        for lead in series_leads:
+            first = lead // LEAD_STEP - PAST_STEPS  # the window's first step here
+            start = starts[first] if first >= 0 else None
             end = ends[lead // LEAD_STEP]
             if start is None and end is not None:
                 start = end - timedelta(minutes=60)
             windows[lead // LEAD_STEP] = (start, end)
         peak_1h, peak_meta = _peak_hour_payload(
-            rolling_hour_sums(values), windows, FUTURE_HOUR_LEADS, timing_meta
+            rolling_hour_sums(values, past), windows, series_leads, timing_meta
         )
 
         # The analysis (lead 0) is the 5 minutes ending at T: the only measured

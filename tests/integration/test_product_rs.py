@@ -33,7 +33,7 @@ async def test_rs_fetch_derives_base_source_timestamp_and_window(make_coordinato
     # The three non-overlapping hours come from leads 0 / 60 / 120.
     assert [data["last_60"], data["next_60"], data["next_60_120"]] == [0.0, 60.0, 120.0]
     base = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
-    assert [m.source_timestamp for m in meta.values()] == [base] * 5
+    assert [m.source_timestamp for m in meta.values()] == [base] * 4
     assert [m.lead_time_minutes for m in (meta["last_60"], meta["next_60"], meta["next_60_120"])] == [0, 60, 120]
     assert meta["last_60"].data_start == datetime(2026, 5, 18, 15, 0, tzinfo=timezone.utc)
     assert meta["last_60"].data_end == base
@@ -48,63 +48,16 @@ async def test_rs_fetch_derives_base_source_timestamp_and_window(make_coordinato
 
 
 @pytest.mark.asyncio
-async def test_rs_peak_hour_and_rolling_series(make_coordinator) -> None:
-    """RS: the wettest future rolling hour, its window, and the 25-point series."""
-    ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
-    # A storm straddling the fixed hours: its heaviest hour ends at T+90, which
-    # neither "next 60 min" (lead 60) nor "next 60-120 min" (lead 120) sees in full.
-    values = {lead: 0.0 for lead in LEADS}
-    values.update({0: 30.0, 60: 4.0, 85: 9.0, 90: 18.0, 95: 18.0, 120: 5.0})
-    data, meta, _ = await rs_fetch(make_coordinator, ts, values)
-
-    # Lead 0 (the past hour, 30 mm) is not a forecast and is excluded; the tie
-    # between leads 90 and 95 goes to the earlier window.
-    assert data["peak_1h"] == pytest.approx(18.0)
-    peak = meta["peak_1h"]
-    assert peak.lead_time_minutes == 90
-    assert peak.data_start == datetime(2026, 5, 18, 16, 30, tzinfo=timezone.utc)
-    assert peak.data_end == datetime(2026, 5, 18, 17, 30, tzinfo=timezone.utc)
-    assert peak.source_timestamp == ts
-
-    series = peak.rolling_1h
-    assert [p["lead"] for p in series] == LEADS
-    assert series[0] == {
-        "lead": 0,
-        "start": "2026-05-18T15:00:00+00:00",
-        "end": "2026-05-18T16:00:00+00:00",
-        "value": pytest.approx(30.0),
-    }
-    assert series[18]["value"] == pytest.approx(18.0)  # lead 90
-    # The fixed-hour members keep no series of their own.
-    assert all(m.rolling_1h is None for m in (meta["last_60"], meta["next_60"], meta["next_60_120"]))
-
-
-@pytest.mark.asyncio
-async def test_rs_dry_forecast_has_no_peak_window(make_coordinator) -> None:
-    """RS: a dry forecast peaks at 0 mm, but has no wettest hour to point at."""
-    ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
-    data, meta, _ = await rs_fetch(make_coordinator, ts, {lead: 0.0 for lead in LEADS})
-
-    assert data["peak_1h"] == 0.0
-    assert meta["peak_1h"].data_start is None
-    assert meta["peak_1h"].data_end is None
-    assert meta["peak_1h"].lead_time_minutes is None
-    assert len(meta["peak_1h"].rolling_1h) == 25
-
-
-@pytest.mark.asyncio
-async def test_rs_without_option_decodes_only_the_three_hours(make_coordinator) -> None:
-    """RS: with the option off only leads 0/60/120 are decoded; RV owns the peak."""
+async def test_rs_decodes_only_the_three_hours(make_coordinator) -> None:
+    """RS: only leads 0/60/120 are decoded; RV builds the peak hour."""
     ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
     values = {lead: float(lead) for lead in LEADS}
-    data, meta, decoded = await rs_fetch(make_coordinator, ts, values, full=False)
+    data, meta, decoded = await rs_fetch(make_coordinator, ts, values)
 
     assert decoded == [0, 60, 120]
-    assert data == {
-        "last_60": 0.0, "next_60": 60.0, "next_60_120": 120.0, "peak_1h": None, "next_120": 180.0,
-    }
-    assert meta["peak_1h"] is None
+    assert data == {"last_60": 0.0, "next_60": 60.0, "next_60_120": 120.0, "next_120": 180.0}
     assert [m.lead_time_minutes for m in (meta["last_60"], meta["next_60"], meta["next_60_120"])] == [0, 60, 120]
+    assert all(m.rolling_1h is None for m in meta.values())
 
 
 @pytest.mark.asyncio
@@ -119,7 +72,7 @@ async def test_rs_range_fallback_is_said_once_and_its_end_once(make_coordinator,
         lead = int(fileobj.getvalue())
         return np.float32(lead), rs_what(ts, lead)
 
-    coord = make_coordinator(RadvorRS, {"full_rolling_series": False})
+    coord = make_coordinator(RadvorRS)
     with patch.object(products, "read_odim_composite_cell", side_effect=_read):
         for server in (ignores_ranges, ignores_ranges, ignores_ranges, serves_ranges):
             with patch.object(products, "async_get", side_effect=server):
@@ -133,8 +86,13 @@ async def test_rs_range_fallback_is_said_once_and_its_end_once(make_coordinator,
 
 
 @pytest.mark.asyncio
-async def test_rs_without_option_reads_the_hours_by_range(make_coordinator) -> None:
-    """RS: the default mode asks for byte ranges instead of the whole archive."""
+@pytest.mark.parametrize("full_rolling_series", [False, True])
+async def test_rs_reads_the_hours_by_range(make_coordinator, full_rolling_series) -> None:
+    """RS asks for byte ranges instead of the whole archive, whatever the options.
+
+    The full rolling-hour series is built from RV, so the option no longer
+    makes RS download whole archives (~5x the data).
+    """
     ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
     server = RangeServer(make_radvor_tar("rs", ts))
 
@@ -142,7 +100,7 @@ async def test_rs_without_option_reads_the_hours_by_range(make_coordinator) -> N
         lead = int(fileobj.getvalue())
         return np.float32(lead), rs_what(ts, lead)
 
-    coord = make_coordinator(RadvorRS, {"full_rolling_series": False})
+    coord = make_coordinator(RadvorRS, {"full_rolling_series": full_rolling_series})
     with (
         patch.object(products, "async_get", side_effect=server.async_get),
         patch.object(products, "read_odim_composite_cell", side_effect=_read),

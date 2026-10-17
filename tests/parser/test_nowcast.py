@@ -11,6 +11,7 @@ from radar.nowcast import (
     HOUR1_LEADS,
     HOUR2_LEADS,
     LEADS,
+    PAST_STEPS,
     STEPS_PER_HOUR,
     bucket_max_intensity,
     detect_start_end,
@@ -218,3 +219,38 @@ def test_rolling_hour_sums_build_only_future_windows():
     sums = rolling_hour_sums(_series(**{"5": 1.0}))
     assert sums[: 60 // 5] == [None] * (60 // 5)
     assert all(v is not None for v in sums[60 // 5:])
+
+
+# The analyses of the 11 releases before T, oldest first: 1 mm in the one
+# ending at T-55, 2 mm in the one ending at T-5, dry in between.
+PAST = [1.0] + [0.0] * (PAST_STEPS - 2) + [2.0]
+
+
+def test_rolling_hour_sums_with_the_past_hour_build_every_lead():
+    sums = rolling_hour_sums(_series(**{"0": 4.0, "5": 8.0}), PAST)
+    # The hour ending at T: the eleven analyses before T, and T's own.
+    assert sums[0] == pytest.approx(1.0 + 2.0 + 4.0)
+    # Ending at T+5: the analysis ending at T-55 has dropped out, step +5 is in.
+    assert sums[5 // 5] == pytest.approx(2.0 + 4.0 + 8.0)
+    # Ending at T+55: only T's analysis is measured.
+    assert sums[55 // 5] == pytest.approx(4.0 + 8.0)
+    assert all(v is not None for v in sums)
+
+
+def test_rolling_hour_sums_past_hour_leaves_future_windows_alone():
+    values = _series(**{"0": 4.0, "5": 8.0, "90": 1.5})
+    with_past = rolling_hour_sums(values, PAST)
+    assert with_past[60 // 5:] == rolling_hour_sums(values)[60 // 5:]
+
+
+def test_rolling_hour_sums_past_hour_missing_steps():
+    # A past analysis without data counts as 0, like any missing step...
+    past: list[float | None] = [None] * PAST_STEPS
+    assert rolling_hour_sums(_series(**{"0": 4.0}), past)[0] == pytest.approx(4.0)
+    # ... and an hour with no data at all has none either.
+    assert rolling_hour_sums([None] * len(LEADS), past)[0] is None
+
+
+def test_rolling_hour_sums_need_the_whole_past_hour():
+    with pytest.raises(ValueError):
+        rolling_hour_sums(_series(), PAST[1:])

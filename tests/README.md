@@ -39,7 +39,9 @@ Files are named for what they test, so the pattern says where a test belongs:
   `tests/live_common.py`, shared with `live_wradlib/`). Catches URL/format/archive
   drift at the source, and reads RS by range as the integration does, so a lost
   range support or a changed tar layout fails here rather than as a silent
-  fallback. Marked `@pytest.mark.live`; HA-free by design: the URLs come from the
+  fallback. Also checks, on the whole grid, that every RS member is the sum of
+  the RV 5-minute steps in its hour, which the peak hour and its series rely on
+  (ADR 0009). Marked `@pytest.mark.live`; HA-free by design: the URLs come from the
   HA-free `radar/urls.py`, the same patterns the integration fetches.
 - **`live_wradlib/`** — the reference comparison on **today's** DWD files for every
   product (RS, RV, HymecNG, RW, SF). For a fixed set of German locations it checks

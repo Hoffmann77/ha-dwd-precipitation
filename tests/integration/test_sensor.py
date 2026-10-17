@@ -38,7 +38,7 @@ from custom_components.dwd_precipitation.dry_streak import (
 )
 from homeassistant.components.sensor import SensorDeviceClass
 from custom_components.dwd_precipitation.sensor import (
-    _peak_hour_sensor,
+    RADVOR_RV_SENSORS,
     TimespanWithoutPrecipitationSensor,
     PrecipitationSensorEntity,
     PrecipitationSensorEntityDescription,
@@ -46,6 +46,8 @@ from custom_components.dwd_precipitation.sensor import (
 )
 
 UTC = timezone.utc
+
+PEAK_HOUR = next(d for d in RADVOR_RV_SENSORS if d.key == "radvor_peak_1h_120")
 
 
 _PLAIN = PrecipitationSensorEntityDescription(key="k", product_key="rs", sub_key="k")
@@ -353,38 +355,20 @@ def test_timing_keys_are_stable_across_modes():
 
 
 def _peak_sensor(make_sensor, metadata, extra=False) -> PrecipitationSensorEntity:
-    """The peak sensor as RS feeds it (full rolling series option on)."""
-    return make_sensor(
-        _peak_hour_sensor(True),
-        data={"last_60": 0.0, "next_60": 1.0, "next_60_120": 2.0, "peak_1h": 6.5},
-        metadata={"last_60": None, "next_60": None, "next_60_120": None, "peak_1h": metadata},
-        extra=extra,
-    )
+    """The peak sensor on an RV coordinator holding ``metadata`` for it."""
+    return make_sensor(PEAK_HOUR, data={"peak_1h": 6.5}, metadata={"peak_1h": metadata}, extra=extra)
 
 
-async def test_peak_hour_sensor_source_follows_option(make_sensor):
-    """Off: RV feeds it; on: RS. One key either way, so the entity survives."""
-    rv, rs = _peak_hour_sensor(False), _peak_hour_sensor(True)
-    assert (rv.product_key, rs.product_key) == ("rv", "rs")
-    assert rv.key == rs.key == "radvor_peak_1h_120"
-    assert rv.translation_key == rs.translation_key
-
-    meta = ProductMetadata(source_product="RV", source_timestamp=None, rolling_1h=[])
-    sensor = make_sensor(
-        rv, data={"peak_1h": 4.2}, metadata={"peak_1h": meta}
-    )
-    assert sensor.native_value == 4.2
-    assert sensor.extra_state_attributes == {
-        "window_start": None,
-        "window_end": None,
-        "forecast_rolling_1h": [],
-    }
+def test_peak_hour_sensor_reads_rv_under_its_released_key():
+    """RV feeds it, with or without the full rolling series option."""
+    assert (PEAK_HOUR.product_key, PEAK_HOUR.sub_key) == ("rv", "peak_1h")
+    assert PEAK_HOUR.key == "radvor_peak_1h_120"
 
 
 async def test_peak_hour_sensor_always_exposes_window_and_series(make_sensor):
     series = [{"lead": 90, "start": None, "end": None, "value": 6.5}]
     meta = ProductMetadata(
-        source_product="RS",
+        source_product="RV",
         source_timestamp=datetime(2026, 5, 18, 16, 0, tzinfo=UTC),
         lead_time_minutes=90,
         data_start=datetime(2026, 5, 18, 16, 30, tzinfo=UTC),
@@ -407,7 +391,7 @@ async def test_peak_hour_sensor_always_exposes_window_and_series(make_sensor):
 
 async def test_peak_hour_sensor_dry_forecast_has_null_window(make_sensor):
     meta = ProductMetadata(
-        source_product="RS", source_timestamp=None, rolling_1h=[],
+        source_product="RV", source_timestamp=None, rolling_1h=[],
     )
     attrs = _peak_sensor(make_sensor, meta).extra_state_attributes
     assert attrs["window_start"] is None

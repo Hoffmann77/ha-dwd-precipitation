@@ -31,7 +31,6 @@ from .const import (
     KEY_NEXT_60,
     KEY_NEXT_60_120,
     KEY_NEXT_120,
-    KEY_PEAK_1H,
     KEY_PRECIPITATION_TYPE,
     RW_SLIDING_KEY,
     START_END_MODE_DURATION,
@@ -187,32 +186,8 @@ def _peak_hour_attrs(meta: ProductMetadata) -> dict[str, Any]:
     }
 
 
-def _peak_hour_sensor(full_rolling_series: bool) -> PrecipitationSensorEntityDescription:
-    """Return "Peak hourly precipitation next 120 min", bound to its product.
-
-    The value is the same from either product (RS equals summed RV for every
-    window wholly in the future). RV is the default because it has already
-    decoded the steps; RS only when the option asks for the 12 windows RV
-    cannot reach. The key is product-neutral so toggling the option keeps the
-    entity, its id and its history.
-    """
-    common: dict[str, Any] = dict(
-        key="radvor_peak_1h_120",
-        translation_key="peak_hourly_precipitation_next_120_min",
-        **_MM,
-        metadata_attrs_fn=_peak_hour_attrs,
-    )
-    if full_rolling_series:
-        return PrecipitationSensorEntityDescription(
-            product_key="rs", sub_key=KEY_PEAK_1H, **common
-        )
-    return PrecipitationSensorEntityDescription(
-        product_key="rv", sub_key="peak_1h", **common
-    )
-
-
 # RV sensors whose shape does not depend on the start/end display mode: the
-# current intensity and the two peak-intensity sensors.
+# current intensity, the three peak-intensity sensors and the peak hour.
 RADVOR_RV_SENSORS = (
     PrecipitationSensorEntityDescription(
         key="radvor_rv_intensity_000",
@@ -248,6 +223,17 @@ RADVOR_RV_SENSORS = (
         **_MMH,
         product_key="rv",
         sub_key="max_000_120",
+    ),
+    # Summed from RV's 5-minute steps, which equals RS's rolling hours. The
+    # key keeps its product-neutral name from when RS fed it with the full
+    # rolling series option on.
+    PrecipitationSensorEntityDescription(
+        key="radvor_peak_1h_120",
+        translation_key="peak_hourly_precipitation_next_120_min",
+        **_MM,
+        product_key="rv",
+        sub_key="peak_1h",
+        metadata_attrs_fn=_peak_hour_attrs,
     ),
 )
 
@@ -341,7 +327,6 @@ async def async_setup_entry(
 
     entity_descriptions = (
         RADVOR_SENSORS
-        + (_peak_hour_sensor(options.full_rolling_series),)
         + RADVOR_RV_SENSORS
         + _rv_timing_sensors(options.start_end_mode)
         + HYMECNG_SENSORS

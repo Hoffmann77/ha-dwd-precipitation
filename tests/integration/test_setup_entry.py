@@ -43,33 +43,17 @@ from custom_components.dwd_precipitation.products import (
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("full_rolling_series", [False, True])
 async def test_entry_setup_creates_sensors_with_correct_values(
     make_entry,
-    hass: HomeAssistant, full_rolling_series: bool
+    hass: HomeAssistant,
 ) -> None:
-    """Full entry setup with mocked _fetch_and_parse; verify coordinators + sensor states.
-
-    Run with the full-rolling-series option off and on: the peak-hour sensor
-    reads RV or RS respectively, told apart here by giving the two different
-    peaks (in reality they agree).
-    """
+    """Full entry setup with mocked _fetch_and_parse; verify coordinators + sensor states."""
     ts = datetime(2025, 6, 1, 12, 0, tzinfo=timezone.utc)
-    rs_data = {
-        "last_60": 1.5, "next_60": 2.0, "next_60_120": 0.5, "peak_1h": 6.5, "next_120": 2.5,
-    }
+    rs_data = {"last_60": 1.5, "next_60": 2.0, "next_60_120": 0.5, "next_120": 2.5}
     rs_meta = {
         "last_60": ProductMetadata("RS", ts, lead_time_minutes=0),
         "next_60": ProductMetadata("RS", ts, lead_time_minutes=60),
         "next_60_120": None,
-        "peak_1h": ProductMetadata(
-            source_product="RS",
-            source_timestamp=ts,
-            lead_time_minutes=75,
-            data_start=ts + timedelta(minutes=15),
-            data_end=ts + timedelta(minutes=75),
-            rolling_1h=[{"lead": 75, "start": None, "end": None, "value": 6.5}],
-        ),
         "next_120": None,
     }
     rw_meta = ProductMetadata("RW", datetime(2025, 6, 1, 12, 0, tzinfo=timezone.utc))
@@ -105,7 +89,7 @@ async def test_entry_setup_creates_sensors_with_correct_values(
     )
     hymec_meta = ProductMetadata(source_product="HymecNG_top_view", source_timestamp=ts)
 
-    entry = make_entry({"full_rolling_series": full_rolling_series})
+    entry = make_entry()
 
     with (
         patch.object(
@@ -163,17 +147,13 @@ async def test_entry_setup_creates_sensors_with_correct_values(
     assert state is not None
     assert float(state.state) == approx(1.5)
 
-    # The peak-hour sensor reads whichever product the option selects, and
-    # carries that product's window and rolling-hour series.
+    # The peak-hour sensor reads RV, with its window and rolling-hour series.
     state = _state_for(hass, entry, "radvor_peak_1h_120")
     assert state is not None
-    peak, start, end = (
-        (6.5, "12:15", "13:15") if full_rolling_series else (4.0, "12:30", "13:30")
-    )
-    assert float(state.state) == approx(peak)
-    assert state.attributes["window_start"] == f"2025-06-01T{start}:00+00:00"
-    assert state.attributes["window_end"] == f"2025-06-01T{end}:00+00:00"
-    assert state.attributes["forecast_rolling_1h"][0]["value"] == approx(peak)
+    assert float(state.state) == approx(4.0)
+    assert state.attributes["window_start"] == "2025-06-01T12:30:00+00:00"
+    assert state.attributes["window_end"] == "2025-06-01T13:30:00+00:00"
+    assert state.attributes["forecast_rolling_1h"][0]["value"] == approx(4.0)
 
     # The current intensity is the analysis step as mm/h, with that 5-minute
     # window and its raw amount alongside.
@@ -618,9 +598,9 @@ async def test_the_entrys_products_share_one_download_cache(make_entry, hass: Ho
         await hass.async_block_till_done()
 
     coordinators = entry.runtime_data.coordinators
-    assert "rw_10min" in coordinators
-    caches = {id(c.download_cache) for c in coordinators.values()}
-    assert len(caches) == 1 and None not in {c.download_cache for c in coordinators.values()}
+    shared = [coordinators[key] for key in ("rw", "rw_10min", "sf", "sf_2350")]
+    caches = {id(c.download_cache) for c in shared}
+    assert len(caches) == 1 and None not in {c.download_cache for c in shared}
 
 
 @pytest.mark.asyncio

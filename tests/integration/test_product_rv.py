@@ -1,8 +1,8 @@
-"""RV (RADVOR 5-minute nowcast): derived values, options, and the peak hour RS shares."""
+"""RV (RADVOR 5-minute nowcast): derived values, options, and the peak hour."""
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
 import numpy as np
@@ -14,11 +14,7 @@ from custom_components.dwd_precipitation.utils import AsyncResponse
 
 from tests.factories.radvor import LEADS, RangeServer, make_radvor_tar
 from tests.factories.real import real_cells, real_member, real_release
-from tests.integration.product_helpers import (
-    rs_fetch,
-    rv_fetch,
-    rv_what,
-)
+from tests.integration.product_helpers import rv_fetch, rv_what
 
 
 @pytest.mark.asyncio
@@ -192,46 +188,120 @@ async def test_rv_end_algorithm_option_selects_clearing(make_coordinator) -> Non
     assert clearing["end_at"] == datetime(2026, 7, 16, 21, 30, tzinfo=timezone.utc)
 
 
+T = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
+STEP = timedelta(minutes=5)
+FUTURE_LEADS = list(range(60, 121, 5))
+
+
+def _release(analysis: float, forecast: dict[int, float] | None = None) -> dict[int, float | None]:
+    """One RV release's steps: ``analysis`` at lead 0, dry unless ``forecast`` says."""
+    values: dict[int, float | None] = {lead: 0.0 for lead in LEADS}
+    values.update(forecast or {})
+    values[0] = analysis
+    return values
+
+
+async def _adopt(make_coordinator, coord, ts: datetime, values):
+    """Fetch release ``ts`` on ``coord`` and adopt it, as _async_update_data does."""
+    data, meta = await rv_fetch(make_coordinator, ts, values, coord=coord)
+    await coord._async_on_new_release(ts, data, meta)
+    return data, meta
+
+
 @pytest.mark.asyncio
-async def test_rv_peak_hour_matches_rs_for_the_same_rain(make_coordinator) -> None:
-    """RV-summed rolling hours give RS's peak, window and future series exactly.
-
-    The two sources back one sensor, switched by an option, so the state must
-    not move when a user flips it.
-    """
-    ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
-    leads = LEADS
+async def test_rv_peak_hour_window_and_series(make_coordinator) -> None:
+    """RV: the wettest rolling hour wholly ahead, its window, and the 13 hours ahead."""
     # 5-minute rain: a shower around +40 min and a heavier cell around +95 min.
-    rv = {lead: 0.0 for lead in leads}
-    rv.update({35: 0.4, 40: 0.9, 45: 0.3, 85: 0.6, 90: 1.7, 95: 2.2, 100: 0.8})
-    # RS members are the rolling hour ending at each lead (the past hour being
-    # whatever it was; RV cannot see it, and it plays no part in the peak).
-    rs = {
-        lead: round(sum(rv[k] for k in leads if lead - 60 < k <= lead and k > 0), 3)
-        for lead in leads
-    }
-    rs[0] = 12.0
+    data, meta = await rv_fetch(
+        make_coordinator, T, _release(0.0, {35: 0.4, 40: 0.9, 45: 0.3, 85: 0.6, 90: 1.7, 95: 2.2, 100: 0.8})
+    )
 
-    rv_data, rv_meta = await rv_fetch(make_coordinator, ts, rv)
-    rs_data, rs_meta, _ = await rs_fetch(make_coordinator, ts, rs)
-
-    assert rv_data["peak_1h"] == pytest.approx(rs_data["peak_1h"])
     # Wettest hour ends at +95: steps +40..+95 catch the tail of the first
     # shower too (0.9 + 0.3), beating the window ending at +100 (5.6 mm).
-    assert rv_data["peak_1h"] == pytest.approx(0.9 + 0.3 + 0.6 + 1.7 + 2.2)
-    for attr in ("lead_time_minutes", "data_start", "data_end"):
-        assert getattr(rv_meta["peak_1h"], attr) == getattr(rs_meta["peak_1h"], attr), attr
-    assert rv_meta["peak_1h"].lead_time_minutes == 95
-    assert rv_meta["peak_1h"].data_start == datetime(2026, 5, 18, 16, 35, tzinfo=timezone.utc)
-    assert rv_meta["peak_1h"].data_end == datetime(2026, 5, 18, 17, 35, tzinfo=timezone.utc)
+    assert data["peak_1h"] == pytest.approx(0.9 + 0.3 + 0.6 + 1.7 + 2.2)
+    peak = meta["peak_1h"]
+    assert peak.lead_time_minutes == 95
+    assert peak.data_start == datetime(2026, 5, 18, 16, 35, tzinfo=timezone.utc)
+    assert peak.data_end == datetime(2026, 5, 18, 17, 35, tzinfo=timezone.utc)
+    assert peak.source_timestamp == T
+    assert [p["lead"] for p in peak.rolling_1h] == FUTURE_LEADS
+    assert peak.rolling_1h[(95 - 60) // 5]["value"] == pytest.approx(data["peak_1h"])
 
-    # RV's series is the 13 wholly-future hours, point for point equal to RS's.
-    rv_series = rv_meta["peak_1h"].rolling_1h
-    rs_series = {p["lead"]: p for p in rs_meta["peak_1h"].rolling_1h}
-    assert [p["lead"] for p in rv_series] == list(range(60, 121, 5))
-    assert len(rs_series) == 25
-    for point in rv_series:
-        assert point == rs_series[point["lead"]]
+
+@pytest.mark.asyncio
+async def test_rv_dry_forecast_has_no_peak_window(make_coordinator) -> None:
+    """RV: a dry forecast peaks at 0 mm, but has no wettest hour to point at."""
+    data, meta = await rv_fetch(make_coordinator, T, _release(0.0))
+
+    assert data["peak_1h"] == 0.0
+    peak = meta["peak_1h"]
+    assert (peak.data_start, peak.data_end, peak.lead_time_minutes) == (None, None, None)
+    assert len(peak.rolling_1h) == len(FUTURE_LEADS)
+
+
+@pytest.mark.asyncio
+async def test_rv_full_series_adds_the_past_hour(make_coordinator) -> None:
+    """With the option, the series starts an hour earlier, from the analyses adopted.
+
+    The hour ending at T is the analyses of T and of the 11 releases before it
+    (what RS's _000 holds); the hours ahead, and so the peak, are untouched.
+    """
+    coord = make_coordinator(RadvorRV, {"full_rolling_series": True})
+    # The past hour: 0.5 mm in the 5 minutes ending at T-55, 1.0 mm at T-5.
+    for k in range(11, 0, -1):
+        await _adopt(make_coordinator, coord, T - k * STEP, _release({11: 0.5, 1: 1.0}.get(k, 0.0)))
+    current = _release(2.0, {5: 0.25, 90: 3.0})
+    data, meta = await _adopt(make_coordinator, coord, T, current)
+
+    series = meta["peak_1h"].rolling_1h
+    assert [p["lead"] for p in series] == LEADS
+    assert series[0] == {
+        "lead": 0,
+        "start": "2026-05-18T15:00:00+00:00",
+        "end": "2026-05-18T16:00:00+00:00",
+        "value": pytest.approx(0.5 + 1.0 + 2.0),
+    }
+    # Ending at T+5: the step ending at T-55 has left the hour, step +5 joined it.
+    assert series[1]["value"] == pytest.approx(1.0 + 2.0 + 0.25)
+    assert (series[6]["start"], series[6]["end"]) == (
+        "2026-05-18T15:30:00+00:00",
+        "2026-05-18T16:30:00+00:00",
+    )
+
+    plain_data, plain_meta = await rv_fetch(make_coordinator, T, current)
+    assert series[len(LEADS) - len(FUTURE_LEADS):] == plain_meta["peak_1h"].rolling_1h
+    assert data["peak_1h"] == plain_data["peak_1h"] == pytest.approx(3.0)
+    for attr in ("lead_time_minutes", "data_start", "data_end"):
+        assert getattr(meta["peak_1h"], attr) == getattr(plain_meta["peak_1h"], attr), attr
+
+
+@pytest.mark.asyncio
+async def test_rv_full_series_waits_for_a_whole_past_hour(make_coordinator) -> None:
+    """Right after a restart, or a release never adopted, the past hour is missing.
+
+    The series then has the 13 hours ahead, as without the option, until all
+    11 analyses before the release are in again.
+    """
+    coord = make_coordinator(RadvorRV, {"full_rolling_series": True})
+    for k in range(10, 0, -1):  # started at T-50, so T-55 was never adopted
+        await _adopt(make_coordinator, coord, T - k * STEP, _release(1.0))
+    _, meta = await _adopt(make_coordinator, coord, T, _release(1.0))
+    assert [p["lead"] for p in meta["peak_1h"].rolling_1h] == FUTURE_LEADS
+
+    # One release later the past hour (T-50..T) is complete.
+    _, meta = await _adopt(make_coordinator, coord, T + STEP, _release(1.0))
+    series = meta["peak_1h"].rolling_1h
+    assert [p["lead"] for p in series] == LEADS
+    assert series[0]["value"] == pytest.approx(12 * 1.0)
+
+
+@pytest.mark.asyncio
+async def test_rv_without_the_option_the_series_stays_ahead(make_coordinator) -> None:
+    """Without the option, a whole hour of releases still gives the 13 hours ahead."""
+    coord = make_coordinator(RadvorRV)
+    for k in range(12, -1, -1):
+        _, meta = await _adopt(make_coordinator, coord, T - k * STEP, _release(1.0))
+    assert [p["lead"] for p in meta["peak_1h"].rolling_1h] == FUTURE_LEADS
 
 
 @pytest.mark.asyncio

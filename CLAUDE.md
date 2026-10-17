@@ -101,9 +101,9 @@ poll loop.
    (`KEY_*` in `const.py`, except RV's own), `metadata` holding each value's `ProductMetadata`
    (or `None`). RADOLAN has one, `amount` (`None` for a nodata cell, which the
    ODIM reader returns as NaN); HymecNG `precipitation_type`; RS `last_60`,
-   `next_60`, `next_60_120` (members `_000`/`_060`/`_120`), `next_120`
-   (`_060 + _120`) and `peak_1h` (`None` unless `full_rolling_series` is on);
-   RV its derived values (`max_060`, `start_at`, `rain_within_2h`, ...)
+   `next_60`, `next_60_120` (members `_000`/`_060`/`_120`) and `next_120`
+   (`_060 + _120`); RV its derived values (`max_060`, `start_at`,
+   `rain_within_2h`, `peak_1h`, ...)
 5. An entity's value is `coordinator.data.data[description.sub_key]` and its
    metadata `coordinator.data.metadata[description.sub_key]`
    (`DwdCoordinatorEntity._value` / `_metadata`)
@@ -207,8 +207,8 @@ viewers and Windows consoles mangle typographic punctuation.
 
 | Class | Key | Format | Update | Description |
 |-------|-----|--------|--------|-------------|
-| `RadvorRS` | `rs` | ODIM_H5 (tar) | 5 min | RADVOR nowcast, 25 rolling 60-min accumulations; exposes the 0/60/120 min leads and the 120-min total (60 + 120), plus — only with the `full_rolling_series` option — the wettest future hour with the 25-point rolling-hour series (see "RS product specifics") |
-| `RadvorRV` | `rv` | ODIM_H5 (tar) | 5 min | RV nowcast, 25×5-min grids; derives the current intensity (lead 0 × 12, mm/h, with the raw 5-min amount), peak intensity (mm/h) over the first hour, the second and both, precip start/end timing (episode/clearing end algorithm, user-selectable), a rain-within-2h flag (whose metadata carries the raw 25-point forecast series, exposed by default), and by default the wettest future hour (see "Peak hourly precipitation") |
+| `RadvorRS` | `rs` | ODIM_H5 (tar) | 5 min | RADVOR nowcast, 25 rolling 60-min accumulations; exposes the 0/60/120 min leads, read by range, and the 120-min total (60 + 120) (see "RS product specifics") |
+| `RadvorRV` | `rv` | ODIM_H5 (tar) | 5 min | RV nowcast, 25×5-min grids; derives the current intensity (lead 0 × 12, mm/h, with the raw 5-min amount), peak intensity (mm/h) over the first hour, the second and both, precip start/end timing (episode/clearing end algorithm, user-selectable), a rain-within-2h flag (whose metadata carries the raw 25-point forecast series, exposed by default), and the wettest future hour with its rolling-hour series (see "Peak hourly precipitation") |
 | `HymecNG` | `hymecng` | ODIM_H5 (single .hd5) | 5 min | Precipitation-*type* composite (rain/snow/freezing rain/hail/…); one enum "Precipitation type now" sensor |
 | `RadolanRW` | `rw` | ODIM_H5 (RADOLAN HDF5 edition) | 1 h | 1-hour precipitation analysis (gauge-adjusted), the run ending on the hour: one clock hour per release (see "RW 10-minute runs") |
 | `RadolanRW10` | `rw_10min` | same as RW | 10 min | RW's 10-minute runs: the sliding hour ending at each :x0. Built only for a dry streak counting RW (see "RW 10-minute runs") |
@@ -323,9 +323,11 @@ once released, since renaming one orphans the user's entity.
    `RELEASE_OFFSET` and `OVERDUE_GRACE` (spelled out even when it is just
    `DEFAULT_OVERDUE_GRACE` — a test enforces this), plus
    `MAX_FAST_POLL_INTERVAL` if the default does not fit
-3. Implement `_get_url(ts)` and the blocking `_parse(content, ts)`; the base
-   fetches and runs `_parse` in the executor. Override `_fetch_and_parse` only
-   to read part of a file (RS's range reads), and keep it free of side
+3. Add its URL pattern to `radar/urls.py` (`_get_url` derives the URL from
+   `PRODUCT_KEY`). A `WholeFileProduct` implements the blocking
+   `_parse(content, ts)`; the base downloads the file and runs `_parse` in the
+   executor. A `RadvorProduct` implements `_fetch_and_parse` (RS reads three
+   members by range, RV the whole tar). Keep `_fetch_and_parse` free of side
    effects (anything else goes in `_async_on_new_release`)
 4. `index` defaults to the DE1200 lookup; override it (cached_property) only
    for a product on another grid
@@ -464,44 +466,49 @@ importing probatio ourselves would break every HA from before that alias.
 - **Projection**: `+proj=stere +lat_ts=60 +lat_0=90 +lon_0=10 +x_0=543196.835... +y_0=3622588.861...` (WGS84)
 - **Rolling windows**: the members in between are the same 60-minute sum sliding
   in 5-minute steps — lead L covers T+L−60 → T+L, so neighbours overlap by 55 min.
-  RS is radar-only, like RV: `_060` equals the sum of RV leads 5–60 cell for cell
-  (checked against live data). Only RADOLAN RW/SF are gauge-adjusted.
-- **Fetching**: by default `RadvorRS._fetch_and_parse()` reads only
-  `_000`/`_060`/`_120`, by range (see "Range reads"); with the
-  `full_rolling_series` option it downloads the whole tar for all 25. Either
-  way `_parse()` gets the members' bytes and decodes them off the loop. The
-  payload is keyed `last_60`/`next_60`/`next_60_120` (`_000`/`_060`/`_120`),
-  `peak_1h` (`None` unless the option is on) and `next_120` (`_060 + _120`).
+  RS is radar-only, like RV: every member is the sum of the twelve RV 5-minute
+  steps in its hour, cell for cell (ADR 0009). Only RADOLAN RW/SF are
+  gauge-adjusted.
+- **Fetching**: `RadvorRS._fetch_and_parse()` reads only `_000`/`_060`/`_120`,
+  by range (see "Range reads"), whatever the options, and decodes them off the
+  loop. The payload is keyed `last_60`/`next_60`/`next_60_120`
+  (`_000`/`_060`/`_120`) and `next_120` (`_060 + _120`).
 
 ## Peak hourly precipitation
 
 `Peak hourly precipitation next 120 min` is the wettest rolling hour wholly in the
 future (windows ending at +60..+120, `FUTURE_HOUR_LEADS`; ties go to the earlier
 window), with the window as `data_start`/`data_end` (`None` on a dry forecast)
-and the rolling-hour series as `rolling_1h`. Two products can feed it, and
-`_peak_hour_sensor()` binds the entity to one at setup (options reload the entry):
+and the rolling-hour series as `rolling_1h`. RV builds it: `rolling_hour_sums`
+adds twelve 5-minute steps per window, from the 25 members RV decodes anyway,
+and the series has the 13 windows wholly in the forecast.
 
-- **RV (default)** sums twelve 5-minute steps per window (`rolling_hour_sums`),
-  reusing the 25 members RV decodes anyway. It can only build windows wholly in
-  the forecast, so the series has 13 points.
-- **RS (`full_rolling_series` on)** decodes all 25 members, adding the 12
-  windows that straddle now. ~+140 ms per release.
+With `full_rolling_series` on, the series starts an hour earlier (25 points).
+The windows ending at T..T+55 also need the analyses of the 11 releases before
+T: `RadvorRV._async_on_new_release` keeps each adopted release's analysis for
+an hour (in memory), and `_fetch_and_parse` hands them to `_parse`
+(`_past_hour`). The extra points appear only when all 11 are known, so after a
+restart, or a release that was never adopted, the series has 13 points for up
+to an hour. Missed analyses are not fetched: a background fill like the
+rain-events tracker's is not worth it for an attribute nothing records. The
+value, its window and the 13 future points are the same either way; a test
+asserts it.
 
-The two are interchangeable by construction: RS *is* summed RV, verified on
-live data to 0.000 mm in every cell. A missing RV step counts as 0 because that
-is what RS reports at the coverage edge, and both round to the ODIM 0.001 mm
-resolution (`MM_DECIMALS`). Keep it that way — flipping the option must not
-move the state, and a test asserts both paths give the same peak, window and
-series. The entity key `radvor_peak_1h_120` is deliberately product-neutral so
-the entity survives the switch.
+RS *is* summed RV, every member in every cell (ADR 0009), and
+`tests/live/test_live_download.py` checks it daily. That is what makes the
+series' first point equal `Precipitation last 60 min` (RS `_000`). A missing RV
+step counts as 0 because that is what RS reports at the coverage edge, and both
+round to the ODIM 0.001 mm resolution (`MM_DECIMALS`). The entity key
+`radvor_peak_1h_120` is product-neutral because RS used to feed it with the
+option on.
 
 ## Dry streak source
 
 `Timespan without precipitation` resets when a past-hour total reaches
 `precipitation_reset_threshold`. The `dry_streak_source` option picks the
 product, and its values are product keys, so `async_setup_entry` binds the
-entity to `coordinators[source]` directly (options reload the entry, as for
-`_peak_hour_sensor()`):
+entity to `coordinators[source]` directly (options reload the entry, so
+binding once at setup is enough):
 
 - `rw` — RW, gauge-adjusted, ~28 min late, counted from its **10-minute
   runs** (`rw_10min`, see "RW 10-minute runs"): the reset shows up to an hour
@@ -559,8 +566,8 @@ hour; `RadolanRW10` (`rw_10min`) is the same file family on a 10-minute grid
 RS/RV tars are plain ustar archives, 25 members in lead order, served as static
 files with range support. `radar/tar_range.py` (`fetch_tar_members`) reads the
 members a caller needs; `RadvorProduct._async_read_members` wraps it with
-`async_get`. Used by RS in its default mode (3 members) and the RV backfill (the
-analysis only). Measured on 12 live archives: RS takes 4 requests and 19-20 %
+`async_get`. Used by RS (3 members, whatever the options) and the RV backfill
+(the analysis only). Measured on 12 live archives: RS takes 4 requests and 19-20 %
 of the bytes (archives are 3.5-17.5 MB), an RV analysis 1-2 requests and 4-7 %.
 
 - A 128 KiB head gives member 0 and the file size. The last wanted member is

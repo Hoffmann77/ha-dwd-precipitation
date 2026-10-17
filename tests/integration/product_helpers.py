@@ -8,10 +8,7 @@ from unittest.mock import AsyncMock, patch
 import numpy as np
 
 from custom_components.dwd_precipitation import products
-from custom_components.dwd_precipitation.products import (
-    RadvorRS,
-    RadvorRV,
-)
+from custom_components.dwd_precipitation.products import RadvorRS, RadvorRV
 from custom_components.dwd_precipitation.utils import AsyncResponse
 
 from tests.factories.radvor import make_radvor_tar
@@ -35,7 +32,7 @@ def rs_what(base: datetime, lead: int) -> dict:
     }
 
 
-async def rs_fetch(make_coordinator, ts: datetime, values: dict[int, float], full: bool = True):
+async def rs_fetch(make_coordinator, ts: datetime, values: dict[int, float]):
     """Run RadvorRS._fetch_and_parse, serving each decoded lead from ``values``."""
     decoded: list[int] = []
 
@@ -44,7 +41,7 @@ async def rs_fetch(make_coordinator, ts: datetime, values: dict[int, float], ful
         decoded.append(lead)
         return np.float32(values[lead]), rs_what(ts, lead)
 
-    coord = make_coordinator(RadvorRS, {"full_rolling_series": full})
+    coord = make_coordinator(RadvorRS)
 
     with (
         patch.object(
@@ -56,9 +53,9 @@ async def rs_fetch(make_coordinator, ts: datetime, values: dict[int, float], ful
         executor_jobs(coord) as jobs,
     ):
         data, meta = await coord._fetch_and_parse(ts)
-    # The decode runs off the loop; so does unpacking the archive this server
-    # sends whole instead of a range (default mode only).
-    assert jobs.call_count == (1 if full else 2)
+    # The decode runs off the loop, and so does unpacking the archive, which
+    # this server sends whole instead of the ranges asked for.
+    assert jobs.call_count == 2
     return data, meta, decoded
 
 
@@ -73,14 +70,19 @@ def rv_what(base: datetime, lead: int) -> dict:
     }
 
 
-async def rv_fetch(make_coordinator, ts: datetime, values: dict[int, float | None]):
-    """Run RadvorRV._fetch_and_parse, serving each lead from ``values`` (None = missing member)."""
+async def rv_fetch(
+    make_coordinator, ts: datetime, values: dict[int, float | None], coord=None
+):
+    """Run RadvorRV._fetch_and_parse, serving each lead from ``values`` (None = nodata).
+
+    On ``coord`` if given, so a test can feed one coordinator several releases.
+    """
     def _read(fileobj, _row, _col, **_kw):
         lead = int(fileobj.getvalue())  # make_radvor_tar's payload is the lead
         value = values[lead]
         return np.float32("nan" if value is None else value), rv_what(ts, lead)
 
-    coord = make_coordinator(RadvorRV)
+    coord = coord or make_coordinator(RadvorRV)
     with (
         patch.object(
             products,

@@ -19,3 +19,4 @@ one. Releases are named by their version (`2026.10.0`); the release after
 | [0006](0006-rain-events-opt-in-entity.md) | Rain events are their own opt-in entity, recomputed every release | 2026.10.1 |
 | [0007](0007-staleness-deadline-on-the-overdue-release.md) | Staleness is a deadline on the overdue release | 2026.9.0 |
 | [0008](0008-grid-lookup-floors-from-the-outer-corner.md) | The grid lookup floors from the outer corner | 2026.10.0 |
+| [0009](0009-full-rolling-series-from-rv.md) | The full rolling-hour series is built from RV, not RS | 2026.10.1 |

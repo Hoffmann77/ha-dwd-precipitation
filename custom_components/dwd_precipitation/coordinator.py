@@ -30,6 +30,7 @@ from homeassistant.util import dt as dt_util
 
 from .options import DwdOptions
 from .radar import get_rs_grid_index
+from .radar.urls import product_url
 from .release_grid import ReleaseGrid
 
 _LOGGER = logging.getLogger(__name__)
@@ -192,8 +193,9 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
 
     Each concrete subclass represents one DWD product and owns its own
     update schedule. Subclasses must define PRODUCT_KEY and the timing
-    ClassVars, and implement _fetch_and_parse() (products.py has a base for
-    one-file-per-release products). index defaults to the DE1200 grid.
+    ClassVars, and implement _fetch_and_parse() (products.py has bases for
+    one-file-per-release products and for RADVOR tars). index defaults to the
+    DE1200 grid, the URL to the product key's pattern in radar/urls.py.
 
     """
 
@@ -574,6 +576,10 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
         product on another grid.
         """
         return get_rs_grid_index(*self.coords)
+
+    def _get_url(self, ts: datetime) -> str:
+        """Return the URL of release ``ts`` (see radar/urls.py)."""
+        return product_url(self.PRODUCT_KEY, ts)
 
     @abstractmethod
     async def _fetch_and_parse(self, ts: datetime) -> Payload:

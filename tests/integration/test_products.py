@@ -60,8 +60,8 @@ async def test_products_reading_the_same_file_download_it_once(make_coordinator)
         return AsyncResponse(content=content)
 
     cache = DownloadCache(ttl=300)
-    rw, rw10, rs = make_coordinator(RadolanRW), make_coordinator(products.RadolanRW10), make_coordinator(RadvorRS)
-    for coord in (rw, rw10, rs):
+    rw, rw10 = make_coordinator(RadolanRW), make_coordinator(products.RadolanRW10)
+    for coord in (rw, rw10):
         coord.download_cache = cache
     with patch.object(products, "async_get", side_effect=fake_get):
         hourly, sliding = await asyncio.gather(
@@ -70,5 +70,5 @@ async def test_products_reading_the_same_file_download_it_once(make_coordinator)
         await rw10._fetch_and_parse(ts)  # later: still within the TTL
     assert downloads == [rw._get_url(ts)]
     assert hourly[0] == sliding[0]
-    # RADVOR archives are not shared, so they never sit in the cache.
-    assert not RadvorRS.SHARES_FILES and not RadvorRV.SHARES_FILES
+    # The multi-MB RADVOR archives are not shared, so they never sit in it.
+    assert not any(getattr(cls, "SHARES_FILES", False) for cls in (RadvorRS, RadvorRV))

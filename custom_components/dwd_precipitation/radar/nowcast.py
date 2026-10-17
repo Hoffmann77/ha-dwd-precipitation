@@ -30,6 +30,10 @@ HOUR2_LEADS = list(range(60 + LEAD_STEP, 120 + 1, LEAD_STEP))  # 65..120 → [T+
 # [T+60, T+120]; the leads below 60 still include observed rain.
 FUTURE_HOUR_LEADS = list(range(60, MAX_LEAD + 1, LEAD_STEP))  # 60..120 → 13 windows
 
+# The analyses of earlier releases the hour ending at T needs: [T-60, T] is
+# the analysis of release T and of the 11 releases before it.
+PAST_STEPS = STEPS_PER_HOUR - 1  # 11
+
 # RS and RV store amounts in 0.001 mm steps (ODIM gain). Rolling-hour totals are
 # rounded to it, so a sum of twelve float32 RV steps and the matching RS member
 # compare equal instead of differing in the seventh decimal.
@@ -75,30 +79,39 @@ def bucket_max_intensity(
     return float(max(present)) * STEPS_PER_HOUR
 
 
-def rolling_hour_sums(values: list[float | None]) -> list[float | None]:
+def rolling_hour_sums(
+    values: list[float | None], past: list[float | None] | None = None
+) -> list[float | None]:
     """Return RS-equivalent rolling 60-minute totals (mm) from RV 5-minute steps.
 
-    ``values`` is aligned to :data:`LEADS` and holds RV 5-minute accumulations.
-    The result is aligned to :data:`LEADS` too: for each lead ``L`` in
-    :data:`FUTURE_HOUR_LEADS` it is the sum of the twelve steps ending at ``L``
-    (RV leads ``L-55..L``), i.e. the window ``[T+L-60, T+L]`` of the RS member
-    at the same lead; every other position is ``None``. Only windows wholly in
-    the forecast can be built this way, since RV holds no rain from before
-    ``T-5``: that is what FUTURE_HOUR_LEADS (60..120) are.
+    ``values`` is aligned to :data:`LEADS` and holds one RV release's 5-minute
+    accumulations. The result is aligned to :data:`LEADS` too: at lead ``L`` it
+    is the sum of the twelve steps ending at ``T+L``, the window
+    ``[T+L-60, T+L]`` of the RS member at the same lead.
+
+    Without ``past`` only the windows wholly in the forecast are built
+    (:data:`FUTURE_HOUR_LEADS`, 60..120), and every other position is ``None``.
+    ``past`` is the analyses (lead 0) of the :data:`PAST_STEPS` releases
+    before ``T``, oldest first; with it every lead has its window, and the ones
+    ending at ``T``..``T+55`` start with rain that has already fallen.
 
     A missing step counts as 0, which is what RS reports at the edge of radar
-    coverage; a window is ``None`` only when all twelve steps are missing.
-    On live data this matched RS exactly wherever both had data.
+    coverage; a window is ``None`` only when all twelve steps are missing. RS
+    is exactly this sum for every member and every cell
+    (tests/live/test_live_download.py checks it daily).
     """
+    if past is not None and len(past) != PAST_STEPS:
+        raise ValueError(f"past holds {len(past)} analyses, not {PAST_STEPS}")
+
+    # Step i ends at T + (i - PAST_STEPS) * 5 min. Without a past, the padding
+    # is never read: the future windows start at step PAST_STEPS + 1.
+    steps = (past if past is not None else [None] * PAST_STEPS) + values
     sums: list[float | None] = [None] * len(LEADS)
-    for lead in FUTURE_HOUR_LEADS:
-        window = [
-            values[k // LEAD_STEP]
-            for k in range(lead - 60 + LEAD_STEP, lead + 1, LEAD_STEP)
-        ]
-        present = [float(v) for v in window if v is not None]
+    for lead in LEADS if past is not None else FUTURE_HOUR_LEADS:
+        i = lead // LEAD_STEP
+        present = [float(v) for v in steps[i:i + STEPS_PER_HOUR] if v is not None]
         if present:
-            sums[lead // LEAD_STEP] = round(sum(present), MM_DECIMALS)
+            sums[i] = round(sum(present), MM_DECIMALS)
     return sums
 
 
