@@ -52,20 +52,22 @@ rain_events_tracker.py
                       (store, background fill, save policy).
 release_grid.py       ReleaseGrid: a product's release times on its own
                       clock (see "Release timing"). HA-free, no relative
-                      imports: scripts/check_release_delay.py uses it too.
+                      imports: the parser and live tiers import it as is.
 radar/                The HA-free core: parsers and pure domain logic (no
                       heavy external deps). Its modules import each other
                       relatively, which works both inside HA and in the
                       parser tier (which imports it as `radar`).
   __init__.py         Exports what the integration reads (the cell readers
-                      and the DE1200 lookup); the whole-grid readers are for
+                      and their grid errors); the whole-grid readers are for
                       the test tiers and scripts/, from radar.odim.
   urls.py             Every product's OpenData URL pattern (product_url,
                       radvor_prefix), for the products, scripts/ and the
                       live tiers alike.
+  grid.py             The grid a file describes in its /where group, and
+                      the cell holding a location on it (see "Grid lookup").
   odim.py             ODIM_H5 (HDF5) reader for every product (RS, RV,
-                      HymecNG, RW/SF in their HDF5 edition) and the DE1200
-                      grid lookup.
+                      HymecNG, RW/SF in their HDF5 edition): the cell at a
+                      location, on the file's own grid.
   tar_range.py        Reads selected members of a remote tar by HTTP range
                       requests (see "Range reads").
   nowcast.py          RV lead grid and the nowcast logic: start/end
@@ -86,8 +88,8 @@ poll loop.
    payload untouched if that release was already fetched
 3. `_fetch_and_parse(latest_release)` downloads the file on the event loop,
    then hands the bytes to the product's blocking `_parse()` through
-   `hass.async_add_executor_job`, which reads the cell at `self.index` and
-   returns `(data, metadata)`. Decoding never runs on the event loop: a
+   `hass.async_add_executor_job`, which reads the cell holding `self.coords`
+   on the grid the file describes and returns `(data, metadata)`. Decoding never runs on the event loop: a
    radar grid is one gzip chunk of 1.3 M cells, ~6 ms to inflate even on a fast
    machine, times 25 members for RS/RV — many users run HA on a Raspberry Pi
    `_fetch_and_parse` has no side effects, so `async_fetch_release(ts)` can
@@ -145,7 +147,7 @@ that from turning into noise:
   is whole seconds because `track_time_change_args` is built from a whole-second
   grid, and never negative, so a fetch is never earlier than the calibrated
   publication lag. `RELEASE_DELAY` stays the pristine class constant that
-  `scripts/check_release_delay.py` reads out of the source.
+  `scripts/check_release_delay.py` checks.
 
 - **Staleness is a deadline on the overdue release, not an age limit on the
   cached one.** `_stale_deadline()` starts its clock when the release *after*
@@ -329,8 +331,9 @@ once released, since renaming one orphans the user's entity.
    executor. A `RadvorProduct` implements `_fetch_and_parse` (RS reads three
    members by range, RV the whole tar). Keep `_fetch_and_parse` free of side
    effects (anything else goes in `_async_on_new_release`)
-4. `index` defaults to the DE1200 lookup; override it (cached_property) only
-   for a product on another grid
+4. The cell comes from the grid each file describes in /where
+   (`radar/grid.py`), so a product on another polar-stereographic grid needs
+   nothing more; one in another projection needs that projection in `grid.py`
 5. Add sensor descriptors in `sensor.py` (new `*_SENSORS` tuple)
 6. Register the class in `__init__.py` `PRODUCT_CLASSES` tuple
 7. Register sensors in `sensor.py` `async_setup_entry`, and add each
@@ -362,8 +365,8 @@ recent files — for each file, its `Last-Modified` header (authoritative GMT)
 minus the nominal timestamp in its name — and flags any product the instant its
 mean lag exceeds its configured `RELEASE_DELAY` — the harmful direction, where
 the coordinator fetches before DWD has published (`--grace` defaults to 0). It
-reads the constants straight from the source with `ast` (no HA import), so the
-configured value is the single source of truth.
+imports the product classes and checks their own constants, so it runs in the
+`ha-test` environment.
 
 The workflow only opens/updates a tracking issue (and fails the job) once a
 product is flagged on **two consecutive scheduled runs** — a single flagged run
@@ -373,41 +376,65 @@ run comes back clean.
 
 ## Grid lookup
 
+Every product reads the cell holding the location on the grid **its own file
+describes** in its ODIM `/where` group, not on a copy of DWD's grid in the
+code (ADR 0010): if DWD moves or resizes a grid, the integration keeps reading
+the cell that holds the location. `radar/grid.py` builds the `Grid`; the cell
+readers in `radar/odim.py` take the location, read `/where`, and require the
+payload to be exactly that grid (which also bounds what a crafted file can
+make them inflate, with `MAX_CELLS` on the declared size).
+
 The lookup returns the cell that *contains* the location: project it, then
 **floor** its offset from the grid's outer lower-left corner. Never round, and
 never take the nearest grid coordinate unless those coordinates are pixel
-centres — the corner references below are pixel *edges*, and treating them as
+centres — the corner references are pixel *edges*, and treating them as
 centres shifts the lookup by half a cell, which picks a neighbouring cell for
-~3 locations in 4 (ADR 0008). There is one lookup, on the DE1200 grid.
+~3 locations in 4 (ADR 0008). A location off the grid raises `OutsideGrid`,
+which the coordinator reports as such rather than as a DWD fault.
 
-The reference tier checks it against wradlib's own grid (`mode="edge"`),
-not against a reimplementation of our arithmetic, and pins wradlib's DE1200
-grid to the fixture file's corner attributes. Fixture coordinates are cell
-*centres*; a corner would sit on the boundary of four cells. The same wradlib
-reference (`tests/wradlib_ref.py`) runs daily on live DWD files for every
-product via `.github/workflows/live-wradlib.yml` (`tests/live_wradlib/`):
-fixed locations must land on the same cell with the same value, and every
-member's full grid must decode identically.
+**Tolerant of spelling, strict on geometry.** Only north-polar stereographic
+on an ellipsoid is computed. `projdef` is read in any parameter order, as
+bytes or str, with the ellipsoid as `+a`/`+b` or named (`+ellps`/`+datum`
+WGS84, GRS80); `+units=m`, `+no_defs`, `+type`, `+wktext` and a zero
+`+towgs84` are ignored. Anything else that could move a cell (another
+projection, an unknown parameter, a datum shift) raises `UnsupportedGrid`:
+refused, never read at the wrong cell. RS, RV and HymecNG describe DE1200 one
+way, RW and SF (the RADOLAN edition) another (parameter order, corners rounded
+to 8 decimals); both give the same cells. A built grid is cached per
+description (`lru_cache`), since every member of a release repeats it.
+
+The config flow cannot read a grid before any file exists, so it only checks
+a latitude/longitude box around DE1200 (`COVERAGE_LAT`/`COVERAGE_LON`, a test
+checks the box holds the whole grid); a location in the box but off a
+product's grid is reported when that product is read.
+
+The reference tier checks the fixture file's grid against wradlib's own grid
+(`mode="edge"`), not against a reimplementation of our arithmetic, and pins
+wradlib's DE1200 grid to the fixture's corner attributes. Fixture coordinates
+are cell *centres*; a corner would sit on the boundary of four cells. The same
+wradlib reference (`tests/wradlib_ref.py`) runs daily on live DWD files for
+every product via `.github/workflows/live-wradlib.yml` (`tests/live_wradlib/`):
+each file's own grid must put fixed locations on wradlib's DE1200 cells with
+the same values, and every member's full grid must decode identically. That
+is where a DWD grid change shows, since the integration itself follows it.
+
+### DE1200
+The grid every product is on today: 1200 rows × 1100 cols of 1 km,
+`+proj=stere +lat_ts=60 +lat_0=90 +lon_0=10` on WGS84. The ODIM
+`LL_*`/`UL_*`/`UR_*`/`LR_*` attributes are the *outer* corners of the edge
+pixels (LL projects to x = −500 m, y = −1 199 500 m); pixel centres sit on
+whole kilometres, the north-west one at the projection origin (RV format
+description §3.1). Row 0 is the north edge. This is wradlib's
+`dwd-radolan-wgs84-de1200` grid; `tests/factories/odim.py` keeps its
+description (`DE1200_WHERE`) as test data.
 
 ### RADOLAN (RW, SF)
 Read in their **HDF5 edition** (`raa01-<p>_10000-<yymmddHHMM>-dwd---bin.hdf5`),
-which is ODIM_H5 on the same DE1200 grid as RS below, so `RadolanProduct.index`
-is `get_rs_grid_index` and `_parse` is `read_odim_composite_cell` (ACRR,
-gain 0.1, nodata 65535 -> NaN -> `None`). The legacy binary edition (.bz2,
-national 900x900 grid) is not read; ADR 0004 has the switch, how the two
-editions compare, and why SF's `RELEASE_DELAY` is 31 min.
-
-### RS (ODIM_H5)
-`RadvorRS.index` calls `get_rs_grid_index(lat, lon)` from `radar/odim.py`.
-Ellipsoidal polar-stereographic forward projection (WGS84 a=6378137m, O(1)).
-Grid: 1200 rows × 1100 cols, 1km, same `+proj=stere +lat_ts=60 +lat_0=90 +lon_0=10`
-family as RADOLAN but WGS84 ellipsoid, different false easting/northing, and larger extent.
-The ODIM `LL_*`/`UL_*`/`UR_*`/`LR_*` attributes are the *outer* corners of the
-edge pixels (LL projects to x = −500 m, y = −1 199 500 m); pixel centres sit on
-whole kilometres, the north-west one at the projection origin (RV format
-description §3.1). Row 0 is the north edge. `rs_grid_contains` relies on the
-same floor, so a point just outside an edge is correctly rejected. This is
-wradlib's `dwd-radolan-wgs84-de1200` grid.
+which is ODIM_H5 on DE1200 like RS, with `_parse` reading
+`read_odim_composite_at` (ACRR, gain 0.1, nodata 65535 -> NaN -> `None`). The
+legacy binary edition (.bz2, national 900x900 grid) is not read; ADR 0004 has
+the switch, how the two editions compare, and why SF's `RELEASE_DELAY` is
+31 min.
 
 ## The radar/ directory
 
@@ -417,17 +444,17 @@ reference tiers.
 
 `radar/odim.py` is original code that uses `h5py` directly. It exposes
 `read_odim_composite` (physical quantities like RS/RV's `ACRR`, scaled by
-gain/offset), `read_odim_composite_cell` (the same for one cell — what RS/RV
-use, since scaling and masking the whole grid to keep one value was over half
-the decode time; libhdf5 still inflates the single whole-grid chunk, so reading
-fewer *cells* cannot save more) and `read_odim_classification` (HymecNG's `CLASS` quantity —
-discrete class indices returned unscaled, with the `nodata`/`undetect`
-sentinels preserved so the caller can tell "outside coverage" from "dry"),
-with `read_odim_classification_cell` as its one-cell form, which HymecNG
-uses. Both cell readers reject a cell outside the grid, which a plain index
-would wrap around to the far edge. The whole-grid readers have no runtime
-caller: they are the oracle for the parser, reference and live tiers and for
-`scripts/`.
+gain/offset), `read_odim_composite_at` (the same for the cell holding a
+location — what RS/RV/RADOLAN use, since scaling and masking the whole grid to
+keep one value was over half the decode time; libhdf5 still inflates the
+single whole-grid chunk, so reading fewer *cells* cannot save more) and
+`read_odim_classification` (HymecNG's `CLASS` quantity — discrete class
+indices returned unscaled, with the `nodata`/`undetect` sentinels preserved so
+the caller can tell "outside coverage" from "dry"), with
+`read_odim_classification_at` as its one-cell form, which HymecNG uses. Both
+cell readers find the cell on the file's own grid (see "Grid lookup").
+`read_odim_grid` and the whole-grid readers have no runtime caller: they are
+the oracle for the parser, reference and live tiers and for `scripts/`.
 
 ## Dependencies
 
@@ -467,8 +494,8 @@ importing probatio ourselves would break every HA from before that alias.
 - **Rolling windows**: the members in between are the same 60-minute sum sliding
   in 5-minute steps — lead L covers T+L−60 → T+L, so neighbours overlap by 55 min.
   RS is radar-only, like RV: every member is the sum of the twelve RV 5-minute
-  steps in its hour, cell for cell (ADR 0009). Only RADOLAN RW/SF are
-  gauge-adjusted.
+  steps in its hour, exactly in almost every cell (ADR 0009). Only RADOLAN
+  RW/SF are gauge-adjusted.
 - **Fetching**: `RadvorRS._fetch_and_parse()` reads only `_000`/`_060`/`_120`,
   by range (see "Range reads"), whatever the options, and decodes them off the
   loop. The payload is keyed `last_60`/`next_60`/`next_60_120`
@@ -494,11 +521,14 @@ rain-events tracker's is not worth it for an attribute nothing records. The
 value, its window and the 13 future points are the same either way; a test
 asserts it.
 
-RS *is* summed RV, every member in every cell (ADR 0009), and
-`tests/live/test_live_download.py` checks it daily. That is what makes the
-series' first point equal `Precipitation last 60 min` (RS `_000`). A missing RV
-step counts as 0 because that is what RS reports at the coverage edge, and both
-round to the ODIM 0.001 mm resolution (`MM_DECIMALS`). The entity key
+RS is summed RV (ADR 0009): exactly in almost every cell, while on wet
+releases up to 1.8 % of the wet cells were measured off on DWD's own numbers,
+a few by up to 0.54 mm. `tests/live/test_live_download.py` checks it daily by
+that share (`_MIN_EXACT_WET`: same coverage, at least 90 % of wet cells
+exact). So the series' first point is `Precipitation last 60 min` (RS `_000`)
+in almost every cell. A missing RV step counts as 0 because that is what RS
+reports at the coverage edge, and both round to the ODIM 0.001 mm resolution
+(`MM_DECIMALS`). The entity key
 `radvor_peak_1h_120` is product-neutral because RS used to feed it with the
 option on.
 
@@ -670,8 +700,9 @@ section (`data_entry_flow.section`): `rain_events`, `rain_event_threshold`,
 Only the *form* is nested: `async_step_init` flattens the section before
 saving, so every key stays flat in `entry.options` and no migration is
 needed. A new option gets its key and default in `DEFAULT_OPTIONS` and a field
-on `DwdOptions` (a test checks they match); the form and every consumer take
-the default from there. `DwdOptions` is a snapshot, which is enough because
+of the same name on `DwdOptions`, which is built from that table (a missing
+field fails the first `from_options`); the form and every consumer take the
+default from there. `DwdOptions` is a snapshot, which is enough because
 saving the options reloads the entry. Translations live under
 `options.step.init.sections.advanced_options`. HA 2026.10 installs `probatio`
 as `voluptuous` at import time, which is why `vol.Schema` inside `section`
@@ -683,7 +714,7 @@ real one and cannot serialize the form.
 - **URL**: `https://opendata.dwd.de/weather/radar/composite/hymecng/composite_HymecNG_YYYYMMDD_HHMM_000-hd5`
 - **Archive**: none — one plain `.hd5` file per 5-minute release (single `_000` grid)
 - **Format**: ODIM_H5 H5rad 2.3, `object=COMP`, `quantity=CLASS`, `gain=1`, `offset=0`
-- **Grid**: identical to RS/RV (1200×1100, same projection) → reuses `get_rs_grid_index` / `RS_GRID_SHAPE`
+- **Grid**: DE1200, described in /where exactly as RS/RV describe it
 - **Encoding**: `uint8` class index 0–10; `nodata=255` (outside coverage → sensor `unknown`), `undetect=254` (scanned, no echo → `no_precipitation`)
 - **Classes** (`PRECIP_TYPE_BY_INDEX` in `const.py`): 0 no_precipitation, 1 not_classified, 2 drizzle, 3 rain, 4 freezing_drizzle, 5 freezing_rain, 6 sleet, 7 snow, 8 graupel, 9 hail, 10 large_hail
 - **Sensor**: one `SensorDeviceClass.ENUM` "Precipitation type now" sensor (key `hymecng_precipitation_type`); state labels are translated via the `precipitation_type_now` entity translation key

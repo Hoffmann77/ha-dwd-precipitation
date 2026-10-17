@@ -10,9 +10,8 @@ sensors).
 
 This script measures the *observed* availability delay for each probeable
 product and checks it does not deviate too far from the configured constant.
-It is HA-free: the configured constants are read straight from the integration
-source with ``ast`` (single source of truth, no ``homeassistant`` import), and
-DWD is probed with ``requests``.
+The configured constants are the product classes' own, imported (so it runs in
+the ``ha-test`` environment), and DWD is probed with ``requests``.
 
 How the delay is measured
 -------------------------
@@ -48,15 +47,14 @@ Exit status: ``0`` all products within tolerance, ``1`` at least one drifted,
 
 Usage::
 
-    uv run --group unit-test python scripts/check_release_delay.py
-    uv run --group unit-test python scripts/check_release_delay.py --products rs
-    uv run --group unit-test python scripts/check_release_delay.py --samples 36
+    uv run --group ha-test python scripts/check_release_delay.py
+    uv run --group ha-test python scripts/check_release_delay.py --products rs
+    uv run --group ha-test python scripts/check_release_delay.py --samples 36
 """
 
 from __future__ import annotations
 
 import argparse
-import ast
 import os
 import statistics
 import sys
@@ -68,14 +66,10 @@ from typing import Callable
 
 UTC = timezone.utc
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent
-_INTEGRATION = _REPO_ROOT / "custom_components" / "dwd_precipitation"
-
-# release_grid is HA-free and has no relative imports, so the integration's
-# own grid arithmetic is importable here without Home Assistant.
-sys.path.insert(0, str(_INTEGRATION))
-from radar.urls import product_url  # noqa: E402
-from release_grid import ReleaseGrid  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from custom_components.dwd_precipitation import products  # noqa: E402
+from custom_components.dwd_precipitation.radar.urls import product_url  # noqa: E402
+from custom_components.dwd_precipitation.release_grid import ReleaseGrid  # noqa: E402
 
 RELEASE_KEYS = ("RELEASE_INTERVAL", "RELEASE_DELAY", "RELEASE_OFFSET")
 
@@ -83,110 +77,6 @@ RELEASE_KEYS = ("RELEASE_INTERVAL", "RELEASE_DELAY", "RELEASE_OFFSET")
 # either we are above the frontier (newest not published yet) with a wildly
 # wrong delay, or we fell off the folder's retention window.
 _MISS_CAP = 8
-
-
-# ---------------------------------------------------------------------------
-# Configured-timing extraction (HA-free, straight from the integration source)
-# ---------------------------------------------------------------------------
-
-def _timedelta_from_call(node: ast.Call) -> timedelta:
-    """Build a timedelta from a literal ``timedelta(...)`` AST call."""
-    args = []
-    for a in node.args:
-        if not isinstance(a, ast.Constant):
-            raise ValueError("non-literal positional arg in timedelta(...)")
-        args.append(a.value)
-    kwargs = {}
-    for kw in node.keywords:
-        if kw.arg is None or not isinstance(kw.value, ast.Constant):
-            raise ValueError("non-literal keyword arg in timedelta(...)")
-        kwargs[kw.arg] = kw.value.value
-    return timedelta(*args, **kwargs)
-
-
-def _is_timedelta_call(node: ast.expr) -> bool:
-    if not isinstance(node, ast.Call):
-        return False
-    func = node.func
-    return (isinstance(func, ast.Name) and func.id == "timedelta") or (
-        isinstance(func, ast.Attribute) and func.attr == "timedelta"
-    )
-
-
-def _parse_classes(path: Path) -> dict[str, tuple[list[str], dict[str, timedelta]]]:
-    """Map every class in ``path`` to (base names, {RELEASE_*: timedelta})."""
-    tree = ast.parse(path.read_text())
-    classes: dict[str, tuple[list[str], dict[str, timedelta]]] = {}
-
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.ClassDef):
-            continue
-
-        bases = [
-            b.id if isinstance(b, ast.Name) else b.attr
-            for b in node.bases
-            if isinstance(b, (ast.Name, ast.Attribute))
-        ]
-
-        attrs: dict[str, timedelta] = {}
-        for stmt in node.body:
-            if isinstance(stmt, ast.AnnAssign):
-                targets, value = [stmt.target], stmt.value
-            elif isinstance(stmt, ast.Assign):
-                targets, value = stmt.targets, stmt.value
-            else:
-                continue
-            if value is None or not _is_timedelta_call(value):
-                continue
-            for target in targets:
-                if isinstance(target, ast.Name) and target.id in RELEASE_KEYS:
-                    attrs[target.id] = _timedelta_from_call(value)
-
-        classes[node.name] = (bases, attrs)
-
-    return classes
-
-
-def _load_registry() -> dict[str, tuple[list[str], dict[str, timedelta]]]:
-    """Merge the class tables from coordinator.py (base) and products.py."""
-    registry: dict[str, tuple[list[str], dict[str, timedelta]]] = {}
-    for name in ("coordinator.py", "products.py"):
-        registry.update(_parse_classes(_INTEGRATION / name))
-    return registry
-
-
-def extract_timing(
-    class_name: str,
-    registry: dict[str, tuple[list[str], dict[str, timedelta]]] | None = None,
-) -> dict[str, timedelta]:
-    """Resolve the three RELEASE_* constants for ``class_name`` across bases.
-
-    Walks the (single-inheritance) base chain depth-first, first base winning —
-    the same precedence Python's MRO gives this linear hierarchy — so an
-    overridden constant shadows the inherited default.
-    """
-    if registry is None:
-        registry = _load_registry()
-
-    resolved: dict[str, timedelta] = {}
-    seen: set[str] = set()
-
-    def visit(name: str) -> None:
-        if name in seen or name not in registry:
-            return
-        seen.add(name)
-        bases, attrs = registry[name]
-        for key, value in attrs.items():
-            resolved.setdefault(key, value)
-        for base in bases:
-            visit(base)
-
-    visit(class_name)
-
-    missing = [k for k in RELEASE_KEYS if k not in resolved]
-    if missing:
-        raise ValueError(f"{class_name}: could not resolve {missing}")
-    return resolved
 
 
 # ---------------------------------------------------------------------------
@@ -211,26 +101,36 @@ class ProductSpec:
     """Everything needed to probe one product's availability."""
 
     key: str
-    class_name: str
+    cls: type  # the product's coordinator class, whose RELEASE_* it checks
     url_for: Callable[[datetime], str]
 
+    def timing(self) -> dict[str, timedelta]:
+        """Return the class's configured RELEASE_* constants."""
+        return {key: getattr(self.cls, key) for key in RELEASE_KEYS}
 
-def _spec(key: str, class_name: str) -> ProductSpec:
-    """Probe the files the integration fetches for this product key."""
-    return ProductSpec(key, class_name, lambda ts: product_url(key, ts))
+
+def _spec(cls: type) -> ProductSpec:
+    """Probe the files the integration fetches for this product."""
+    key = cls.PRODUCT_KEY
+    return ProductSpec(key, cls, lambda ts: product_url(key, ts))
 
 
 # Every product with its own release grid in UTC. sf_2350 is not probed on its
 # own: it reads SF's files on a local-time grid, with SF's RELEASE_DELAY (a
 # test pins that), so "sf" measures its lag too.
 PRODUCTS: dict[str, ProductSpec] = {
-    "rs": _spec("rs", "RadvorRS"),
-    "rv": _spec("rv", "RadvorRV"),
-    "hymecng": _spec("hymecng", "HymecNG"),
-    "rw": _spec("rw", "RadolanRW"),
-    # RW's 10-minute runs: the same file family as "rw", on a 10-minute grid.
-    "rw_10min": _spec("rw_10min", "RadolanRW10"),
-    "sf": _spec("sf", "RadolanSF"),
+    spec.key: spec
+    for spec in map(
+        _spec,
+        (
+            products.RadvorRS,
+            products.RadvorRV,
+            products.HymecNG,
+            products.RadolanRW,
+            products.RadolanRW10,  # RW's 10-minute runs: RW's files, every 10 minutes
+            products.RadolanSF,
+        ),
+    )
 }
 
 # Real-world span the rolling window should cover, per product — sized so a
@@ -351,7 +251,7 @@ def measure(
     interval = configured["RELEASE_INTERVAL"]
     offset = configured["RELEASE_OFFSET"]
     delay = configured["RELEASE_DELAY"]
-    m = Measurement(spec.key, spec.class_name, delay, interval)
+    m = Measurement(spec.key, spec.cls.__name__, delay, interval)
 
     try:
         ts = previous_release(now, interval, offset)
@@ -450,13 +350,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     grace = timedelta(minutes=args.grace)
-    registry = _load_registry()
     now = datetime.now(UTC)
 
     measurements: list[Measurement] = []
     for key in args.products:
         spec = PRODUCTS[key]
-        configured = extract_timing(spec.class_name, registry)
+        configured = spec.timing()
         if args.samples is not None:
             samples = args.samples
         else:

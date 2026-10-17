@@ -22,8 +22,8 @@ Files are named for what they test, so the pattern says where a test belongs:
 
 - **`parser/`** — the HA-free code, no HA, no network: `test_<module>.py` for
   each module of `radar/` and for `release_grid`, `utils` and the like, plus
-  `test_translations.py` (en/de key parity) and `test_docs.py` (what CLAUDE.md
-  and the README state, against the code and `entity_ids.py`).
+  `test_translations.py` (en/de key parity) and `test_docs.py` (the README
+  names the old id of every renamed entity, from `entity_ids.py`).
 - **`integration/`** — the HA-facing layer (imports `homeassistant`):
   `test_product_<key>.py` for each product's fetch and parse (shared helpers in
   `product_helpers.py`), `test_products.py` for what every product shares, and
@@ -40,16 +40,17 @@ Files are named for what they test, so the pattern says where a test belongs:
   drift at the source, and reads RS by range as the integration does, so a lost
   range support or a changed tar layout fails here rather than as a silent
   fallback. Also checks, on the whole grid, that every RS member is the sum of
-  the RV 5-minute steps in its hour, which the peak hour and its series rely on
-  (ADR 0009). Marked `@pytest.mark.live`; HA-free by design: the URLs come from the
+  the RV 5-minute steps in its hour, within the small deviations DWD's own files
+  show, which the peak hour and its series rely on (ADR 0009). Marked `@pytest.mark.live`; HA-free by design: the URLs come from the
   HA-free `radar/urls.py`, the same patterns the integration fetches.
 - **`live_wradlib/`** — the reference comparison on **today's** DWD files for every
   product (RS, RV, HymecNG, RW, SF). For a fixed set of German locations it checks
-  that our lookup lands on the same cell as wradlib and that the production read
-  path (`read_odim_composite_cell` / `read_odim_classification`, RW/SF read in
-  their HDF5 edition) returns the same value, and that every member's full
-  grid decodes identically. The full-grid check is what catches a decode error on
-  a dry day, when every fixed location reads 0.
+  that each file's own grid puts them on wradlib's DE1200 cells, which is where a
+  DWD grid change would show (the integration follows the file), that the
+  production read path (`read_odim_composite_at` / `read_odim_classification_at`,
+  RW/SF read in their HDF5 edition) returns the same value, and that every
+  member's full grid decodes identically. The full-grid check is what catches a
+  decode error on a dry day, when every fixed location reads 0.
 
   Run it by hand from the Actions tab (**Live wradlib comparison → Run workflow**)
   to check your own places against the newest files, e.g. where the radar shows

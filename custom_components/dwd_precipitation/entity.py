@@ -32,14 +32,12 @@ class DwdEntityDescriptionMixin:
 
 
 def plain_value(value: Any) -> Any:
-    """Return values suitable for Home Assistant state attributes."""
-    if isinstance(value, datetime):
-        return value.isoformat()
-    if hasattr(value, "decode"):
-        return value.decode()
-    if hasattr(value, "item"):
-        return value.item()
-    return value
+    """Return an attribute value as HA stores it: a datetime as an ISO string.
+
+    Everything else the descriptions pass is already a plain float, int, str
+    or list: the readers turn HDF5's bytes and numpy values into those.
+    """
+    return value.isoformat() if isinstance(value, datetime) else value
 
 
 def unique_id_for(entry_id: str, key: str) -> str:

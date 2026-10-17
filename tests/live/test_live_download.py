@@ -192,6 +192,12 @@ async def _rs_and_rv(ts: datetime):
     return rs, rv, past
 
 
+# How closely RS follows summed RV on DWD's own numbers (ADR 0009): on wet
+# releases up to 1.8 % of the wet cells were measured off, a few of them by up
+# to 0.54 mm. A systematic change would put most wet cells off.
+_MIN_EXACT_WET = 0.9
+
+
 @pytest.mark.live
 def test_live_rs_is_summed_rv() -> None:
     """Every RS member is the sum of the twelve RV 5-minute steps in its hour.
@@ -200,7 +206,8 @@ def test_live_rs_is_summed_rv() -> None:
     then RV T's forecast steps. The peak hour and its hourly series are built
     from RV that way, while "Precipitation last 60 min" and the fixed forecast
     hours still come from RS: if this stops holding, the two disagree. Checked
-    cell for cell on the whole grid, for every lead.
+    on the whole grid, for every lead: the same cells have data, and nearly
+    all wet cells agree exactly (DWD's own files differ in a few).
     """
     tried: list[str] = []
     for ts in release_candidates("rs"):
@@ -225,8 +232,13 @@ def test_live_rs_is_summed_rv() -> None:
         assert (start, end) == (ts + timedelta(minutes=lead - 60), ts + timedelta(minutes=lead))
         rs_mm = np.round(grid, 3)
         built = _hour_sum([steps[end - k * _STEP] for k in range(12)])
-        differ = ~((rs_mm == built) | (np.isnan(rs_mm) & np.isnan(built)))
-        assert not differ.any(), (
-            f"RS _{lead:03d} of {ts:%Y-%m-%d %H:%M} UTC is not the summed RV steps "
-            f"in {int(differ.sum())} of {differ.size} cells"
+        label = f"RS _{lead:03d} of {ts:%Y-%m-%d %H:%M} UTC"
+
+        assert (np.isnan(rs_mm) == np.isnan(built)).all(), (
+            f"{label} has data where summed RV has none, or none where it has"
+        )
+        wet = ~np.isnan(rs_mm) & ((rs_mm > 0) | (built > 0))
+        exact = int((rs_mm[wet] == built[wet]).sum())
+        assert exact >= _MIN_EXACT_WET * int(wet.sum()), (
+            f"{label} matches summed RV in only {exact} of {int(wet.sum())} wet cells"
         )

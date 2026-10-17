@@ -36,7 +36,7 @@ async def rs_fetch(make_coordinator, ts: datetime, values: dict[int, float]):
     """Run RadvorRS._fetch_and_parse, serving each decoded lead from ``values``."""
     decoded: list[int] = []
 
-    def _read(fileobj, _row, _col, **_kw):
+    def _read(fileobj, _lat, _lon, **_kw):
         lead = int(fileobj.getvalue())  # make_radvor_tar's payload is the lead
         decoded.append(lead)
         return np.float32(values[lead]), rs_what(ts, lead)
@@ -49,7 +49,7 @@ async def rs_fetch(make_coordinator, ts: datetime, values: dict[int, float]):
             "async_get",
             new=AsyncMock(return_value=AsyncResponse(content=make_radvor_tar("rs", ts))),
         ),
-        patch.object(products, "read_odim_composite_cell", side_effect=_read),
+        patch.object(products, "read_odim_composite_at", side_effect=_read),
         executor_jobs(coord) as jobs,
     ):
         data, meta = await coord._fetch_and_parse(ts)
@@ -77,7 +77,7 @@ async def rv_fetch(
 
     On ``coord`` if given, so a test can feed one coordinator several releases.
     """
-    def _read(fileobj, _row, _col, **_kw):
+    def _read(fileobj, _lat, _lon, **_kw):
         lead = int(fileobj.getvalue())  # make_radvor_tar's payload is the lead
         value = values[lead]
         return np.float32("nan" if value is None else value), rv_what(ts, lead)
@@ -89,7 +89,7 @@ async def rv_fetch(
             "async_get",
             new=AsyncMock(return_value=AsyncResponse(content=make_radvor_tar("rv", ts))),
         ),
-        patch.object(products, "read_odim_composite_cell", side_effect=_read),
+        patch.object(products, "read_odim_composite_at", side_effect=_read),
         executor_jobs(coord) as jobs,
     ):
         data, meta = await coord._fetch_and_parse(ts)

@@ -1,7 +1,7 @@
 """The release grid of a DWD product: when its releases are nominally due.
 
-HA-free and without relative imports, like rain_events.py, so that the parser
-tier and scripts/check_release_delay.py import it as it is.
+HA-free and without relative imports, so that the parser and live tiers
+import it as it is.
 """
 
 from __future__ import annotations

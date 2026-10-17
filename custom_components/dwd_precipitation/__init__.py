@@ -45,18 +45,18 @@ _LOGGER = logging.getLogger(__name__)
 # covers one of them retrying after a 404. RADOLAN files are ~30 KB.
 SHARED_DOWNLOAD_TTL = timedelta(minutes=5)
 
-type MyConfigEntry = ConfigEntry[MyData]
+type DwdConfigEntry = ConfigEntry[DwdRuntimeData]
 
 
 @dataclass
-class MyData:
+class DwdRuntimeData:
     """Runtime data definition."""
 
     coordinators: dict[str, BaseProductUpdateCoordinator]
     options: DwdOptions
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: MyConfigEntry) -> bool:
+async def async_setup_entry(hass: HomeAssistant, entry: DwdConfigEntry) -> bool:
     """Set up DWD Precipitation from a config entry."""
     client = async_get_clientsession(hass)
 
@@ -116,7 +116,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: MyConfigEntry) -> bool:
         # starts clean rather than from a state days out of date.
         await RainEventsTracker.async_remove(hass, entry.entry_id)
 
-    entry.runtime_data = MyData(
+    entry.runtime_data = DwdRuntimeData(
         {c.PRODUCT_KEY: c for c in product_coordinators}, options
     )
     entry.async_on_unload(entry.add_update_listener(update_listener))
@@ -144,12 +144,12 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
-async def update_listener(hass: HomeAssistant, entry: MyConfigEntry) -> None:
+async def update_listener(hass: HomeAssistant, entry: DwdConfigEntry) -> None:
     """Handle config entry updates."""
     await hass.config_entries.async_reload(entry.entry_id)
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: MyConfigEntry) -> bool:
+async def async_unload_entry(hass: HomeAssistant, entry: DwdConfigEntry) -> bool:
     """Unload a config entry."""
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 

@@ -7,9 +7,36 @@ import io
 import h5py
 import numpy as np
 
-from radar.odim import RS_WHERE
+# DWD's DE1200 grid as RS, RV and HymecNG files describe it in /where (the
+# reference tier pins it to the RS fixture). Synthetic files take its
+# projection and lower-left corner, with their own small size.
+DE1200_WHERE = {
+    "projdef": (
+        "+proj=stere +lat_ts=60 +lat_0=90 +lon_0=10"
+        " +x_0=543196.83521776402 +y_0=3622588.8619310022"
+        " +units=m +a=6378137 +b=6356752.3142451802 +no_defs"
+    ),
+    "LL_lat": 45.696425377390064,
+    "LL_lon": 3.5669946350078914,
+    "xscale": 1000.0,
+    "yscale": 1000.0,
+    "ysize": 1200,
+    "xsize": 1100,
+}
 
-_PROJDEF = RS_WHERE["projdef"]
+_PROJDEF = DE1200_WHERE["projdef"]
+
+
+def _write_where(f, shape, projdef=_PROJDEF):
+    """Write the /where group of a ``shape`` grid at DE1200's lower-left corner."""
+    w = f.create_group("where")
+    w.attrs.create("projdef", data=projdef)
+    w.attrs["xsize"]  = np.int64(shape[1])
+    w.attrs["ysize"]  = np.int64(shape[0])
+    w.attrs["xscale"] = np.float64(1000.0)
+    w.attrs["yscale"] = np.float64(1000.0)
+    w.attrs["LL_lat"] = np.float64(DE1200_WHERE["LL_lat"])
+    w.attrs["LL_lon"] = np.float64(DE1200_WHERE["LL_lon"])
 
 
 def make_odim_h5(shape=(5, 5), gain=0.001, offset=-0.001, nodata=4294967295,
@@ -29,15 +56,7 @@ def make_odim_h5(shape=(5, 5), gain=0.001, offset=-0.001, nodata=4294967295,
         rw.attrs["object"]  = np.bytes_(b"COMP")
         rw.attrs["source"]  = np.bytes_(b"ORG:78,CTY:616")
 
-        w = f.create_group("where")
-        projdef = np.bytes_(_PROJDEF) if projdef_as_bytes else _PROJDEF
-        w.attrs.create("projdef", data=projdef)
-        w.attrs["xsize"]  = np.int64(shape[1])
-        w.attrs["ysize"]  = np.int64(shape[0])
-        w.attrs["xscale"] = np.float64(1000.0)
-        w.attrs["yscale"] = np.float64(1000.0)
-        w.attrs["LL_lat"] = np.float64(RS_WHERE["LL_lat"])
-        w.attrs["LL_lon"] = np.float64(RS_WHERE["LL_lon"])
+        _write_where(f, shape, np.bytes_(_PROJDEF) if projdef_as_bytes else _PROJDEF)
 
         d1w = f.create_group("dataset1/what")
         d1w.attrs["product"]   = np.bytes_(b"MAX")
@@ -95,14 +114,7 @@ def make_hymecng_h5(shape=(5, 5), fill=3, nodata=255, undetect=254):
         rw.attrs["time"]    = np.bytes_(b"173000")
         rw.attrs["object"]  = np.bytes_(b"COMP")
 
-        w = f.create_group("where")
-        w.attrs.create("projdef", data=_PROJDEF)
-        w.attrs["xsize"]  = np.int64(shape[1])
-        w.attrs["ysize"]  = np.int64(shape[0])
-        w.attrs["xscale"] = np.float64(1000.0)
-        w.attrs["yscale"] = np.float64(1000.0)
-        w.attrs["LL_lat"] = np.float64(RS_WHERE["LL_lat"])
-        w.attrs["LL_lon"] = np.float64(RS_WHERE["LL_lon"])
+        _write_where(f, shape)
 
         d1w = f.create_group("dataset1/what")
         d1w.attrs["product"]   = np.bytes_(b"COMP")
@@ -137,7 +149,8 @@ def make_hymecng_h5(shape=(5, 5), fill=3, nodata=255, undetect=254):
 
 
 def _base_groups(f, shape):
-    """Populate the /what and /dataset*/what groups shared by every RS file."""
+    """Populate the /where and /dataset*/what groups shared by every RS file."""
+    _write_where(f, shape)
     d1w = f.create_group("dataset1/what")
     d1w.attrs["product"]   = np.bytes_(b"MAX")
     d1w.attrs["prodname"]  = np.bytes_(b"RS_top_view")

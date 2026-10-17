@@ -34,6 +34,8 @@ from custom_components.dwd_precipitation.dry_streak import (
     DryStreakExtraData,
     downtime_correction,
     fresh_anchor,
+    NO_READING,
+    Reading,
     amount_reading,
 )
 from homeassistant.components.sensor import SensorDeviceClass
@@ -258,10 +260,10 @@ async def test_process_rw_first_observation_anchors_at_end_of_the_hour(make_days
 
 
 def test_amount_reading_handles_missing_data():
-    assert amount_reading(None) == (None, None, None)
-    assert amount_reading(SimpleNamespace(data=None)) == (None, None, None)
+    assert amount_reading(None) == NO_READING
+    assert amount_reading(SimpleNamespace(data=None)) == NO_READING
     empty = SimpleNamespace(data=CoordinatorData(data={"amount": None}, metadata={}))
-    assert amount_reading(empty) == (None, None, None)
+    assert amount_reading(empty) == NO_READING
 
 
 def test_amount_reading_returns_the_amount_and_its_window():
@@ -271,29 +273,29 @@ def test_amount_reading_returns_the_amount_and_its_window():
         source_product="RW", source_timestamp=end, data_start=start, data_end=end
     )
     rw = SimpleNamespace(data=CoordinatorData(data={"amount": 3.2}, metadata={"amount": meta}))
-    assert amount_reading(rw) == (3.2, start, end)
+    assert amount_reading(rw) == Reading(3.2, start, end)
 
 
 def test_downtime_correction_rw_rain_resets():
     now = datetime(2026, 7, 3, 12, 0, tzinfo=UTC)
     rw_end = datetime(2026, 7, 3, 11, 50, tzinfo=UTC)
-    rw = (2.0, datetime(2026, 7, 3, 10, 50, tzinfo=UTC), rw_end)
-    sf = (5.0, datetime(2026, 7, 2, 11, 50, tzinfo=UTC), rw_end)
+    rw = Reading(2.0, datetime(2026, 7, 3, 10, 50, tzinfo=UTC), rw_end)
+    sf = Reading(5.0, datetime(2026, 7, 2, 11, 50, tzinfo=UTC), rw_end)
     assert downtime_correction(1.0, rw, sf, now) == rw_end
 
 
 def test_downtime_correction_sf_only_caps_at_window_start():
     now = datetime(2026, 7, 3, 12, 0, tzinfo=UTC)
     sf_start = datetime(2026, 7, 2, 11, 50, tzinfo=UTC)
-    rw = (0.0, datetime(2026, 7, 3, 10, 50, tzinfo=UTC), now)
-    sf = (5.0, sf_start, now)
+    rw = Reading(0.0, datetime(2026, 7, 3, 10, 50, tzinfo=UTC), now)
+    sf = Reading(5.0, sf_start, now)
     assert downtime_correction(1.0, rw, sf, now) == sf_start
 
 
 def test_downtime_correction_no_rain_returns_none():
     now = datetime(2026, 7, 3, 12, 0, tzinfo=UTC)
-    rw = (0.0, now, now)
-    sf = (0.1, now, now)
+    rw = Reading(0.0, now, now)
+    sf = Reading(0.1, now, now)
     assert downtime_correction(1.0, rw, sf, now) is None
 
 
@@ -301,15 +303,15 @@ def test_fresh_anchor_prefers_sf_dry_window():
     now = datetime(2026, 7, 3, 12, 0, tzinfo=UTC)
     sf_start = datetime(2026, 7, 2, 11, 50, tzinfo=UTC)
     rw_start = datetime(2026, 7, 3, 10, 50, tzinfo=UTC)
-    rw = (0.0, rw_start, now)
-    sf = (0.0, sf_start, now)
+    rw = Reading(0.0, rw_start, now)
+    sf = Reading(0.0, sf_start, now)
     assert fresh_anchor(1.0, rw, sf, now) == sf_start
 
 
 def test_fresh_anchor_falls_back_to_now_when_recently_wet():
     now = datetime(2026, 7, 3, 12, 0, tzinfo=UTC)
-    rw = (5.0, datetime(2026, 7, 3, 10, 50, tzinfo=UTC), now)
-    sf = (5.0, datetime(2026, 7, 2, 11, 50, tzinfo=UTC), now)
+    rw = Reading(5.0, datetime(2026, 7, 3, 10, 50, tzinfo=UTC), now)
+    sf = Reading(5.0, datetime(2026, 7, 2, 11, 50, tzinfo=UTC), now)
     assert fresh_anchor(1.0, rw, sf, now) == now
 
 

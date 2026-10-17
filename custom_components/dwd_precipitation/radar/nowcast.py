@@ -13,6 +13,8 @@ forecast window ``[T + (k-1)*5, T + k*5]``.
 
 from __future__ import annotations
 
+from typing import overload
+
 LEAD_STEP = 5
 MAX_LEAD = 120
 LEADS = list(range(0, MAX_LEAD + 1, LEAD_STEP))  # [0, 5, ..., 120] → 25 entries
@@ -38,6 +40,18 @@ PAST_STEPS = STEPS_PER_HOUR - 1  # 11
 # rounded to it, so a sum of twelve float32 RV steps and the matching RS member
 # compare equal instead of differing in the seventh decimal.
 MM_DECIMALS = 3
+
+
+@overload
+def round_mm(value: float) -> float: ...
+@overload
+def round_mm(value: None) -> None: ...
+def round_mm(value: float | None) -> float | None:
+    """Round an amount (mm) to the ODIM resolution; None stays None.
+
+    Always a float, so an empty sum (the int 0) is published as 0.0 too.
+    """
+    return None if value is None else round(value + 0.0, MM_DECIMALS)
 
 # Algorithms for deriving the "precipitation end" from the forecast series:
 #
@@ -97,8 +111,8 @@ def rolling_hour_sums(
 
     A missing step counts as 0, which is what RS reports at the edge of radar
     coverage; a window is ``None`` only when all twelve steps are missing. RS
-    is exactly this sum for every member and every cell
-    (tests/live/test_live_download.py checks it daily).
+    is this sum, exactly in almost every cell (ADR 0009;
+    tests/live/test_live_download.py checks it daily).
     """
     if past is not None and len(past) != PAST_STEPS:
         raise ValueError(f"past holds {len(past)} analyses, not {PAST_STEPS}")
@@ -111,7 +125,7 @@ def rolling_hour_sums(
         i = lead // LEAD_STEP
         present = [float(v) for v in steps[i:i + STEPS_PER_HOUR] if v is not None]
         if present:
-            sums[i] = round(sum(present), MM_DECIMALS)
+            sums[i] = round_mm(sum(present))
     return sums
 
 

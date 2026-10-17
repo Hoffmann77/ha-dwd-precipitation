@@ -1,9 +1,9 @@
 """The options of a config entry, read in one place.
 
 Every option's key and default live in DEFAULT_OPTIONS; DwdOptions is the
-typed snapshot every consumer reads. A snapshot is enough: changing an
-option reloads the entry, so a coordinator or entity never outlives the
-options it was built with.
+typed snapshot every consumer reads, with one field per key, named like it.
+A snapshot is enough: changing an option reloads the entry, so a
+coordinator or entity never outlives the options it was built with.
 """
 
 from __future__ import annotations
@@ -52,26 +52,12 @@ DEFAULT_OPTIONS: dict[str, Any] = {
     CONF_DRY_STREAK_SOURCE: DEFAULT_DRY_STREAK_SOURCE,
 }
 
-# DwdOptions field for each option key.
-_FIELD_BY_KEY: dict[str, str] = {
-    CONF_EXTRA_ATTRIBUTES: "extra_attributes",
-    CONF_UNAVAILABLE_WHEN_STALE: "unavailable_when_stale",
-    CONF_PRECIPITATION_THRESHOLD: "precipitation_threshold",
-    CONF_START_END_MODE: "start_end_mode",
-    CONF_PRECIPITATION_END_ALGORITHM: "precipitation_end_algorithm",
-    CONF_FULL_ROLLING_SERIES: "full_rolling_series",
-    CONF_RAIN_EVENTS: "rain_events",
-    CONF_RAIN_EVENT_THRESHOLD: "rain_event_threshold",
-    CONF_PRECIPITATION_RESET_THRESHOLD: "precipitation_reset_threshold",
-    CONF_DRY_STREAK_SOURCE: "dry_streak_source",
-}
-
 
 @dataclass(frozen=True)
 class DwdOptions:
-    """One entry's options, each set (stored or default)."""
+    """One entry's options, each set (stored or default); fields named like the keys."""
 
-    extra_attributes: bool
+    extra_state_attributes: bool
     unavailable_when_stale: bool
     precipitation_threshold: float
     start_end_mode: str
@@ -88,10 +74,7 @@ class DwdOptions:
     @classmethod
     def from_options(cls, options: Mapping[str, Any]) -> DwdOptions:
         """Read an entry's stored options, with the defaults for the rest."""
-        values = {
-            field: options.get(key, DEFAULT_OPTIONS[key])
-            for key, field in _FIELD_BY_KEY.items()
-        }
+        values = {key: options.get(key, default) for key, default in DEFAULT_OPTIONS.items()}
         if values["dry_streak_source"] not in DRY_STREAK_SOURCES:
             values["unknown_dry_streak_source"] = values["dry_streak_source"]
             values["dry_streak_source"] = DEFAULT_DRY_STREAK_SOURCE

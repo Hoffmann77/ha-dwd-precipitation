@@ -42,114 +42,109 @@ from custom_components.dwd_precipitation.products import (
 )
 
 
-@pytest.mark.asyncio
-async def test_entry_setup_creates_sensors_with_correct_values(
-    make_entry,
-    hass: HomeAssistant,
-) -> None:
-    """Full entry setup with mocked _fetch_and_parse; verify coordinators + sensor states."""
-    ts = datetime(2025, 6, 1, 12, 0, tzinfo=timezone.utc)
-    rs_data = {"last_60": 1.5, "next_60": 2.0, "next_60_120": 0.5, "next_120": 2.5}
-    rs_meta = {
-        "last_60": ProductMetadata("RS", ts, lead_time_minutes=0),
-        "next_60": ProductMetadata("RS", ts, lead_time_minutes=60),
-        "next_60_120": None,
-        "next_120": None,
-    }
-    rw_meta = ProductMetadata("RW", datetime(2025, 6, 1, 12, 0, tzinfo=timezone.utc))
-    rv_timing = ProductMetadata(source_product="RV", source_timestamp=ts)
-    rv_data = {
-        "intensity_000": 2.4,
-        "amount_000": 0.2,
-        "max_060": 48.0,
-        "max_120": 12.0,
-        "max_000_120": 48.0,
-        "start_in": 0,
-        "start_at": ts,
-        "end_in": 30,
-        "end_at": ts,
-        "rain_within_2h": True,
-        "peak_1h": 4.0,
-    }
-    rv_meta = {key: rv_timing for key in rv_data}
-    rv_meta["intensity_000"] = rv_meta["amount_000"] = ProductMetadata(
+TS = datetime(2025, 6, 1, 12, 0, tzinfo=timezone.utc)
+
+# RV's payload has every sub-key a real release has.
+RV_TIMING = ProductMetadata(source_product="RV", source_timestamp=TS)
+RV_ANALYSIS = ProductMetadata(
+    source_product="RV",
+    source_timestamp=TS,
+    lead_time_minutes=0,
+    data_start=TS - timedelta(minutes=5),
+    data_end=TS,
+)
+RV_DATA = {
+    "intensity_000": 2.4,
+    "amount_000": 0.2,
+    "max_060": 48.0,
+    "max_120": 12.0,
+    "max_000_120": 48.0,
+    "start_in": 0,
+    "start_at": TS,
+    "end_in": 30,
+    "end_at": TS,
+    "rain_within_2h": True,
+    "peak_1h": 4.0,
+}
+RV_META = {key: RV_TIMING for key in RV_DATA} | {
+    "intensity_000": RV_ANALYSIS,
+    "amount_000": RV_ANALYSIS,
+    "peak_1h": ProductMetadata(
         source_product="RV",
-        source_timestamp=ts,
-        lead_time_minutes=0,
-        data_start=ts - timedelta(minutes=5),
-        data_end=ts,
-    )
-    rv_meta["peak_1h"] = ProductMetadata(
-        source_product="RV",
-        source_timestamp=ts,
+        source_timestamp=TS,
         lead_time_minutes=90,
-        data_start=ts + timedelta(minutes=30),
-        data_end=ts + timedelta(minutes=90),
+        data_start=TS + timedelta(minutes=30),
+        data_end=TS + timedelta(minutes=90),
         rolling_1h=[{"lead": 90, "start": None, "end": None, "value": 4.0}],
-    )
-    hymec_meta = ProductMetadata(source_product="HymecNG_top_view", source_timestamp=ts)
+    ),
+}
 
+# What each product's _fetch_and_parse returns when it is meant to succeed.
+WORKING_PRODUCTS = {
+    RadvorRS: (
+        {"last_60": 1.5, "next_60": 2.0, "next_60_120": 0.5, "next_120": 2.5},
+        {
+            "last_60": ProductMetadata("RS", TS, lead_time_minutes=0),
+            "next_60": ProductMetadata("RS", TS, lead_time_minutes=60),
+            "next_60_120": None,
+            "next_120": None,
+        },
+    ),
+    RadvorRV: (RV_DATA, RV_META),
+    HymecNG: (
+        {"precipitation_type": "snow"},
+        {"precipitation_type": ProductMetadata("HymecNG_top_view", TS)},
+    ),
+    RadolanRW: ({"amount": 3.2}, {"amount": ProductMetadata("RW", TS)}),
+    RadolanRW10: ({"amount": 2.7}, {}),
+    RadolanSF: ({"amount": 12.5}, {}),
+    RadolanSFLastYesterday: ({"amount": 24.0}, {}),
+}
+
+# Adding a product to PRODUCT_CLASSES without a payload here would leave it
+# unpatched -- these tests would then reach for the real DWD OpenData, or
+# silently stop covering it. Fail at collection instead.
+assert set(WORKING_PRODUCTS) == set(PRODUCT_CLASSES), (
+    "every product in PRODUCT_CLASSES needs an entry in WORKING_PRODUCTS"
+)
+
+
+async def _set_up(make_entry, hass: HomeAssistant):
+    """Set up a default "Home" entry on WORKING_PRODUCTS; return it."""
     entry = make_entry()
-
-    with (
-        patch.object(
-            RadvorRS,
-            "_fetch_and_parse",
-            new=AsyncMock(return_value=(rs_data, rs_meta)),
-        ),
-        patch.object(
-            RadvorRV,
-            "_fetch_and_parse",
-            new=AsyncMock(return_value=(rv_data, rv_meta)),
-        ),
-        patch.object(
-            HymecNG,
-            "_fetch_and_parse",
-            new=AsyncMock(
-                return_value=(
-                    {"precipitation_type": "snow"}, {"precipitation_type": hymec_meta}
-                )
-            ),
-        ),
-        patch.object(
-            RadolanRW,
-            "_fetch_and_parse",
-            new=AsyncMock(return_value=({"amount": 3.2}, {"amount": rw_meta})),
-        ),
-        patch.object(
-            RadolanSF,
-            "_fetch_and_parse",
-            new=AsyncMock(return_value=({"amount": 12.5}, {})),
-        ),
-        patch.object(
-            RadolanSFLastYesterday,
-            "_fetch_and_parse",
-            new=AsyncMock(return_value=({"amount": 24.0}, {})),
-        ),
-    ):
+    with _patched_products():
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
+    return entry
+
+
+@pytest.mark.asyncio
+async def test_setup_builds_every_coordinator_from_its_payload(make_entry, hass: HomeAssistant) -> None:
+    entry = await _set_up(make_entry, hass)
 
     coordinators = entry.runtime_data.coordinators
+    # No rw_10min: make_entry builds a 1.1 entry, which migration pins to the
+    # RS dry streak (rw_10min only exists for one counting RW).
     assert set(coordinators) == {"rs", "rv", "hymecng", "rw", "sf", "sf_2350"}
-    assert coordinators["rw"].data.data["amount"] == approx(3.2)
-    assert coordinators["rs"].data.data == rs_data
-    assert coordinators["rv"].data.data["max_060"] == approx(48.0)
-    assert coordinators["hymecng"].data.data["precipitation_type"] == "snow"
+    for key, coordinator in coordinators.items():
+        assert coordinator.data.data == WORKING_PRODUCTS[type(coordinator)][0], key
 
-    # Resolve entity ids via unique ids (avoids relying on HA's slug logic).
-    ent_reg = er.async_get(hass)
-    state = _state_for(hass, entry, "radolan_rw")
-    assert state is not None
-    assert float(state.state) == approx(3.2)
 
-    state = _state_for(hass, entry, "radvor_rs_000")
-    assert state is not None
-    assert float(state.state) == approx(1.5)
+@pytest.mark.asyncio
+async def test_rs_sensors_show_its_hours(make_entry, hass: HomeAssistant) -> None:
+    entry = await _set_up(make_entry, hass)
+
+    assert float(_state_for(hass, entry, "radvor_rs_000").state) == approx(1.5)
+    # The 120-minute total is RS's two forecast hours added.
+    assert float(_state_for(hass, entry, "radvor_rs_000_120").state) == approx(2.5)
+
+
+@pytest.mark.asyncio
+async def test_rv_sensors_show_the_rates_and_the_peak_hour(make_entry, hass: HomeAssistant) -> None:
+    entry = await _set_up(make_entry, hass)
 
     # The peak-hour sensor reads RV, with its window and rolling-hour series.
     state = _state_for(hass, entry, "radvor_peak_1h_120")
-    assert state is not None
     assert float(state.state) == approx(4.0)
     assert state.attributes["window_start"] == "2025-06-01T12:30:00+00:00"
     assert state.attributes["window_end"] == "2025-06-01T13:30:00+00:00"
@@ -158,18 +153,46 @@ async def test_entry_setup_creates_sensors_with_correct_values(
     # The current intensity is the analysis step as mm/h, with that 5-minute
     # window and its raw amount alongside.
     state = _state_for(hass, entry, "radvor_rv_intensity_000")
-    assert state is not None
     assert float(state.state) == approx(2.4)
     assert state.attributes["unit_of_measurement"] == "mm/h"
     assert state.attributes["amount_5min"] == approx(0.2)
     assert state.attributes["window_start"] == "2025-06-01T11:55:00+00:00"
     assert state.attributes["window_end"] == "2025-06-01T12:00:00+00:00"
 
-    # Entity ids follow the English names. Keys are unchanged, so existing
-    # installs keep the ids they already have; these are what new ones get.
+    # The peak intensities report the extrapolated mm/h rate.
+    assert float(_state_for(hass, entry, "radvor_rv_max_intensity_060").state) == approx(48.0)
+    assert float(_state_for(hass, entry, "radvor_rv_max_intensity_000_120").state) == approx(48.0)
+
+
+@pytest.mark.asyncio
+async def test_rain_expected_follows_rv(make_entry, hass: HomeAssistant) -> None:
+    entry = await _set_up(make_entry, hass)
+
+    state = _state_for(hass, entry, "radvor_rv_precipitation_expected_120", "binary_sensor")
+    assert state.state == "on"
+
+
+@pytest.mark.asyncio
+async def test_radolan_and_hymecng_sensors_show_their_values(make_entry, hass: HomeAssistant) -> None:
+    entry = await _set_up(make_entry, hass)
+
+    assert float(_state_for(hass, entry, "radolan_rw").state) == approx(3.2)
+    # HymecNG's enum sensor reports the precipitation-type class label.
+    assert _state_for(hass, entry, "hymecng_precipitation_type").state == "snow"
+
+
+@pytest.mark.asyncio
+async def test_new_installs_get_the_new_entity_ids(make_entry, hass: HomeAssistant) -> None:
+    """Entity ids follow the English names.
+
+    Keys are unchanged, so existing installs keep the ids they already have;
+    these are what new ones get.
+    """
+    entry = await _set_up(make_entry, hass)
+
     new_ids = {
         e.unique_id.removeprefix(f"{entry.entry_id}_"): e.entity_id.split(".", 1)[1]
-        for e in ent_reg.entities.values()
+        for e in er.async_get(hass).entities.values()
         if e.config_entry_id == entry.entry_id
     }
     # No new id is one a released version gave another entity: on an old
@@ -185,76 +208,6 @@ async def test_entry_setup_creates_sensors_with_correct_values(
     assert {key: new_ids[key] for key in expected} == {
         key: f"home_{slug}" for key, slug in expected.items()
     }
-
-    # The two 120-minute sensors: RS's two forecast hours added, RV's peak.
-    assert float(_state_for(hass, entry, "radvor_rs_000_120").state) == approx(2.5)
-    assert float(_state_for(hass, entry, "radvor_rv_max_intensity_000_120").state) == approx(48.0)
-
-    # The peak-intensity sensor reports the extrapolated mm/h rate.
-    state = _state_for(hass, entry, "radvor_rv_max_intensity_060")
-    assert state is not None
-    assert float(state.state) == approx(48.0)
-
-    # The new binary-sensor platform wires up and reflects rain_within_2h.
-    state = _state_for(hass, entry, "radvor_rv_precipitation_expected_120", "binary_sensor")
-    assert state is not None
-    assert state.state == "on"
-
-    # The HymecNG enum sensor reports the precipitation-type class label.
-    state = _state_for(hass, entry, "hymecng_precipitation_type")
-    assert state is not None
-    assert state.state == "snow"
-
-
-RV_TS = datetime(2025, 6, 1, 12, 0, tzinfo=timezone.utc)
-
-# The RV coordinator's payload is a dict keyed by entity sub-key, so a test that
-# only wants "RV worked" still has to produce every key. Built here once
-# rather than restated per test.
-RV_DATA = {
-    "intensity_000": 0.0,
-    "amount_000": 0.0,
-    "max_060": 48.0,
-    "max_120": 12.0,
-    "max_000_120": 48.0,
-    "start_in": 0,
-    "start_at": RV_TS,
-    "end_in": 30,
-    "end_at": RV_TS,
-    "rain_within_2h": True,
-    "peak_1h": 0.0,
-}
-RV_META = {
-    key: ProductMetadata(source_product="RV", source_timestamp=RV_TS)
-    for key in RV_DATA
-}
-
-# What each product's _fetch_and_parse returns when it is meant to succeed.
-WORKING_PRODUCTS = {
-    RadvorRS: (
-        {"last_60": 1.5, "next_60": 2.0, "next_60_120": None, "peak_1h": 6.5, "next_120": None},
-        {
-            "last_60": None,
-            "next_60": None,
-            "next_60_120": None,
-            "peak_1h": ProductMetadata(source_product="RS", source_timestamp=RV_TS),
-            "next_120": None,
-        },
-    ),
-    RadvorRV: (RV_DATA, RV_META),
-    HymecNG: ({"precipitation_type": "snow"}, {}),
-    RadolanRW: ({"amount": 3.2}, {}),
-    RadolanRW10: ({"amount": 2.7}, {}),
-    RadolanSF: ({"amount": 12.5}, {}),
-    RadolanSFLastYesterday: ({"amount": 24.0}, {}),
-}
-
-# Adding a product to PRODUCT_CLASSES without a payload here would leave it
-# unpatched -- these tests would then reach for the real DWD OpenData, or
-# silently stop covering it. Fail at collection instead.
-assert set(WORKING_PRODUCTS) == set(PRODUCT_CLASSES), (
-    "every product in PRODUCT_CLASSES needs an entry in WORKING_PRODUCTS"
-)
 
 
 @contextmanager

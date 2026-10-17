@@ -115,7 +115,7 @@ class RainEventsTracker:
         self.fill_task: asyncio.Task | None = None
         self._view: RainEventsView | None = None
         self.fill_latch = FailureLatch()
-        self._latch = FailureLatch()
+        self._track_latch = FailureLatch()
         entry.async_on_unload(self.async_save)
 
     @staticmethod
@@ -178,14 +178,14 @@ class RainEventsTracker:
         except Exception:
             self._failed()
             return None
-        self._latch.ok()
+        self._track_latch.ok()
         self._schedule_save(state)
         self._view = view
         return view
 
     def _failed(self) -> None:
         """Log a tracker failure once per run of failures."""
-        if self._latch.fail():
+        if self._track_latch.fail():
             _LOGGER.exception(
                 "Could not update the Rain events sensor; the other RV "
                 "sensors are not affected"

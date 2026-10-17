@@ -32,7 +32,14 @@ from .const import (
     CONF_RAIN_EVENT_THRESHOLD,
 )
 from .options import DEFAULT_OPTIONS
-from .radar import rs_grid_contains
+
+# Where DWD's radar can have data for a location: a latitude/longitude box
+# around its DE1200 grid (45.69-56.21 N, 1.47-18.73 E), rounded outwards. It
+# only turns away a location that is clearly elsewhere; the grid each file
+# describes is what decides (ADR 0010), and a location in the box but off it
+# is reported when a product is read.
+COVERAGE_LAT = (45.6, 56.3)
+COVERAGE_LON = (1.4, 18.8)
 
 # The collapsed part of the options form. Only the form is nested: its values
 # are stored flat with the others (see OptionsFlowHandler.async_step_init).
@@ -160,7 +167,12 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data["latitude"] = coords["latitude"]
             data["longitude"] = coords["longitude"]
 
-            if not rs_grid_contains(data["latitude"], data["longitude"]):
+            lat_min, lat_max = COVERAGE_LAT
+            lon_min, lon_max = COVERAGE_LON
+            if not (
+                lat_min <= data["latitude"] <= lat_max
+                and lon_min <= data["longitude"] <= lon_max
+            ):
                 errors["base"] = "coordinates_out_of_range"
 
             if not errors:
@@ -175,12 +187,12 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="user",
-            data_schema=self.get_shema_user_step(),  # pyright: ignore[reportArgumentType]  (probatio, see above)
+            data_schema=self.get_schema_user_step(),  # pyright: ignore[reportArgumentType]  (probatio, see above)
             errors=errors,
         )
 
     @callback
-    def get_shema_user_step(self) -> vol.Schema:
+    def get_schema_user_step(self) -> vol.Schema:
         """Return the schema for the user step."""
         schema = {
             vol.Required(

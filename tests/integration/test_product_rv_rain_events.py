@@ -52,7 +52,7 @@ class _RVWorld:
             raise aiohttp.ClientResponseError(info, (), status=404, message="Not Found")
         return await RangeServer(_rv_release_tar(ts)).fetch(url, headers)
 
-    def read(self, fileobj, _row, _col, **_kw):
+    def read(self, fileobj, _lat, _lon, **_kw):
         stamp, lead = fileobj.getvalue().decode().split(":")
         base = DAY_RV.replace(hour=int(stamp[:2]), minute=int(stamp[2:]))
         step_end = base + timedelta(minutes=int(lead))
@@ -101,7 +101,7 @@ def _stored(hass_storage, entry, data, version=RAIN_EVENTS_STORE_VERSION) -> Non
 def _serving(world):
     with (
         patch.object(products, "async_get", side_effect=world.get),
-        patch.object(products, "read_odim_composite_cell", side_effect=world.read),
+        patch.object(products, "read_odim_composite_at", side_effect=world.read),
     ):
         yield
 

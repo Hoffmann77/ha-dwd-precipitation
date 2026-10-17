@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from functools import cached_property
 from typing import Any, ClassVar
@@ -22,11 +23,7 @@ from .radar.urls import radvor_prefix
 from .options import DwdOptions
 from .utils import DownloadCache, FailureLatch, async_get
 from .radar.tar_range import fetch_tar_members, member_names, members_from_archive
-from .radar import (
-    read_odim_composite_cell,
-    read_odim_classification_cell,
-    RS_GRID_SHAPE,
-)
+from .radar import read_odim_classification_at, read_odim_composite_at
 from .radar.nowcast import (
     FUTURE_HOUR_LEADS,
     HOUR1_LEADS,
@@ -36,7 +33,7 @@ from .radar.nowcast import (
     PAST_STEPS,
     STEPS_PER_HOUR,
     bucket_max_intensity,
-    MM_DECIMALS,
+    round_mm,
     detect_start_end,
     peak_rolling_hour,
     rolling_hour_sums,
@@ -73,11 +70,6 @@ def _nan_to_none(value: float) -> float | None:
     return None if np.isnan(value) else value
 
 
-def _mm(value: float | None) -> float | None:
-    """Round an amount to the ODIM resolution; the float32 carries noise below it."""
-    return round(value, MM_DECIMALS) if value is not None else None
-
-
 # The three non-overlapping RS hours: past, next and second-next.
 _RS_HOURS = {KEY_LAST_60: 0, KEY_NEXT_60: 60, KEY_NEXT_60_120: 120}
 RS_HOURLY_LEADS = tuple(_RS_HOURS.values())
@@ -92,14 +84,17 @@ _STEP = timedelta(minutes=LEAD_STEP)
 
 
 def _decode_cells(
-    members: dict[str, bytes], prefix: str, leads, cell: tuple[int, int], label: str
+    members: dict[str, bytes],
+    prefix: str,
+    leads,
+    location: tuple[float, float],
+    label: str,
 ) -> dict[int, tuple[float | None, dict] | None]:
-    """Decode one grid cell from each requested RADVOR member.
+    """Decode the cell holding ``location`` from each requested RADVOR member.
 
     Returns ``{lead: (value, dataset_what)}``; ``value`` is ``None`` for nodata,
     and a member missing from ``members`` maps to ``None`` (logged).
     """
-    row, col = cell
     out: dict[int, tuple[float | None, dict] | None] = {}
     for lead, name in zip(leads, member_names(prefix, leads)):
         if (member := members.get(name)) is None:
@@ -107,9 +102,7 @@ def _decode_cells(
             out[lead] = None
             continue
 
-        val, what = read_odim_composite_cell(
-            BytesIO(member), row, col, expected_shape=RS_GRID_SHAPE
-        )
+        val, what = read_odim_composite_at(BytesIO(member), *location)
         out[lead] = (_nan_to_none(val), what)
     return out
 
@@ -194,7 +187,7 @@ def _next_120(
     if hour1 is None or hour2 is None or meta1 is None or meta2 is None:
         return None, None
 
-    return round(hour1 + hour2, MM_DECIMALS), ProductMetadata(
+    return round_mm(hour1 + hour2), ProductMetadata(
         source_product=meta1.source_product,
         source_timestamp=meta1.source_timestamp,
         lead_time_minutes=120,
@@ -316,8 +309,9 @@ class RadvorRS(RadvorProduct):
       exactly the sum of the two forecast sensors. ``None`` unless both are
       present.
 
-    Every member is the sum of RV's twelve 5-minute steps in its hour, so the
-    peak hour and its series come from RV, which decodes those steps anyway.
+    Every member is the sum of RV's twelve 5-minute steps in its hour (exactly
+    in almost every cell, ADR 0009), so the peak hour and its series come from
+    RV, which decodes those steps anyway.
     """
 
     PRODUCT_KEY = "rs"
@@ -342,7 +336,7 @@ class RadvorRS(RadvorProduct):
 
     def _parse_members(self, members: dict[str, bytes], ts: datetime) -> Payload:
         """Derive the RS entity payloads from its members' bytes (blocking)."""
-        cells = _decode_cells(members, self._prefix(ts), RS_HOURLY_LEADS, self.index, "RS")
+        cells = _decode_cells(members, self._prefix(ts), RS_HOURLY_LEADS, self.coords, "RS")
 
         data: dict[str, Any] = {}
         metadata: dict[str, ProductMetadata | None] = {}
@@ -358,6 +352,132 @@ class RadvorRS(RadvorProduct):
             metadata[KEY_NEXT_60_120],
         )
         return data, metadata
+
+
+@dataclass(frozen=True)
+class _RvSeries:
+    """One RV release at the location: each lead's 5-minute amount and window."""
+
+    values: list[float | None]  # mm, aligned to LEADS; None for no data
+    starts: list[datetime | None]
+    ends: list[datetime | None]
+    base: datetime | None  # T, the end of the analysis window (lead 0)
+
+    @classmethod
+    def from_cells(cls, cells: dict[int, tuple[float | None, dict] | None]) -> _RvSeries:
+        """Build the series from _decode_cells' output."""
+        values: list[float | None] = []
+        starts: list[datetime | None] = []
+        ends: list[datetime | None] = []
+        for lead in LEADS:
+            cell = cells[lead]
+            start, end = _odim_window(cell[1]) if cell else (None, None)
+            values.append(round_mm(cell[0]) if cell else None)
+            starts.append(start)
+            ends.append(end)
+        return cls(values, starts, ends, base=ends[0])
+
+    def at(self, minutes: int | None) -> datetime | None:
+        """Return T + ``minutes``; None without either."""
+        if minutes is None or self.base is None:
+            return None
+        return self.base + timedelta(minutes=minutes)
+
+    def metadata(
+        self,
+        leads: list[int] | None = None,
+        lead_minutes: int | None = None,
+        samples: list[dict] | None = None,
+    ) -> ProductMetadata:
+        """Return the metadata of a value over ``leads`` (none: the release only)."""
+        return ProductMetadata(
+            source_product="RV",
+            source_timestamp=self.base,
+            lead_time_minutes=lead_minutes,
+            data_start=self.starts[leads[0] // LEAD_STEP] if leads else None,
+            data_end=self.ends[leads[-1] // LEAD_STEP] if leads else None,
+            samples=samples,
+        )
+
+    def samples(self) -> list[dict]:
+        """Return every step: its window, amount (mm) and hourly rate (mm/h)."""
+        return [
+            {
+                "lead": lead,
+                "start": iso(start),
+                "end": iso(end),
+                "value": value,
+                "intensity": round(value * STEPS_PER_HOUR, 2) if value is not None else None,
+            }
+            for lead, value, start, end in zip(LEADS, self.values, self.starts, self.ends)
+        ]
+
+    def hour_windows(self, leads: list[int]) -> list[tuple[datetime | None, datetime | None]]:
+        """Return the rolling hour ending at each of ``leads``, aligned to LEADS.
+
+        The hour ending at T+L is the twelve steps ending at T+L-55..T+L; for a
+        lead under 60 the first of them is in an earlier release.
+        """
+        windows: list[tuple[datetime | None, datetime | None]] = [(None, None)] * len(LEADS)
+        for lead in leads:
+            first = lead // LEAD_STEP - PAST_STEPS  # the hour's first step here
+            start = self.starts[first] if first >= 0 else None
+            end = self.ends[lead // LEAD_STEP]
+            if start is None and end is not None:
+                start = end - timedelta(minutes=60)
+            windows[lead // LEAD_STEP] = (start, end)
+        return windows
+
+
+# What each part of RV's payload returns: (value, metadata) by sub-key.
+type _Parts = dict[str, tuple[Any, ProductMetadata | None]]
+
+
+def _rv_intensities(series: _RvSeries) -> _Parts:
+    """The analysis as a rate and as an amount, and the peak intensities ahead."""
+    # The analysis (lead 0) is the 5 minutes ending at T: the only measured step
+    # in the release, reported as an hourly rate like the peaks. Both are at the
+    # ODIM resolution; x12 keeps it exact.
+    values = series.values
+    now = values[0]
+    now_meta = series.metadata([0], 0)
+    hour1, hour2, both = HOUR1_LEADS, HOUR2_LEADS, HOUR1_LEADS + HOUR2_LEADS
+    return {
+        "intensity_000": (round_mm(now * STEPS_PER_HOUR) if now is not None else None, now_meta),
+        "amount_000": (now, now_meta),
+        "max_060": (bucket_max_intensity(values, hour1), series.metadata(hour1, 60)),
+        "max_120": (bucket_max_intensity(values, hour2), series.metadata(hour2, 120)),
+        "max_000_120": (bucket_max_intensity(values, both), series.metadata(both, 120)),
+    }
+
+
+def _rv_timing(series: _RvSeries, threshold_mmh: float, end_algorithm: str) -> _Parts:
+    """When precipitation starts and ends, and whether any is expected."""
+    # The threshold is configured as an intensity (mm/h); the detection works
+    # on 5-minute amounts.
+    start_in, end_in = detect_start_end(
+        series.values, threshold_mmh / STEPS_PER_HOUR, end_algorithm
+    )
+    timing = series.metadata()
+    return {
+        "start_in": (start_in, timing),
+        "start_at": (series.at(start_in), timing),
+        "end_in": (end_in, timing),
+        "end_at": (series.at(end_in), timing),
+        # The rain-expected flag owns the raw forecast curve: the full 25-point
+        # 5-minute series, which the binary sensor surfaces.
+        "rain_within_2h": (start_in is not None, series.metadata(LEADS, samples=series.samples())),
+    }
+
+
+def _rv_peak_hour(series: _RvSeries, past: list[float | None] | None) -> _Parts:
+    """The wettest rolling hour ahead, with the hourly series it is picked from."""
+    # Wholly in this release from lead 60; with the past hour, every lead.
+    leads = LEADS if past is not None else FUTURE_HOUR_LEADS
+    peak, meta = _peak_hour_payload(
+        rolling_hour_sums(series.values, past), series.hour_windows(leads), leads, series.metadata()
+    )
+    return {"peak_1h": (peak, meta)}
 
 
 class RadvorRV(RadvorProduct):
@@ -379,7 +499,7 @@ class RadvorRV(RadvorProduct):
       2-hour horizon (drives the "rain expected" binary sensor). Its metadata
       carries the full 25-point 5-minute forecast series as ``samples``.
     * ``peak_1h`` — the wettest rolling hour wholly in the future, summed from
-      twelve 5-minute steps (identical to the RS member for that window). Its
+      twelve 5-minute steps (matching the RS member for that window). Its
       metadata carries those 13 rolling hours as ``rolling_1h``; with the
       ``full_rolling_series`` option, the 12 hours that started before T as
       well, from the analyses of the releases adopted in the past hour.
@@ -467,13 +587,13 @@ class RadvorRV(RadvorProduct):
         self, members: dict[str, bytes], prefix: str, step_end: datetime
     ) -> float | None:
         """Decode the analysis member of a missed release (blocking)."""
-        cell = _decode_cells(members, prefix, [0], self.index, "RV")[0]
+        cell = _decode_cells(members, prefix, [0], self.coords, "RV")[0]
         if cell is None:
             raise ValueError(f"{prefix} has no analysis member")
         _, end = _odim_window(cell[1])
         if end != step_end:
             raise ValueError(f"{prefix} analysis ends at {end}, not {step_end}")
-        return _mm(cell[0])
+        return round_mm(cell[0])
 
     def _parse(
         self, content: bytes, ts: datetime, past: list[float | None] | None = None
@@ -484,147 +604,24 @@ class RadvorRV(RadvorProduct):
         _past_hour); with it the rolling-hour series starts an hour earlier.
         """
         prefix = self._prefix(ts)
-        names = member_names(prefix, LEADS)
-        cells = _decode_cells(
-            members_from_archive(content, names), prefix, LEADS, self.index, "RV"
+        members = members_from_archive(content, member_names(prefix, LEADS))
+        series = _RvSeries.from_cells(
+            _decode_cells(members, prefix, LEADS, self.coords, "RV")
         )
-
-        # Per-lead 5-minute cell values (mm) and window bounds, aligned to LEADS.
-        values: list[float | None] = []
-        starts: list[datetime | None] = []
-        ends: list[datetime | None] = []
-        base_ts: datetime | None = None
-
-        for lead in LEADS:
-            cell = cells[lead]
-            if cell is None:
-                values.append(None)
-                starts.append(None)
-                ends.append(None)
-                continue
-
-            data_start, data_end = _odim_window(cell[1])
-            values.append(_mm(cell[0]))
-            starts.append(data_start)
-            ends.append(data_end)
-            # Base run time T = end of the analysis window (lead 0).
-            if lead == 0 and data_end is not None:
-                base_ts = data_end
-
-        # The user configures the threshold as an intensity (mm/h); the
-        # detection works on 5-minute accumulations, so convert back to mm/5min.
-        threshold = self.options.precipitation_threshold / STEPS_PER_HOUR
-        end_algorithm = self.options.precipitation_end_algorithm
-        start_in, end_in = detect_start_end(values, threshold, end_algorithm)
-
-        def _at(minutes: int | None) -> datetime | None:
-            if minutes is None or base_ts is None:
-                return None
-            return base_ts + timedelta(minutes=minutes)
-
-        def _samples(leads: list[int]) -> list[dict]:
-            out = []
-            for lead in leads:
-                i = lead // LEAD_STEP
-                value = values[i]
-                out.append({
-                    "lead": lead,
-                    "start": iso(starts[i]),
-                    "end": iso(ends[i]),
-                    "value": value,
-                    # 5-minute accumulation extrapolated to an hourly rate.
-                    "intensity": (
-                        round(value * STEPS_PER_HOUR, 2)
-                        if value is not None
-                        else None
-                    ),
-                })
-            return out
-
-        def _bucket_meta(leads: list[int], lead_minutes: int) -> ProductMetadata:
-            return ProductMetadata(
-                source_product="RV",
-                source_timestamp=base_ts,
-                lead_time_minutes=lead_minutes,
-                data_start=starts[leads[0] // LEAD_STEP],
-                data_end=ends[leads[-1] // LEAD_STEP],
-            )
-
-        timing_meta = ProductMetadata(source_product="RV", source_timestamp=base_ts)
-        hour1_meta = _bucket_meta(HOUR1_LEADS, 60)
-        hour2_meta = _bucket_meta(HOUR2_LEADS, 120)
-        both_meta = _bucket_meta(HOUR1_LEADS + HOUR2_LEADS, 120)
-        # The rain-expected flag owns the raw forecast curve: the full 25-point
-        # 5-minute series is attached here so the binary sensor can surface it.
-        rain_meta = ProductMetadata(
-            source_product="RV",
-            source_timestamp=base_ts,
-            data_start=starts[0],
-            data_end=ends[-1],
-            samples=_samples(LEADS),
-        )
-
-        # Rolling hour ending at T+L = the twelve 5-minute steps ending at
-        # T+L-55..T+L. Wholly in this release from L = 60; with the past hour,
-        # every lead, the earlier steps being the analyses before T.
-        series_leads = LEADS if past is not None else FUTURE_HOUR_LEADS
-        windows: list[tuple[datetime | None, datetime | None]] = [
-            (None, None)
-        ] * len(LEADS)
-        for lead in series_leads:
-            first = lead // LEAD_STEP - PAST_STEPS  # the window's first step here
-            start = starts[first] if first >= 0 else None
-            end = ends[lead // LEAD_STEP]
-            if start is None and end is not None:
-                start = end - timedelta(minutes=60)
-            windows[lead // LEAD_STEP] = (start, end)
-        peak_1h, peak_meta = _peak_hour_payload(
-            rolling_hour_sums(values, past), windows, series_leads, timing_meta
-        )
-
-        # The analysis (lead 0) is the 5 minutes ending at T: the only measured
-        # step in the release, reported as an hourly rate like the peaks. Both
-        # are rounded to the ODIM resolution; x12 keeps it exact.
-        now_mm = values[0]
-        now_meta = ProductMetadata(
-            source_product="RV",
-            source_timestamp=base_ts,
-            lead_time_minutes=0,
-            data_start=starts[0],
-            data_end=ends[0],
-        )
-
-        data = {
-            "intensity_000": (
-                round(now_mm * STEPS_PER_HOUR, MM_DECIMALS)
-                if now_mm is not None
-                else None
+        options = self.options
+        parts = {
+            **_rv_intensities(series),
+            **_rv_timing(
+                series,
+                options.precipitation_threshold,
+                options.precipitation_end_algorithm,
             ),
-            "amount_000": now_mm,
-            "max_060": bucket_max_intensity(values, HOUR1_LEADS),
-            "max_120": bucket_max_intensity(values, HOUR2_LEADS),
-            "max_000_120": bucket_max_intensity(values, HOUR1_LEADS + HOUR2_LEADS),
-            "start_in": start_in,
-            "start_at": _at(start_in),
-            "end_in": end_in,
-            "end_at": _at(end_in),
-            "rain_within_2h": start_in is not None,
-            "peak_1h": peak_1h,
+            **_rv_peak_hour(series, past),
         }
-        metadata: dict[str, ProductMetadata | None] = {
-            "intensity_000": now_meta,
-            "amount_000": now_meta,
-            "max_060": hour1_meta,
-            "max_120": hour2_meta,
-            "max_000_120": both_meta,
-            "start_in": timing_meta,
-            "start_at": timing_meta,
-            "end_in": timing_meta,
-            "end_at": timing_meta,
-            "rain_within_2h": rain_meta,
-            "peak_1h": peak_meta,
-        }
-        return data, metadata
+        return (
+            {key: value for key, (value, _) in parts.items()},
+            {key: meta for key, (_, meta) in parts.items()},
+        )
 
 
 class HymecNG(WholeFileProduct):
@@ -657,8 +654,8 @@ class HymecNG(WholeFileProduct):
 
     def _parse(self, content: bytes, ts: datetime) -> Payload:
         """Return the cell's precipitation-type label (blocking)."""
-        value, dataset_what, moment_what = read_odim_classification_cell(
-            BytesIO(content), *self.index, expected_shape=RS_GRID_SHAPE
+        value, dataset_what, moment_what = read_odim_classification_at(
+            BytesIO(content), *self.coords
         )
 
         nodata = int(round(float(moment_what.get("nodata", 255))))
@@ -686,10 +683,10 @@ class RadolanProduct(WholeFileProduct, ABC):
     DWD publishes RADOLAN both in its legacy binary format (.bz2, national
     900x900 grid) and as ODIM_H5 on the DE1200 grid RS/RV/HymecNG use. The
     binary format was announced to be switched off, so the HDF5 edition is
-    read: one cell via read_odim_composite_cell, located with
-    get_rs_grid_index like every other product. It is the same analysis on
-    another grid (area means agree to 1 %), so a location may land on a
-    slightly different cell than it did on the old grid.
+    read: the cell holding the location on the grid the file describes, like
+    every other product. It is the same analysis on another grid (area means
+    agree to 1 %), so a location may land on a slightly different cell than it
+    did on the old grid.
 
     Concrete subclasses provide PRODUCT_KEY and the timing constants; the
     URL follows from the key (radar/urls.py).
@@ -706,9 +703,7 @@ class RadolanProduct(WholeFileProduct, ABC):
         cell, outside coverage), as for RS/RV/HymecNG: the reader returns NaN
         for the ODIM ``nodata`` sentinel.
         """
-        value, what = read_odim_composite_cell(
-            BytesIO(content), *self.index, expected_shape=RS_GRID_SHAPE
-        )
+        value, what = read_odim_composite_at(BytesIO(content), *self.coords)
         return {KEY_AMOUNT: _nan_to_none(value)}, {KEY_AMOUNT: _odim_metadata(what)}
 
 

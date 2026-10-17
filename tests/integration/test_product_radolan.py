@@ -14,7 +14,6 @@ from custom_components.dwd_precipitation.products import (
     RadolanRW,
     RadolanSF,
 )
-from custom_components.dwd_precipitation.radar import RS_GRID_SHAPE, get_rs_grid_index
 from custom_components.dwd_precipitation.utils import AsyncResponse
 
 
@@ -31,13 +30,13 @@ def _radolan_what(product: str, end: datetime, hours: int) -> dict:
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("cls", "product", "hours"), [(RadolanRW, "RW", 1), (RadolanSF, "SF", 24)])
 async def test_radolan_reads_the_hdf5_edition_and_its_window(make_coordinator, cls, product, hours) -> None:
-    """RADOLAN: the HDF5 URL, one DE1200 cell, and the window from ODIM what."""
+    """RADOLAN: the HDF5 URL, the cell at the location, and the window from ODIM what."""
     ts = datetime(2025, 6, 1, 12, 50, tzinfo=timezone.utc)
     coord = make_coordinator(cls)
     get = AsyncMock(return_value=AsyncResponse(content=b"hdf5"))
     read = patch.object(
         products,
-        "read_odim_composite_cell",
+        "read_odim_composite_at",
         return_value=(np.float32(1.7), _radolan_what(product, ts, hours)),
     )
     with patch.object(products, "async_get", new=get), read as reader:
@@ -45,9 +44,8 @@ async def test_radolan_reads_the_hdf5_edition_and_its_window(make_coordinator, c
 
     url = get.call_args.args[0]
     assert url.endswith(f"/{product.lower()}/raa01-{product.lower()}_10000-2506011250-dwd---bin.hdf5")
-    assert reader.call_args.args[1:] == coord.index
-    assert reader.call_args.kwargs["expected_shape"] == RS_GRID_SHAPE
-    assert coord.index == get_rs_grid_index(*coord.coords)
+    # The location goes to the reader, which finds it on the file's own grid.
+    assert reader.call_args.args[1:] == coord.coords
     assert value == {"amount": pytest.approx(1.7)}
     meta = meta["amount"]
     assert meta.source_product == product
@@ -65,7 +63,7 @@ async def test_radolan_nodata_cell_reads_as_none(make_coordinator, cell_value, e
         patch.object(products, "async_get", new=AsyncMock(return_value=AsyncResponse(content=b"x"))),
         patch.object(
             products,
-            "read_odim_composite_cell",
+            "read_odim_composite_at",
             return_value=(np.float32(cell_value), _radolan_what("RW", ts, 1)),
         ),
     ):

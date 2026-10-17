@@ -1,5 +1,6 @@
 """Integration tests — HA config flow."""
 
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -7,6 +8,7 @@ from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType, InvalidData
 
+from custom_components.dwd_precipitation.config_flow import COVERAGE_LAT, COVERAGE_LON
 from custom_components.dwd_precipitation.const import (
     CONF_COORDS,
     CONF_DRY_STREAK_SOURCE,
@@ -14,6 +16,10 @@ from custom_components.dwd_precipitation.const import (
     DRY_STREAK_SOURCE_RS,
     DRY_STREAK_SOURCE_RW,
 )
+from custom_components.dwd_precipitation.radar import OutsideGrid
+from custom_components.dwd_precipitation.radar.odim import read_odim_grid
+
+RS_FIXTURE = Path(__file__).parents[1] / "fixtures" / "composite_rs_sample.hd5"
 
 
 # ---------------------------------------------------------------------------
@@ -136,6 +142,23 @@ async def test_flow_out_of_range_coordinates_shows_error(hass: HomeAssistant) ->
 
     assert result["type"] is FlowResultType.FORM
     assert result["errors"] == {"base": "coordinates_out_of_range"}
+
+
+def test_the_coverage_box_holds_the_whole_grid() -> None:
+    """The setup check never turns away a location DWD's grid covers.
+
+    Checked on a 0.05 degree mesh against the grid a real RS file describes.
+    """
+    grid = read_odim_grid(RS_FIXTURE)
+    (lat_min, lat_max), (lon_min, lon_max) = COVERAGE_LAT, COVERAGE_LON
+    for i in range(281):  # 44.0 .. 58.0 N
+        for j in range(421):  # 0.0 .. 21.0 E
+            lat, lon = 44.0 + i * 0.05, j * 0.05
+            try:
+                grid.cell(lat, lon)
+            except OutsideGrid:
+                continue
+            assert lat_min <= lat <= lat_max and lon_min <= lon <= lon_max, (lat, lon)
 
 
 async def test_flow_zero_coordinates_shows_error(hass: HomeAssistant) -> None:

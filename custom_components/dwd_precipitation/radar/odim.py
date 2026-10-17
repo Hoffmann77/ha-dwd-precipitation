@@ -1,75 +1,14 @@
-"""ODIM_H5 reader for DWD RS Cartesian precipitation composites."""
+"""ODIM_H5 reader for DWD's Cartesian composites (RS, RV, HymecNG, RW, SF).
 
-import re
-import math
+The integration reads one cell: the one holding a location, on the grid the
+file itself describes in its /where group (radar/grid.py). The whole-grid
+readers are the oracle for the test tiers and scripts/.
+"""
 
 import numpy as np
 import h5py
 
-# RS polar-stereographic projection parameters (constant for all RS files)
-_RS_A     = 6378137.0            # WGS84 semi-major axis (metres)
-_RS_B     = 6356752.3142451802   # WGS84 semi-minor axis (metres)
-_RS_E2    = 1 - (_RS_B / _RS_A) ** 2      # first eccentricity squared
-_RS_E     = math.sqrt(_RS_E2)             # first eccentricity
-_RS_LAT_TS = math.radians(60.0)           # standard parallel
-_RS_LON_0  = 10.0                         # central meridian (degrees)
-
-# Precomputed scale-factor constants at the standard parallel (lat_ts = 60°).
-# m_c / t_c implements Snyder's polar stereographic for the ellipsoid:
-#   ρ = a · m_c · t(φ) / t_c    where t(φ) is the conformal latitude factor.
-_sin_lat_ts = math.sin(_RS_LAT_TS)
-_cos_lat_ts = math.cos(_RS_LAT_TS)
-_RS_M_C = _cos_lat_ts / math.sqrt(1 - _RS_E2 * _sin_lat_ts ** 2)
-_RS_T_C = (
-    math.tan(math.pi / 4 - _RS_LAT_TS / 2)
-    / ((1 - _RS_E * _sin_lat_ts) / (1 + _RS_E * _sin_lat_ts)) ** (_RS_E / 2)
-)
-
-# Fixed RS grid metadata (confirmed from DWD ODIM_H5 files)
-RS_WHERE = {
-    "projdef": (
-        "+proj=stere +lat_ts=60 +lat_0=90 +lon_0=10"
-        " +x_0=543196.83521776402 +y_0=3622588.8619310022"
-        " +units=m +a=6378137 +b=6356752.3142451802 +no_defs"
-    ),
-    # Outer corner of the south-west pixel, at the precision DWD stores it.
-    # Rounding it to 3 decimals would move the grid by ~50 m.
-    "LL_lat": 45.696425377390064,
-    "LL_lon": 3.5669946350078914,
-    "xscale": 1000.0,
-    "yscale": 1000.0,
-    "ysize": 1200,
-    "xsize": 1100,
-}
-
-# Expected grid shape (rows, cols) of RS and RV composites — used to bound the
-# array read and reject a crafted file that declares a different-sized dataset.
-RS_GRID_SHAPE = (RS_WHERE["ysize"], RS_WHERE["xsize"])
-
-
-def _parse_proj_param(projdef: str, key: str) -> float:
-    """Extract a numeric PROJ4 parameter from a projdef string."""
-    m = re.search(rf"\+{key}=(\S+)", projdef)
-    if m is None:
-        raise ValueError(f"Parameter +{key} not found in: {projdef}")
-    return float(m.group(1))
-
-
-def _lonlat_to_xy(lon: float, lat: float, x_0: float, y_0: float):
-    """Convert (lon, lat) to RS projection (x, y) in metres.
-
-    Ellipsoidal polar-stereographic (Snyder §21) matching pyproj's
-    +proj=stere +lat_0=90 +lat_ts=60 on WGS84.  Sub-millimetre accuracy.
-    """
-    phi = math.radians(lat)
-    lam = math.radians(lon - _RS_LON_0)
-    sin_phi = math.sin(phi)
-    t = (
-        math.tan(math.pi / 4 - phi / 2)
-        / ((1 - _RS_E * sin_phi) / (1 + _RS_E * sin_phi)) ** (_RS_E / 2)
-    )
-    rho = _RS_A * _RS_M_C * t / _RS_T_C
-    return rho * math.sin(lam) + x_0, -rho * math.cos(lam) + y_0
+from .grid import Grid, UnsupportedGrid, grid_from_where
 
 
 def _normalise_attr_value(value):
@@ -142,15 +81,26 @@ def _open_composite(hf, dataset: str, moment: str, expected_shape):
     return dset, dataset_what, what
 
 
-def _cell(dset, row: int, col: int):
-    """Return the 1x1 slice of ``dset`` at (row, col), rejecting outside cells.
+def _file_grid(hf) -> Grid:
+    """Return the grid the open file's /where group describes."""
+    if "where" not in hf:
+        raise UnsupportedGrid("the file has no /where group")
+    attrs = _resolve_hard(hf, "where").attrs
+    return grid_from_where({k: _normalise_attr_value(v) for k, v in attrs.items()})
 
-    A negative index would otherwise wrap around to the far edge of the grid.
+
+def _cell_of(hf, lat: float, lon: float, dataset: str, moment: str):
+    """Return ``(raw 1x1 slice, dataset_what, what)`` of the cell holding a location.
+
+    The cell is found on the file's own grid, and the payload must be exactly
+    that grid, which also bounds what the read inflates. Raises OutsideGrid for
+    a location off the grid, UnsupportedGrid for a grid this version cannot
+    compute.
     """
-    rows, cols = dset.shape
-    if not (0 <= row < rows and 0 <= col < cols):
-        raise ValueError(f"Cell ({row}, {col}) is outside the {dset.shape} grid")
-    return dset[row:row + 1, col:col + 1]
+    grid = _file_grid(hf)
+    row, col = grid.cell(lat, lon)
+    dset, dataset_what, what = _open_composite(hf, dataset, moment, grid.shape)
+    return dset[row:row + 1, col:col + 1], dataset_what, what
 
 
 def _scale(raw, what):
@@ -166,6 +116,12 @@ def _scale(raw, what):
     return data
 
 
+def read_odim_grid(fileobj) -> Grid:
+    """Return the grid an ODIM_H5 file describes (for the test tiers and scripts/)."""
+    with h5py.File(fileobj, "r") as hf:
+        return _file_grid(hf)
+
+
 def read_odim_composite(
     fileobj,
     dataset: str = "dataset1",
@@ -175,7 +131,7 @@ def read_odim_composite(
     """Read a Cartesian ODIM_H5 composite, the whole grid.
 
     No runtime caller: the integration reads one cell
-    (:func:`read_odim_composite_cell`). This is the oracle the test tiers and
+    (:func:`read_odim_composite_at`). This is the oracle the test tiers and
     scripts/ compare against.
 
     Returns (data, dataset_what) where data is a float32 array and dataset_what
@@ -195,25 +151,23 @@ def read_odim_composite(
     return _scale(raw, what), dataset_what
 
 
-def read_odim_composite_cell(
+def read_odim_composite_at(
     fileobj,
-    row: int,
-    col: int,
+    lat: float,
+    lon: float,
     dataset: str = "dataset1",
     moment: str = "data1",
-    expected_shape=None,
 ):
-    """Read one cell of a Cartesian ODIM_H5 composite.
+    """Read the cell holding (lat, lon) from a Cartesian ODIM_H5 composite.
 
     Returns (value, dataset_what): the same float32 value
-    :func:`read_odim_composite` would hold at ``[row, col]`` (NaN for nodata),
-    with the same untrusted-input checks. DWD stores the whole grid as a single
+    :func:`read_odim_composite` would hold at that cell (NaN for nodata), with
+    the same untrusted-input checks. DWD stores the whole grid as a single
     compressed chunk, so libhdf5 still inflates it; what this saves is scaling
     and masking 1.3 million cells to keep one, which is most of the cost.
     """
     with h5py.File(fileobj, "r") as hf:
-        dset, dataset_what, what = _open_composite(hf, dataset, moment, expected_shape)
-        raw = _cell(dset, row, col)
+        raw, dataset_what, what = _cell_of(hf, lat, lon, dataset, moment)
 
     return _scale(raw, what)[0, 0], dataset_what
 
@@ -227,7 +181,7 @@ def read_odim_classification(
     """Read a Cartesian ODIM_H5 *classification* composite (e.g. HymecNG).
 
     The whole grid, for the test tiers; HymecNG reads one cell with
-    :func:`read_odim_classification_cell`.
+    :func:`read_odim_classification_at`.
 
     Unlike :func:`read_odim_composite`, the payload holds a discrete class index
     (a precipitation-type category) rather than a physical quantity, so it is
@@ -251,69 +205,20 @@ def read_odim_classification(
     return raw, dataset_what, moment_what
 
 
-def read_odim_classification_cell(
+def read_odim_classification_at(
     fileobj,
-    row: int,
-    col: int,
+    lat: float,
+    lon: float,
     dataset: str = "dataset1",
     moment: str = "data1",
-    expected_shape=None,
 ):
-    """Read one cell of a classification composite.
+    """Read the class index of the cell holding (lat, lon) from a classification composite.
 
     Returns ``(value, dataset_what, moment_what)``: the class index
-    :func:`read_odim_classification` would hold at ``[row, col]``, as an int,
-    with the same untrusted-input checks; a cell outside the grid raises.
+    :func:`read_odim_classification` would hold at that cell, as an int, with
+    the same untrusted-input checks.
     """
     with h5py.File(fileobj, "r") as hf:
-        dset, dataset_what, moment_what = _open_composite(
-            hf, dataset, moment, expected_shape
-        )
-        raw = _cell(dset, row, col)
+        raw, dataset_what, moment_what = _cell_of(hf, lat, lon, dataset, moment)
 
     return int(raw[0, 0]), dataset_what, moment_what
-
-
-def get_rs_grid_index(lat: float, lon: float, where: dict | None = None):
-    """Return (row, col) of the RS grid cell containing (lat, lon).
-
-    ODIM_H5 corner attributes (``LL_lon``/``LL_lat`` …) are the *outer*
-    corners of the edge pixels, not pixel centres: DWD's LL corner projects to
-    (-500 m, -1 199 500 m), and its pixel centres sit on whole kilometres (the
-    RV format description puts the centre of the north-west pixel at the
-    projection origin). So the cell is found by flooring the offset from the
-    corner; rounding it picks a neighbouring cell for about three locations in
-    four.
-
-    The result can lie outside the grid; :func:`rs_grid_contains` checks that.
-    Uses the fixed RS grid parameters by default; pass a custom where dict
-    to override (e.g. for testing or future grid changes).
-    """
-    if where is None:
-        where = RS_WHERE
-
-    projdef = where["projdef"]
-    if hasattr(projdef, "decode"):
-        projdef = projdef.decode()
-
-    x_0 = _parse_proj_param(projdef, "x_0")
-    y_0 = _parse_proj_param(projdef, "y_0")
-    xscale = float(where["xscale"])
-    yscale = float(where["yscale"])
-    ysize = int(where["ysize"])
-
-    x_ll, y_ll = _lonlat_to_xy(float(where["LL_lon"]), float(where["LL_lat"]), x_0, y_0)
-    x_pt, y_pt = _lonlat_to_xy(lon, lat, x_0, y_0)
-
-    col = math.floor((x_pt - x_ll) / xscale)
-    # Row 0 is the top (highest y); y_ll is the southernmost (lowest y)
-    row = ysize - 1 - math.floor((y_pt - y_ll) / yscale)
-    return row, col
-
-
-def rs_grid_contains(lat: float, lon: float, where: dict | None = None) -> bool:
-    """Return True if (lat, lon) falls within the RS composite grid extent."""
-    if where is None:
-        where = RS_WHERE
-    row, col = get_rs_grid_index(lat, lon, where)
-    return 0 <= row < int(where["ysize"]) and 0 <= col < int(where["xsize"])

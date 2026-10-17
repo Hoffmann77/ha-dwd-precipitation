@@ -1,22 +1,25 @@
-"""Parser unit tests for radar/odim.py — no HA, no wradlib, no network."""
+"""Parser unit tests for radar/odim.py — no HA, no wradlib, no network.
 
+The grid lookup itself is tested in test_grid.py; here, the readers.
+"""
+
+import io
+
+import h5py
 import numpy as np
 import pytest
 
+from radar.grid import OutsideGrid, UnsupportedGrid
 from radar.odim import (
-    RS_GRID_SHAPE,
-    RS_WHERE,
-    _lonlat_to_xy,
-    _parse_proj_param,
-    get_rs_grid_index,
-    read_odim_composite,
-    read_odim_composite_cell,
     read_odim_classification,
-    read_odim_classification_cell,
-    rs_grid_contains,
+    read_odim_classification_at,
+    read_odim_composite,
+    read_odim_composite_at,
+    read_odim_grid,
 )
 
 from tests.factories.odim import (
+    DE1200_WHERE,
     make_hymecng_h5,
     make_odim_external_link,
     make_odim_h5,
@@ -25,106 +28,29 @@ from tests.factories.odim import (
 )
 from tests.factories.real import real_cells, real_member, real_release
 
-_PROJDEF = RS_WHERE["projdef"]
-_X_0 = 543196.83521776402
-_Y_0 = 3622588.8619310022
+DE1200_SHAPE = (DE1200_WHERE["ysize"], DE1200_WHERE["xsize"])
 
 
-# ===========================================================================
-# Group 1 — _parse_proj_param
-# ===========================================================================
+def _locations(buf) -> dict[tuple[int, int], tuple[float, float]]:
+    """Return one (lat, lon) inside every cell of a small synthetic grid.
 
-def test_parse_x0():
-    assert _parse_proj_param(_PROJDEF, "x_0") == pytest.approx(_X_0)
-
-
-def test_parse_y0():
-    assert _parse_proj_param(_PROJDEF, "y_0") == pytest.approx(_Y_0)
-
-
-def test_parse_missing_raises():
-    with pytest.raises(ValueError, match="not found"):
-        _parse_proj_param(_PROJDEF, "nonexistent_param")
-
-
-# ===========================================================================
-# Group 2 — _lonlat_to_xy
-# ===========================================================================
-
-def test_north_pole_maps_to_origin():
-    """lat=90 → rho=0 → result is exactly (x_0, y_0)."""
-    x, y = _lonlat_to_xy(0.0, 90.0, _X_0, _Y_0)
-    assert x == pytest.approx(_X_0)
-    assert y == pytest.approx(_Y_0)
-
-
-def test_central_meridian_x_equals_x0():
-    """lon=10 (central meridian) → sin(0)=0 → x component from rho is 0 → x=x_0."""
-    x, _ = _lonlat_to_xy(10.0, 51.0, _X_0, _Y_0)
-    assert x == pytest.approx(_X_0, rel=1e-9)
-
-
-# ===========================================================================
-# Group 3 — get_rs_grid_index
-# ===========================================================================
-
-def test_ll_corner_maps_to_bottom_left():
-    """The LL corner (lowest-left pixel) must map to (ysize-1, 0)."""
-    row, col = get_rs_grid_index(RS_WHERE["LL_lat"], RS_WHERE["LL_lon"])
-    assert col == 0
-    assert row == RS_WHERE["ysize"] - 1
-
-
-# Cells wradlib's DE1200 grid gives for these locations (the reference tier
-# re-derives them; pinned here so the check also runs without wradlib).
-@pytest.mark.parametrize(
-    ("lat", "lon", "cell"),
-    [
-        (53.5511, 9.9937, (304, 543)),    # Hamburg
-        (52.5200, 13.4050, (416, 784)),   # Berlin
-        (47.9990, 7.8421, (951, 371)),    # Freiburg
-        (48.1374, 11.5755, (936, 669)),   # Munich
-        (50.9375, 6.9603, (601, 319)),    # Cologne
-    ],
-)
-def test_grid_index_matches_wradlib_pins(lat, lon, cell):
-    assert get_rs_grid_index(lat, lon) == cell
-
-
-# Points 400 m and 100 m either side of the outer grid edges, from projected
-# x/y via pyproj. The corner attributes are the *outer* pixel corners, so a
-# point just beyond them is off the grid — rounding put it in the edge cell.
-@pytest.mark.parametrize(
-    ("lat", "lon", "cell", "inside"),
-    [
-        (50.70260195370898, 2.6576754488211547, (600, -1), False),   # x = -900 m
-        (50.703475085889224, 2.668353517852978, (600, 0), True),     # x = -100 m
-        (56.22287238431419, 10.10762718326833, (-1, 550), False),    # y = +900 m
-        (56.21846556371837, 10.107612326653413, (0, 550), True),     # y = +400 m
-        (45.94609595982105, 10.080828049983344, (1200, 550), False), # y = -1 199 900 m
-        (45.95272662686072, 10.080841460710587, (1199, 550), True),  # y = -1 199 100 m
-    ],
-)
-def test_grid_edges_are_outer_pixel_corners(lat, lon, cell, inside):
-    assert get_rs_grid_index(lat, lon) == cell
-    assert rs_grid_contains(lat, lon) is inside
-
-
-def test_ur_corner_maps_near_top_right():
-    """UR corner should map within ±5 cells of (0, xsize-1)."""
-    row, col = get_rs_grid_index(55.845, 18.732)
-    assert abs(row - 0) <= 5
-    assert abs(col - (RS_WHERE["xsize"] - 1)) <= 5
-
-
-def test_bytes_projdef_same_result():
-    """projdef stored as bytes (real DWD files) gives identical result."""
-    where_bytes = dict(RS_WHERE)
-    where_bytes["projdef"] = RS_WHERE["projdef"].encode()
-    row_str, col_str = get_rs_grid_index(51.0, 10.0)
-    row_b,   col_b   = get_rs_grid_index(51.0, 10.0, where=where_bytes)
-    assert row_str == row_b
-    assert col_str == col_b
+    The factories put their grid at DE1200's lower-left corner; a mesh of
+    locations around it finds each cell (the grid is rotated against the
+    meridians there, so the mesh starts a little west and south).
+    """
+    grid = read_odim_grid(buf)
+    buf.seek(0)
+    found: dict[tuple[int, int], tuple[float, float]] = {}
+    for i in range(80):
+        for j in range(120):
+            lat = DE1200_WHERE["LL_lat"] - 0.02 + i * 0.002
+            lon = DE1200_WHERE["LL_lon"] - 0.02 + j * 0.002
+            try:
+                found.setdefault(grid.cell(lat, lon), (lat, lon))
+            except OutsideGrid:
+                pass
+    assert len(found) == grid.ysize * grid.xsize, "every cell should be found"
+    return found
 
 
 # ===========================================================================
@@ -210,7 +136,7 @@ def test_unexpected_shape_rejected():
     """When expected_shape is pinned, a wrong-sized grid is refused before the read."""
     buf = make_odim_h5(shape=(5, 5))
     with pytest.raises(ValueError, match="Unexpected composite shape"):
-        read_odim_composite(buf, expected_shape=RS_GRID_SHAPE)
+        read_odim_composite(buf, expected_shape=DE1200_SHAPE)
 
 
 def test_matching_shape_accepted():
@@ -218,10 +144,6 @@ def test_matching_shape_accepted():
     buf = make_odim_h5(shape=(4, 6))
     data, _ = read_odim_composite(buf, expected_shape=(4, 6))
     assert data.shape == (4, 6)
-
-
-def test_rs_grid_shape_constant():
-    assert RS_GRID_SHAPE == (RS_WHERE["ysize"], RS_WHERE["xsize"]) == (1200, 1100)
 
 
 # ===========================================================================
@@ -254,34 +176,31 @@ def test_classification_returns_validity_window():
 
 def test_classification_shape_pinning_rejects_wrong_size():
     with pytest.raises(ValueError, match="Unexpected composite shape"):
-        read_odim_classification(make_hymecng_h5(shape=(5, 5)), expected_shape=RS_GRID_SHAPE)
+        read_odim_classification(make_hymecng_h5(shape=(5, 5)), expected_shape=DE1200_SHAPE)
 
 
 def test_classification_cell_matches_the_grid():
     raw, dataset_what, moment_what = read_odim_classification(make_hymecng_h5())
-    for row in range(raw.shape[0]):
-        for col in range(raw.shape[1]):
-            value, cell_what, cell_moment = read_odim_classification_cell(
-                make_hymecng_h5(), row, col
-            )
-            assert value == int(raw[row, col])
-            assert (cell_what, cell_moment) == (dataset_what, moment_what)
+    for (row, col), location in _locations(make_hymecng_h5()).items():
+        value, cell_what, cell_moment = read_odim_classification_at(
+            make_hymecng_h5(), *location
+        )
+        assert value == int(raw[row, col])
+        assert (cell_what, cell_moment) == (dataset_what, moment_what)
 
 
-@pytest.mark.parametrize(("row", "col"), [(-1, 0), (0, -1), (5, 0), (0, 5)])
-def test_classification_cell_outside_the_grid_raises(row, col):
-    with pytest.raises(ValueError, match="outside"):
-        read_odim_classification_cell(make_hymecng_h5(), row, col)
+def test_classification_location_off_the_grid_raises():
+    with pytest.raises(OutsideGrid):
+        read_odim_classification_at(make_hymecng_h5(), 52.52, 13.405)  # Berlin
 
 
 # ===========================================================================
-# read_odim_composite_cell — one cell, same answer as the full-grid reader
+# read_odim_composite_at — one cell, same answer as the full-grid reader
 # ===========================================================================
 
 def _varied_odim_h5(shape=(6, 7)):
     """ODIM file with a distinct raw count per cell, plus nodata and undetect."""
     buf = make_odim_h5(shape=shape)
-    import h5py
     with h5py.File(buf, "r+") as f:
         raw = np.arange(1, shape[0] * shape[1] + 1, dtype=np.uint32).reshape(shape) * 37
         raw[0, 0] = 4294967295  # nodata
@@ -291,38 +210,58 @@ def _varied_odim_h5(shape=(6, 7)):
     return buf
 
 
+def _with_where(buf, **attrs):
+    """Return ``buf`` with some /where attributes replaced."""
+    with h5py.File(buf, "r+") as f:
+        for key, value in attrs.items():
+            f["where"].attrs[key] = value
+    buf.seek(0)
+    return buf
+
+
 def test_cell_reader_matches_grid_reader_everywhere():
     grid, what = read_odim_composite(_varied_odim_h5())
-    rows, cols = grid.shape
-    for row in range(rows):
-        for col in range(cols):
-            value, cell_what = read_odim_composite_cell(_varied_odim_h5(), row, col)
-            if np.isnan(grid[row, col]):
-                assert np.isnan(value), (row, col)
-            else:
-                # Bit-identical, not approximately equal: the same float32 math.
-                assert value == grid[row, col], (row, col)
-                assert value.dtype == np.float32
-    assert cell_what == what
+    for (row, col), location in _locations(_varied_odim_h5()).items():
+        value, cell_what = read_odim_composite_at(_varied_odim_h5(), *location)
+        if np.isnan(grid[row, col]):
+            assert np.isnan(value), (row, col)
+        else:
+            # Bit-identical, not approximately equal: the same float32 math.
+            assert value == grid[row, col], (row, col)
+            assert value.dtype == np.float32
+        assert cell_what == what
 
 
 def test_cell_reader_nodata_and_undetect():
-    assert np.isnan(read_odim_composite_cell(_varied_odim_h5(), 0, 0)[0])
-    assert read_odim_composite_cell(_varied_odim_h5(), 0, 1)[0] == 0.0
+    locations = _locations(_varied_odim_h5())
+    assert np.isnan(read_odim_composite_at(_varied_odim_h5(), *locations[0, 0])[0])
+    assert read_odim_composite_at(_varied_odim_h5(), *locations[0, 1])[0] == 0.0
 
 
-@pytest.mark.parametrize("row, col", [(-1, 0), (0, -1), (6, 0), (0, 7)])
-def test_cell_reader_rejects_cells_outside_the_grid(row, col):
-    # A negative index would silently wrap to the far edge of the grid.
-    with pytest.raises(ValueError, match="outside"):
-        read_odim_composite_cell(_varied_odim_h5(), row, col)
+def test_cell_reader_rejects_a_location_off_the_grid():
+    with pytest.raises(OutsideGrid):
+        read_odim_composite_at(_varied_odim_h5(), 52.52, 13.405)  # Berlin
 
 
 def test_cell_reader_keeps_untrusted_input_checks():
-    with pytest.raises(ValueError):
-        read_odim_composite_cell(make_odim_external_link(), 0, 0)
+    location = DE1200_WHERE["LL_lat"] + 0.01, DE1200_WHERE["LL_lon"] + 0.01
+    with pytest.raises(ValueError, match="non-hard link"):
+        read_odim_composite_at(make_odim_external_link(), *location)
+    # The payload must be exactly the grid /where declares...
     with pytest.raises(ValueError, match="shape"):
-        read_odim_composite_cell(make_odim_h5(shape=(5, 5)), 0, 0, expected_shape=(6, 6))
+        read_odim_composite_at(_with_where(make_odim_h5(shape=(5, 5)), ysize=6), *location)
+    # ... and that grid no larger than a DWD composite, before anything is read.
+    with pytest.raises(UnsupportedGrid):
+        read_odim_composite_at(_with_where(make_odim_h5(), ysize=1_000_000), *location)
+
+
+def test_cell_reader_needs_a_where_group():
+    buf = make_odim_h5()
+    with h5py.File(buf, "r+") as f:
+        del f["where"]
+    buf.seek(0)
+    with pytest.raises(UnsupportedGrid):
+        read_odim_composite_at(buf, 45.7, 3.6)
 
 
 # --- real files (scripts/create_fixture.py --product rv|hymecng) ------------------
@@ -331,15 +270,14 @@ def test_cell_reader_keeps_untrusted_input_checks():
 @pytest.mark.parametrize("kind", ["wet", "nodata"])
 def test_real_rv_analysis_cell(kind):
     """A real RV analysis: the cell at a location, and its value in mm."""
-    import io
-
     content, _ = real_member("rv")
     cell = real_cells("rv")[kind]
-    assert get_rs_grid_index(cell["lat"], cell["lon"]) == (cell["row"], cell["col"])
-
-    value, what = read_odim_composite_cell(
-        io.BytesIO(content), cell["row"], cell["col"], expected_shape=RS_GRID_SHAPE
+    assert read_odim_grid(io.BytesIO(content)).cell(cell["lat"], cell["lon"]) == (
+        cell["row"],
+        cell["col"],
     )
+
+    value, what = read_odim_composite_at(io.BytesIO(content), cell["lat"], cell["lon"])
     if cell["value"] is None:
         assert np.isnan(value)
     else:
@@ -352,14 +290,15 @@ def test_real_rv_analysis_cell(kind):
 @pytest.mark.parametrize("kind", ["wet", "undetect", "nodata"])
 def test_real_hymecng_cell(kind):
     """A real HymecNG file: the raw class, undetect and nodata as stored."""
-    import io
-
     content, _ = real_member("hymecng")
     cell = real_cells("hymecng")[kind]
-    assert get_rs_grid_index(cell["lat"], cell["lon"]) == (cell["row"], cell["col"])
+    assert read_odim_grid(io.BytesIO(content)).cell(cell["lat"], cell["lon"]) == (
+        cell["row"],
+        cell["col"],
+    )
 
-    value, _, moment_what = read_odim_classification_cell(
-        io.BytesIO(content), cell["row"], cell["col"], expected_shape=RS_GRID_SHAPE
+    value, _, moment_what = read_odim_classification_at(
+        io.BytesIO(content), cell["lat"], cell["lon"]
     )
     assert value == cell["value"]
     assert (int(moment_what["undetect"]), int(moment_what["nodata"])) == (254, 255)

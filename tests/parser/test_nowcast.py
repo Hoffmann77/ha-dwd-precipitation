@@ -17,7 +17,14 @@ from radar.nowcast import (
     detect_start_end,
     peak_rolling_hour,
     rolling_hour_sums,
+    round_mm,
 )
+
+
+def test_round_mm_rounds_to_the_odim_resolution_and_keeps_none():
+    assert round_mm(0.1 + 0.2) == 0.3  # not 0.30000000000000004
+    assert round_mm(None) is None
+    assert isinstance(round_mm(0), float)  # an empty sum is the int 0
 
 
 def _series(**overrides):

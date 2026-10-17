@@ -23,6 +23,7 @@ from custom_components.dwd_precipitation import (
     coordinator as coordinator_mod,
 )
 from custom_components.dwd_precipitation.coordinator import CoordinatorData
+from custom_components.dwd_precipitation.radar import OutsideGrid, UnsupportedGrid
 from custom_components.dwd_precipitation.release_grid import ReleaseGrid
 from custom_components.dwd_precipitation.products import (
     RadolanRW,
@@ -519,6 +520,8 @@ def test_not_found_message_does_not_blame_the_user():
         (_response_error(503, "Service Unavailable"), "HTTP 503"),
         (aiohttp.ClientConnectionError("DNS failure"), "internet access"),
         (ValueError("Unexpected RADOLAN grid shape"), "please report it"),
+        (UnsupportedGrid("PROJ parameters ['k_0']"), "please report it"),
+        (OutsideGrid("(60.0, 25.0) is outside the 1200 x 1100 grid"), "location inside Germany"),
     ],
 )
 def test_every_message_states_the_retry(err, expected):

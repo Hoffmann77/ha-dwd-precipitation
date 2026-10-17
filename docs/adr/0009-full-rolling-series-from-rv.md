@@ -46,7 +46,26 @@ series has the 13 future points for up to an hour.
 ## Consequences
 
 With the option on, an install downloads what it does with the option off,
-and RS no longer decodes 25 members a release. The peak's value, window and
-future points are unchanged. If DWD stops publishing RS as summed RV, the live
+and RS no longer decodes 25 members a release. The option no longer changes
+the peak's value, window or future points: they come from RV either way. An
+install that had the option on read them from RS before, so in the rare cells
+where DWD's RS and summed RV differ (see the later measurement below) its
+peak may move slightly with this change. If DWD stops publishing RS as summed RV, the live
 test fails; the series' first point and `Precipitation last 60 min` would then
 disagree.
+
+## Later measurement (17 Oct 2026)
+
+The identity is not exact on every release. Twelve releases 4 h apart from
+15 to 17 Oct matched in every cell while dry. On the wet morning of 17 Oct,
+48 consecutive releases of RS lead 0 matched summed RV exactly in 98.2 to
+100 % of the wet cells; at most 0.44 % differed by more than 0.01 mm and
+0.11 % by more than 0.05 mm, the largest by 0.54 mm. A step that differs stays
+in the sums for the hour it covers. The forecast leads deviate the same way,
+less often. RS and RV never disagreed about which cells have data.
+
+The decision stands: the deviations are DWD's own, in a percent or two of the
+wet cells, on an attribute that is not recorded. The live test checks the
+identity by its share rather than exactly (the same cells have data, and at
+least 90 % of wet cells match), so DWD's deviations do not fail it and a
+systematic change, which would put most wet cells off, still does.

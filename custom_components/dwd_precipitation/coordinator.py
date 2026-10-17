@@ -29,7 +29,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from homeassistant.util import dt as dt_util
 
 from .options import DwdOptions
-from .radar import get_rs_grid_index
+from .radar import OutsideGrid
 from .radar.urls import product_url
 from .release_grid import ReleaseGrid
 
@@ -137,6 +137,14 @@ def _describe_fetch_error(
             f"Could not reach DWD OpenData for the {release_str} release ({err}). "
             "Check this machine's internet access."
         )
+    elif isinstance(err, OutsideGrid):
+        # The setup check is a coarse box, so a location near its edge can
+        # pass it and still be off the grid DWD's file describes.
+        cause = (
+            f"The configured location is not on the grid of the {release_str} "
+            f"release ({err}): DWD's radar does not cover it. Set the "
+            "integration up again with a location inside Germany."
+        )
     else:
         # Not a transport error: DWD served something this version cannot
         # read. That is a format change or a bug, not a late file, and only a
@@ -194,8 +202,9 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
     Each concrete subclass represents one DWD product and owns its own
     update schedule. Subclasses must define PRODUCT_KEY and the timing
     ClassVars, and implement _fetch_and_parse() (products.py has bases for
-    one-file-per-release products and for RADVOR tars). index defaults to the
-    DE1200 grid, the URL to the product key's pattern in radar/urls.py.
+    one-file-per-release products and for RADVOR tars). The URL defaults to
+    the product key's pattern in radar/urls.py; the cell holding ``coords``
+    is found on the grid each file describes (radar/grid.py).
 
     """
 
@@ -566,16 +575,6 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
     # ------------------------------------------------------------------
     # Abstract interface — subclasses implement these
     # ------------------------------------------------------------------
-
-    @cached_property
-    def index(self) -> tuple[int, int]:
-        """Return the (row, col) of the grid cell holding the location.
-
-        Every product so far is on DWD's DE1200 grid (RS/RV/HymecNG, and
-        RW/SF in their HDF5 edition). Override with a cached_property for a
-        product on another grid.
-        """
-        return get_rs_grid_index(*self.coords)
 
     def _get_url(self, ts: datetime) -> str:
         """Return the URL of release ``ts`` (see radar/urls.py)."""

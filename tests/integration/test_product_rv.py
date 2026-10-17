@@ -37,7 +37,7 @@ async def test_rv_fetch_derives_buckets_and_timing(make_coordinator) -> None:
             "async_get",
             new=AsyncMock(return_value=AsyncResponse(content=make_radvor_tar("rv", ts))),
         ),
-        patch.object(products, "read_odim_composite_cell", side_effect=lambda _f, _r, _c, **_kw: next(reads)),
+        patch.object(products, "read_odim_composite_at", side_effect=lambda _f, _lat, _lon, **_kw: next(reads)),
     ):
         data, meta = await coord._fetch_and_parse(ts)
 
@@ -98,7 +98,7 @@ async def test_rv_threshold_from_options_suppresses_light_rain(make_coordinator)
             "async_get",
             new=AsyncMock(return_value=AsyncResponse(content=make_radvor_tar("rv", ts))),
         ),
-        patch.object(products, "read_odim_composite_cell", side_effect=lambda _f, _r, _c, **_kw: next(reads)),
+        patch.object(products, "read_odim_composite_at", side_effect=lambda _f, _lat, _lon, **_kw: next(reads)),
     ):
         data, _meta = await coord._fetch_and_parse(ts)
 
@@ -132,7 +132,7 @@ async def test_rv_threshold_is_interpreted_as_mm_per_hour(make_coordinator) -> N
             "async_get",
             new=AsyncMock(return_value=AsyncResponse(content=make_radvor_tar("rv", ts))),
         ),
-        patch.object(products, "read_odim_composite_cell", side_effect=lambda _f, _r, _c, **_kw: next(reads)),
+        patch.object(products, "read_odim_composite_at", side_effect=lambda _f, _lat, _lon, **_kw: next(reads)),
     ):
         data, _meta = await coord._fetch_and_parse(ts)
 
@@ -164,7 +164,7 @@ async def test_rv_end_algorithm_option_selects_clearing(make_coordinator) -> Non
             "async_get",
             new=AsyncMock(return_value=AsyncResponse(content=make_radvor_tar("rv", ts))),
         ),
-        patch.object(products, "read_odim_composite_cell", side_effect=lambda _f, _r, _c, **_kw: next(episode_reads)),
+        patch.object(products, "read_odim_composite_at", side_effect=lambda _f, _lat, _lon, **_kw: next(episode_reads)),
     ):
         episode, _ = await coord._fetch_and_parse(ts)
     assert episode["start_in"] == 5
@@ -180,7 +180,7 @@ async def test_rv_end_algorithm_option_selects_clearing(make_coordinator) -> Non
             "async_get",
             new=AsyncMock(return_value=AsyncResponse(content=make_radvor_tar("rv", ts))),
         ),
-        patch.object(products, "read_odim_composite_cell", side_effect=lambda _f, _r, _c, **_kw: next(clearing_reads)),
+        patch.object(products, "read_odim_composite_at", side_effect=lambda _f, _lat, _lon, **_kw: next(clearing_reads)),
     ):
         clearing, _ = await coord._fetch_and_parse(ts)
     assert clearing["start_in"] == 5

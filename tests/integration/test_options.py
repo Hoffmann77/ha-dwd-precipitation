@@ -2,28 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import fields
-
 import pytest
 
-from custom_components.dwd_precipitation.options import (
-    _FIELD_BY_KEY,
-    DEFAULT_OPTIONS,
-    DwdOptions,
-)
-
-
-def test_every_option_has_a_field_and_a_default():
-    assert set(_FIELD_BY_KEY) == set(DEFAULT_OPTIONS)
-    assert set(_FIELD_BY_KEY.values()) == {
-        f.name for f in fields(DwdOptions) if f.name != "unknown_dry_streak_source"
-    }
+from custom_components.dwd_precipitation.options import DEFAULT_OPTIONS, DwdOptions
 
 
 def test_an_entry_without_options_gets_the_defaults():
     options = DwdOptions.from_options({})
-    for key, field in _FIELD_BY_KEY.items():
-        assert getattr(options, field) == DEFAULT_OPTIONS[key]
+    for key, default in DEFAULT_OPTIONS.items():
+        assert getattr(options, key) == default
     assert options.unknown_dry_streak_source is None
 
 

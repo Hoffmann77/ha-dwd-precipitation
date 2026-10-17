@@ -68,12 +68,12 @@ async def test_rs_range_fallback_is_said_once_and_its_end_once(make_coordinator,
     ignores_ranges = RangeServer(archive, ranges=False).async_get  # 200: the whole file
     serves_ranges = RangeServer(archive).async_get
 
-    def _read(fileobj, _row, _col, **_kw):
+    def _read(fileobj, _lat, _lon, **_kw):
         lead = int(fileobj.getvalue())
         return np.float32(lead), rs_what(ts, lead)
 
     coord = make_coordinator(RadvorRS)
-    with patch.object(products, "read_odim_composite_cell", side_effect=_read):
+    with patch.object(products, "read_odim_composite_at", side_effect=_read):
         for server in (ignores_ranges, ignores_ranges, ignores_ranges, serves_ranges):
             with patch.object(products, "async_get", side_effect=server):
                 data, _ = await coord._fetch_and_parse(ts)
@@ -96,14 +96,14 @@ async def test_rs_reads_the_hours_by_range(make_coordinator, full_rolling_series
     ts = datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc)
     server = RangeServer(make_radvor_tar("rs", ts))
 
-    def _read(fileobj, _row, _col, **_kw):
+    def _read(fileobj, _lat, _lon, **_kw):
         lead = int(fileobj.getvalue())
         return np.float32(lead), rs_what(ts, lead)
 
     coord = make_coordinator(RadvorRS, {"full_rolling_series": full_rolling_series})
     with (
         patch.object(products, "async_get", side_effect=server.async_get),
-        patch.object(products, "read_odim_composite_cell", side_effect=_read),
+        patch.object(products, "read_odim_composite_at", side_effect=_read),
         executor_jobs(coord) as jobs,
     ):
         data, _ = await coord._fetch_and_parse(ts)

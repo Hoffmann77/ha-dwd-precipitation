@@ -9,12 +9,23 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, NamedTuple
 
 from homeassistant.helpers.restore_state import ExtraStoredData
 
 from .const import KEY_AMOUNT
 from .radar.isotime import iso, parse_utc
+
+
+class Reading(NamedTuple):
+    """A RADOLAN analysis at the location: its amount (mm) and its window."""
+
+    value: float | None
+    start: datetime | None
+    end: datetime | None
+
+
+NO_READING = Reading(None, None, None)
 
 
 @dataclass
@@ -33,20 +44,15 @@ class DryStreakExtraData(ExtraStoredData):
         return cls(dry_since=parse_utc(restored.get("dry_since")))
 
 
-def amount_reading(
-    coordinator: Any,
-) -> tuple[float | None, datetime | None, datetime | None]:
-    """Return (value, data_start, data_end) of a RADOLAN coordinator's amount.
-
-    Yields (None, None, None) when the coordinator or its data is missing.
-    """
+def amount_reading(coordinator: Any) -> Reading:
+    """Return a RADOLAN coordinator's amount and window; NO_READING without data."""
     cdata = getattr(coordinator, "data", None) if coordinator else None
     if cdata is None or (value := cdata.data.get(KEY_AMOUNT)) is None:
-        return (None, None, None)
+        return NO_READING
 
     meta = cdata.metadata.get(KEY_AMOUNT)
 
-    return (
+    return Reading(
         float(value),
         getattr(meta, "data_start", None),
         getattr(meta, "data_end", None),
@@ -54,43 +60,31 @@ def amount_reading(
 
 
 def downtime_correction(
-    threshold: float,
-    rw: tuple[float | None, datetime | None, datetime | None],
-    sf: tuple[float | None, datetime | None, datetime | None],
-    now: datetime,
+    threshold: float, rw: Reading, sf: Reading, now: datetime
 ) -> datetime | None:
     """Newest time we have positive rain evidence, to clamp a stale anchor forward.
 
     Used only at startup to catch rain that fell while HA was down. Returns a UTC
     datetime to clamp the anchor forward to, or None when there is no evidence.
     """
-    rw_value, _, rw_end = rw
-    if rw_value is not None and rw_value >= threshold:
+    if rw.value is not None and rw.value >= threshold:
         # Rain within the last hour -> the streak is effectively zero.
-        return rw_end or now
+        return rw.end or now
 
-    sf_value, sf_start, _ = sf
-    if sf_value is not None and sf_value >= threshold:
+    if sf.value is not None and sf.value >= threshold:
         # Rain within the last 24h (but not the last hour). We cannot pin the exact
         # time, so cap the streak at the start of the SF window (~24h ago).
-        return sf_start or now
+        return sf.start or now
 
     return None
 
 
-def fresh_anchor(
-    threshold: float,
-    rw: tuple[float | None, datetime | None, datetime | None],
-    sf: tuple[float | None, datetime | None, datetime | None],
-    now: datetime,
-) -> datetime:
+def fresh_anchor(threshold: float, rw: Reading, sf: Reading, now: datetime) -> datetime:
     """Anchor for a fresh install: the oldest time we can prove it has been dry."""
-    sf_value, sf_start, _ = sf
-    if sf_value is not None and sf_value < threshold and sf_start:
-        return sf_start  # dry for at least the 24h SF window
+    if sf.value is not None and sf.value < threshold and sf.start:
+        return sf.start  # dry for at least the 24h SF window
 
-    rw_value, rw_start, _ = rw
-    if rw_value is not None and rw_value < threshold and rw_start:
-        return rw_start  # dry for at least the last hour
+    if rw.value is not None and rw.value < threshold and rw.start:
+        return rw.start  # dry for at least the last hour
 
     return now

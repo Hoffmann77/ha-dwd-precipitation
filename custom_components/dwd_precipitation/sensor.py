@@ -224,7 +224,7 @@ RADVOR_RV_SENSORS = (
         product_key="rv",
         sub_key="max_000_120",
     ),
-    # Summed from RV's 5-minute steps, which equals RS's rolling hours. The
+    # Summed from RV's 5-minute steps, which match RS's rolling hours. The
     # key keeps its product-neutral name from when RS fed it with the full
     # rolling series option on.
     PrecipitationSensorEntityDescription(
@@ -407,7 +407,7 @@ class PrecipitationSensorEntity(DwdCoordinatorEntity, SensorEntity):
         attrs = self._described_attributes()
 
         # Diagnostic metadata is opt-in via the integration options.
-        if not self.coordinator.options.extra_attributes:
+        if not self.coordinator.options.extra_state_attributes:
             return attrs
 
         if (metadata := self._metadata()) is None:
