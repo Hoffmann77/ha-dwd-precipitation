@@ -19,6 +19,7 @@ simply there next time, and nothing can be counted twice.
 
 Pure and HA-free, like everything in radar/: the coordinator owns fetching,
 filling and persistence.
+
 """
 
 from __future__ import annotations
@@ -143,24 +144,32 @@ NO_EVENT = "none"
 def wet_step_milli(threshold_mmh: float) -> int:
     """Return the wet-step threshold in thousandths of a mm per 5-minute step.
 
-    ``floor(threshold / 12)`` at the data's 0.001 mm resolution, computed in
-    integers so float noise cannot move it. Because amounts are whole
-    thousandths, "more than this many thousandths" selects exactly the steps
-    above ``threshold / 12``.
+    ``threshold_mmh`` is the rain_event_threshold option, an intensity in mm/h;
+    a step is wet above a twelfth of it, since an hour has twelve steps.
+    Computed in whole thousandths, the data's resolution, so float noise cannot
+    move a step across the threshold (1.2 mm/h gives 100: wet above 0.100 mm).
+
     """
     return int(round(threshold_mmh * 1000)) // STEPS_PER_HOUR
 
 
 def is_wet(value: float | None, wet_milli: int) -> bool:
-    """Return whether a 5-minute amount counts as rain (strictly above)."""
+    """Return whether a 5-minute amount counts as rain (strictly above).
+
+    ``wet_milli`` comes from wet_step_milli. A step without data is never wet;
+    callers treat it as unknown.
+
+    """
     return value is not None and round(value * 1000) > wet_milli
 
 
 def _parse(raw: str | None) -> datetime | None:
     """Parse a stored timestamp (UTC); raise on one that cannot be read.
 
-    Raising, unlike parse_utc, is what makes an unreadable store be discarded
-    as a whole rather than half restored.
+    An empty or missing value gives None. Raising, unlike parse_utc, is what
+    makes an unreadable store be discarded as a whole rather than half
+    restored.
+
     """
     if not raw:
         return None
@@ -191,7 +200,13 @@ class RainEventsState:
     view: RainEventsView | None = None
 
     def as_dict(self) -> dict[str, Any]:
-        """Serialize for homeassistant.helpers.storage.Store."""
+        """Return the state as JSON-ready data for Home Assistant's Store.
+
+        The measured steps are stored as one list from the oldest step, unknown
+        ones as None, and every timestamp as an ISO string. from_dict reads it
+        back.
+
+        """
         start = min(self.measured) if self.measured else None
         steps = []
         if start is not None:
@@ -216,8 +231,10 @@ class RainEventsState:
         """Rebuild the state saved by :meth:`as_dict`.
 
         Raises ValueError (or TypeError) for anything update() could not work
-        with, so a damaged or foreign store is discarded as a whole when it is
-        loaded, rather than failing every release after it.
+        with: a missing field, a value of the wrong type, an unreadable
+        timestamp. So a damaged or foreign store is discarded as a whole when
+        it is loaded, rather than failing every release after it.
+
         """
         measured: dict[datetime, float | None] = {}
         if (start := _parse(raw.get("measured_start"))) is not None:
@@ -261,14 +278,24 @@ _SNAPSHOT_FIELDS = ("base", "start", "end", "mm", "peak_1h", "peak_10min", "fore
 
 
 def _optional(value: Any, kind: type, name: str) -> Any:
-    """Return ``value`` if it is None or a ``kind``; raise otherwise."""
+    """Return ``value`` if it is None or a ``kind``; raise otherwise.
+
+    One of the checks that reject a damaged store when it is loaded; ``name``
+    says in the error which field was wrong.
+
+    """
     if value is not None and not isinstance(value, kind):
         raise ValueError(f"{name} is {type(value).__name__}, not {kind.__name__}")
     return value
 
 
 def _amount(value: Any) -> float | None:
-    """Return a stored step amount, which must be a number or None."""
+    """Return a stored step amount, which must be a number or None.
+
+    None is an unknown step. A bool is refused, although Python counts it as an
+    int.
+
+    """
     if value is not None and (
         isinstance(value, bool) or not isinstance(value, (int, float))
     ):
@@ -277,14 +304,24 @@ def _amount(value: Any) -> float | None:
 
 
 def _required_time(raw: Any) -> datetime:
-    """Parse a stored timestamp that must be there."""
+    """Parse a stored timestamp that must be there.
+
+    Raises ValueError for a missing or unreadable one.
+
+    """
     if (ts := _parse(raw)) is None:
         raise ValueError("missing timestamp")
     return ts
 
 
 def _snapshot(raw: Any) -> dict[str, Any] | None:
-    """Check a stored forecast snapshot (candidate / onset)."""
+    """Check a stored forecast snapshot (candidate / onset); return it.
+
+    A snapshot is the forecast of an event as one release saw it. It must have
+    every field, a readable base time and its forecast as a list; None stays
+    None.
+
+    """
     if raw is None:
         return None
     if not isinstance(raw, dict) or not set(_SNAPSHOT_FIELDS) <= raw.keys():
@@ -296,13 +333,22 @@ def _snapshot(raw: Any) -> dict[str, Any] | None:
 
 
 def _event_to_json(event: dict[str, Any]) -> dict[str, Any]:
+    """Return an event record as JSON-ready data for the store.
+
+    Its timestamps become ISO strings; every other field is stored as it is.
+    _event_from_json reads it back.
+
+    """
     return {k: iso(event[k]) if k in _EVENT_TIMES else event[k] for k in _EVENT_FIELDS}
 
 
 def _event_from_json(raw: Any) -> dict[str, Any]:
     """Rebuild a stored event record, checking everything update() relies on.
 
-    Fields of an older format that update() no longer reads are dropped.
+    Raises ValueError for a record that is incomplete, has an unknown status or
+    lacks its times or view. Fields of an older format that update() no longer
+    reads are dropped.
+
     """
     if not isinstance(raw, dict) or not set(_EVENT_FIELDS) <= raw.keys():
         raise ValueError("incomplete event record")
@@ -330,16 +376,23 @@ def _event_from_json(raw: Any) -> dict[str, Any]:
 
 
 def window_start(base: datetime) -> datetime:
-    """Return the end of the oldest published measured step (T - 55 min)."""
+    """Return the end of the oldest published measured step (T - 55 min).
+
+    ``base`` is the release time T. The view shows the hour of measured steps
+    ending at T: twelve steps, the oldest ending 55 minutes before T.
+
+    """
     return base - (WINDOW_STEPS - 1) * STEP
 
 
 def steps_to_fill(state: RainEventsState, base: datetime) -> list[datetime]:
-    """Return the unknown measured steps before ``base`` worth fetching, newest first.
+    """Return the unknown measured steps worth fetching, newest first.
 
-    Only the published window can be filled: a step that has left it no longer
-    changes anything. A step whose release had no data for the cell is not
-    refetched.
+    The measured steps before ``base`` that the tracker missed (during a
+    restart or a DWD outage), by their end time. Only the published window can
+    be filled: a step that has left it no longer changes anything. A step whose
+    release had no data for the cell is not refetched.
+
     """
     t = base - STEP
     out = []
@@ -353,7 +406,13 @@ def steps_to_fill(state: RainEventsState, base: datetime) -> list[datetime]:
 def record_measured(
     state: RainEventsState, step_end: datetime, value: float | None
 ) -> None:
-    """Store a measured step; ``None`` means the release had no data for the cell."""
+    """Store a measured step; None means the release had no data for the cell.
+
+    ``step_end`` is the step's end, which is its release time. Such a step is
+    remembered as having no data, so it is not fetched again; a value is
+    rounded to 0.001 mm.
+
+    """
     if value is None:
         state.measured[step_end] = None
         state.nodata.add(step_end)
@@ -369,36 +428,71 @@ def record_measured(
 
 @dataclass
 class _Timeline:
+    """The steps one release is judged on: measured history, then forecast.
+
+    Steps are addressed by index; step ``last_measured`` ends at T, and the
+    24 forecast steps follow it.
+
+    """
+
     first_end: datetime  # end of step 0
     values: list[float | None]
     kinds: list[str]
     last_measured: int  # index of the step ending at T
 
     def end(self, i: int) -> datetime:
+        """Return the end time of step ``i``.
+
+        Steps are named by their end; step 0 ends at ``first_end``.
+
+        """
         return self.first_end + i * STEP
 
     def start(self, i: int) -> datetime:
+        """Return the start time of step ``i``.
+
+        Five minutes before its end.
+
+        """
         return self.end(i) - STEP
 
     @property
     def series_start(self) -> int:
+        """Return the index of the oldest published measured step.
+
+        The view's ``steps`` start here: the hour of measured steps ending at
+        T.
+
+        """
         return self.last_measured - (WINDOW_STEPS - 1)
 
     @property
     def last(self) -> int:
+        """Return the index of the last step, the end of the forecast.
+
+        T + 120 minutes.
+
+        """
         return len(self.values) - 1
 
     def final_unknown(self, i: int) -> bool:
-        """Whether step ``i`` is unknown and has left the window for good.
+        """Return whether step ``i`` is unknown and has left the window for good.
 
         It can no longer be filled: it still bridges rain, but counts as dry
         for ending an event. Forecast steps are never unknown.
+
         """
         return self.kinds[i] == UNKNOWN and i < self.series_start
 
 
 def _keep_from(state: RainEventsState, base: datetime) -> datetime:
-    """Return the oldest measured step still needed."""
+    """Return the end of the oldest measured step still needed.
+
+    The published hour, and everything since two steps before an ongoing
+    event's start (which decide whether it is clipped) or its onset snapshot.
+    Older steps can be pruned.
+
+    """
     keep = window_start(base)
     for event in state.events:
         if event["status"] != ONGOING:
@@ -416,6 +510,13 @@ def _build_timeline(
     forecast: list[float | None],
     wet_milli: int,
 ) -> _Timeline:
+    """Return the measured steps still held, then the release's forecast.
+
+    ``forecast`` holds the 24 forecast steps of release ``base``. Each step is
+    marked wet, dry or unknown against ``wet_milli``. A forecast step without
+    data (the coverage edge) counts as dry.
+
+    """
     first = _keep_from(state, base)
     values: list[float | None] = []
     kinds: list[str] = []
@@ -441,9 +542,11 @@ def _build_timeline(
 def _runs(timeline: _Timeline) -> list[tuple[int, int]]:
     """Return the (first wet, last wet) index of every run of rain.
 
-    Two consecutive dry steps end a run; a single one does not. An unknown
-    step never ends one: it might have been wet. More than
-    MAX_UNKNOWN_BRIDGE of them in a row count as dry.
+    A run is a stretch of wet steps that becomes one event. Two consecutive dry
+    steps end a run; a single one does not. An unknown step never ends one: it
+    might have been wet. More than MAX_UNKNOWN_BRIDGE of them in a row count as
+    dry.
+
     """
     runs: list[tuple[int, int]] = []
     first: int | None = None
@@ -480,15 +583,21 @@ def _runs(timeline: _Timeline) -> list[tuple[int, int]]:
 
 
 def _sum_mm(timeline: _Timeline, first: int, last: int) -> float:
-    """Return the rain in the steps [first, last]; an unknown step counts as 0."""
+    """Return the rain in the steps [first, last]; an unknown step counts as 0.
+
+    Rounded to the data's 0.001 mm resolution; both ends are included.
+
+    """
     return round_mm(sum(timeline.values[step] or 0.0 for step in range(first, last + 1)))
 
 
 def _peak(timeline: _Timeline, first: int, last: int, width: int) -> Peak | None:
     """Return the wettest ``width`` consecutive steps within [first, last].
 
+    As a Peak: its amount and its start and end time; None for an empty range.
     A part shorter than ``width`` is its own only window. Ties go to the
     earlier window. Unknown steps count as 0.
+
     """
     if last < first:
         return None
@@ -509,7 +618,12 @@ def _peak(timeline: _Timeline, first: int, last: int, width: int) -> Peak | None
 
 
 def _block(timeline: _Timeline, first: int, last: int) -> Block:
-    """Return {mm, peak_1h, peak_10min} for the steps [first, last] (may be empty)."""
+    """Return the rain in [first, last], with its wettest hour and 10 minutes.
+
+    A Block: the amount (mm), the wettest 12 steps and the wettest 2 steps. An
+    empty range gives 0 mm and no peaks.
+
+    """
     if last < first:
         return {"mm": 0.0, "peak_1h": None, "peak_10min": None}
     return {
@@ -523,8 +637,9 @@ def _total_peak_1h(timeline: _Timeline, first: int, last: int) -> Peak | None:
     """Return the wettest hour of the published series that overlaps the event.
 
     Rain outside the event counts: DWD's heavy-rain criterion is the amount
-    within an hour, so two cells close together add up. Only whole windows
-    of the series are considered.
+    within an hour, so two cells close together add up. Only whole windows of
+    the series are considered.
+
     """
     # The whole windows that overlap the event start in [first_start, last_start].
     first_start = max(timeline.series_start, first - STEPS_PER_HOUR + 1)
@@ -539,8 +654,11 @@ def _onset_view(
 ) -> OnsetView | None:
     """Return the published forecast_at_onset, with the like-for-like sums.
 
-    Both sums run over the steps measured since the snapshot, and stop where
-    its 2-hour forecast does.
+    ``snapshot`` is the forecast that was current when the event's rain was
+    first measured. Both sums (expected and observed so far) run over the steps
+    measured since the snapshot, and stop where its 2-hour forecast does, so a
+    blueprint can compare the warning with what fell.
+
     """
     if snapshot is None:
         return None
@@ -565,10 +683,12 @@ def _onset_view(
 
 
 def _start_clipped(timeline: _Timeline, first: int) -> bool:
-    """Whether rain may have started before ``first``.
+    """Return whether rain may have started before ``first``.
 
     The start is certain only after two known dry steps; anything else before
-    it (unknown, or older than what is held) might have been rain.
+    it (unknown, or older than what is held) might have been rain. A start in
+    the forecast is never clipped.
+
     """
     if first > timeline.last_measured:
         return False  # a forecast start
@@ -586,6 +706,12 @@ def _start_clipped(timeline: _Timeline, first: int) -> bool:
 
 
 def _new_event(event_id: str, base: datetime) -> dict[str, Any]:
+    """Return a new upcoming event record with id ``event_id``.
+
+    ``base`` is the release that first sees it. Its window and forecast are
+    filled in by _classify on the same release.
+
+    """
     return {
         "id": event_id,
         "first_seen": base,
@@ -602,7 +728,13 @@ def _new_event(event_id: str, base: datetime) -> dict[str, Any]:
 
 
 def _merge_into(survivor: dict[str, Any], others: list[dict[str, Any]]) -> None:
-    """Fold merged events into the one first seen earliest."""
+    """Fold merged events into the one first seen earliest.
+
+    When two events turn out to be one run of rain, the survivor keeps its id
+    and lists the others' ids in ``absorbed``; a forecast it lacks is taken
+    from them.
+
+    """
     for other in others:
         for absorbed in [other["id"], *other["absorbed"]]:
             if absorbed not in survivor["absorbed"]:
@@ -618,7 +750,13 @@ def _merge_into(survivor: dict[str, Any], others: list[dict[str, Any]]) -> None:
 def _match(
     events: list[dict[str, Any]], runs: list[tuple[int, int]], timeline: _Timeline
 ) -> dict[int, list[dict[str, Any]]]:
-    """Return, per run index, the events that continue as that run."""
+    """Return, per run index, the events that continue as that run.
+
+    An ongoing event continues as the run that holds its last measured rain; an
+    upcoming one as a run overlapping its window (with MATCH_SLACK). An event
+    matching several runs goes to the earliest; the others become new events.
+
+    """
     by_run: dict[int, list[dict[str, Any]]] = {i: [] for i in range(len(runs))}
     for event in events:
         candidates = []
@@ -643,15 +781,21 @@ def _match(
 
 
 def _missing(timeline: _Timeline, first: int, last: int) -> int:
-    """Return how many of the steps [first, last] are unknown."""
+    """Return how many of the steps [first, last] are unknown.
+
+    Published as ``missing_steps``; 0 means the event's measured part is
+    complete.
+
+    """
     return sum(1 for step in range(first, last + 1) if timeline.values[step] is None)
 
 
 def _rain_ended_after(timeline: _Timeline, last_wet: int) -> bool:
-    """Whether the two measured steps after ``last_wet`` end the rain.
+    """Return whether the two measured steps after ``last_wet`` end the rain.
 
     Two dry steps end it. An unknown one postpones that until it is filled or
     has left the window, and then counts as dry.
+
     """
     after = (last_wet + 1, last_wet + 2)
     return after[1] <= timeline.last_measured and all(
@@ -667,7 +811,13 @@ def _ended_record(
     first: int,
     last_wet: int,
 ) -> EndedRecord:
-    """Return the final record of an event whose rain ended at ``last_wet``."""
+    """Return the final record of an event whose rain ended at ``last_wet``.
+
+    Its measured amount and peaks, how complete they are, and its forecast at
+    onset. It is clipped at the end when an unknown step counted as dry to end
+    it, since that step might have been rain.
+
+    """
     missing = _missing(timeline, first, last_wet)
     start_clipped = _start_clipped(timeline, first)
     # An unknown step that counted as dry to end it might have been rain.
@@ -697,9 +847,13 @@ def update(
     """Process release ``base`` and return the ``rain_events`` attribute.
 
     ``analysis`` is the measured step ending at ``base`` (None for no data),
-    ``forecast`` the 24 forecast steps ending at base+5..base+120. Fill the
-    missed measured steps (steps_to_fill / record_measured) *before* calling
-    this: a lost release must never cause an unseen event, a split or an end.
+    ``forecast`` the 24 forecast steps ending at base+5..base+120,
+    ``wet_milli`` the wet limit. The events are matched, merged, started and
+    ended, and the view is rebuilt from the steps. Fill the missed measured
+    steps (steps_to_fill / record_measured) *before* calling this: a lost
+    release must never cause an unseen event, a split or an end. The same
+    release again returns the stored view.
+
     """
     if (
         state.base is not None
@@ -740,7 +894,12 @@ def update(
 
 
 def _reset_events_if_needed(state: RainEventsState, base: datetime, wet_milli: int) -> None:
-    """Start the events over when their ids or their split would be wrong."""
+    """Start the events over when their ids or their split would be wrong.
+
+    After the clock went backwards, or with a new threshold; the measured steps
+    and the last ended event are kept.
+
+    """
     if state.base is not None and base < state.base:
         state.events = []  # the clock went backwards; ids could repeat
     if state.wet_milli != wet_milli:
@@ -751,14 +910,23 @@ def _reset_events_if_needed(state: RainEventsState, base: datetime, wet_milli: i
 
 
 def _prune(state: RainEventsState, base: datetime) -> None:
-    """Drop the measured steps no event and no published window needs."""
+    """Drop the measured steps no event and no published window needs.
+
+    Steps known to have no data are kept only while they are in the window.
+
+    """
     keep = _keep_from(state, base)
     state.measured = {t: v for t, v in state.measured.items() if keep <= t <= base}
     state.nodata = {t for t in state.nodata if t >= window_start(base)}
 
 
 def _live_runs(state: RainEventsState, timeline: _Timeline) -> list[tuple[int, int]]:
-    """Return the runs of rain that are not an ended event's, seen again."""
+    """Return the runs of rain that are not an ended event's, seen again.
+
+    An ended event's rain stays in view for a while; without this it would come
+    back as a new event. Ended spans that left the timeline are dropped.
+
+    """
     state.ended_spans = [(a, b) for a, b in state.ended_spans if b > timeline.start(0)]
     return [
         (first, last)
@@ -779,7 +947,9 @@ def _continue_events(
     """Return each run's event (continued, merged or new), and the ids continued.
 
     Events that continue as the same run merge into the one first seen
-    earliest; a run no event continues is a new event.
+    earliest; a run no event continues is a new event, with an id made of the
+    release time and a counter.
+
     """
     by_run = _match(state.events, runs, timeline)
     matched_ids = {e["id"] for evs in by_run.values() for e in evs}
@@ -804,8 +974,10 @@ def _set_aside_unmatched(
 ) -> tuple[list[dict[str, Any]], list[EndedRecord]]:
     """Return (events kept although no run continues them, events that ended).
 
-    An upcoming event gets one release of grace as unseen; an event unseen
-    twice is dropped.
+    An upcoming event the forecast no longer shows gets one release of grace as
+    unseen; an event unseen twice is dropped. An ongoing one without a run ends
+    (see _orphan_record).
+
     """
     remaining: list[dict[str, Any]] = []
     newly_ended: list[EndedRecord] = []
@@ -831,7 +1003,14 @@ def _classify(
     last: int,
     forecast: list[float | None],
 ) -> EndedRecord | None:
-    """Bring a continued event up to this release; its record if it ended."""
+    """Bring a continued event up to this release; its record if it ended.
+
+    Upcoming while none of its rain is measured; ongoing from the first wet
+    measured step, which freezes the forecast it was announced with. Returns
+    the ended record once two dry steps follow its last rain, else None (and
+    the event's view is updated).
+
+    """
     last_measured = timeline.last_measured
     wet_measured = [
         step
@@ -871,7 +1050,12 @@ def _candidate(
     forecast: list[float | None],
     forecast_block: Block,
 ) -> dict[str, Any]:
-    """Return an upcoming event's forecast as of this release (its snapshot)."""
+    """Return an upcoming event's forecast as of this release (its snapshot).
+
+    Its window, forecast amount and peaks, and the raw forecast steps. The last
+    one before rain is measured becomes its forecast_at_onset.
+
+    """
     return {
         "base": iso(base),
         "start": iso(timeline.start(first)),
@@ -886,7 +1070,13 @@ def _candidate(
 def _publish(
     state: RainEventsState, timeline: _Timeline, base: datetime, wet_milli: int
 ) -> RainEventsView:
-    """Return the view of the events as they now stand."""
+    """Return the view of the events as they now stand.
+
+    The sensor's attributes: the events by start, the published steps (12
+    measured, 24 forecast) and whether the measured hour is complete, and the
+    last ended event.
+
+    """
     events_view: list[EventView] = []
     for event in sorted(state.events, key=lambda e: e["start"]):
         view = EventView(**event["view"])
@@ -910,8 +1100,9 @@ def _orphan_record(event: dict[str, Any]) -> EndedRecord:
     """Return an ended record for an ongoing event no run continues.
 
     Defensive only: an ongoing event's last rain is always held, so it always
-    has a run. If it ever has not, publish what was last known rather than
-    let it vanish.
+    has a run. If it ever has not, publish what was last known rather than let
+    it vanish.
+
     """
     view = event["view"] or {}
     return {
@@ -938,7 +1129,13 @@ def _event_view(
     last: int,
     forecast_block: Block,
 ) -> EventView:
-    """Return the published view of an event that goes on."""
+    """Return the published view of an event that goes on.
+
+    Its measured part, its forecast part and their total, each with amount and
+    peaks, how complete the measured part is, whether it runs past the forecast
+    horizon, and its forecast at onset once it is ongoing.
+
+    """
     last_observed = min(last, timeline.last_measured)
     observed = _block(timeline, first, last_observed)
     missing = _missing(timeline, first, last_observed)
@@ -972,10 +1169,13 @@ def _event_view(
 
 
 def at_stake(state: RainEventsState) -> bool:
-    """Whether losing the state now would lose something.
+    """Return whether losing the state now would lose something.
 
-    False on a dry day with nothing pending: the store can then wait for the
-    next shutdown instead of being written every 5 minutes.
+    True with an event, an unknown step that may still be filled, or a wet step
+    in the published hour. False on a dry day with nothing pending: the store
+    can then wait for the next shutdown instead of being written every 5
+    minutes.
+
     """
     if state.events:
         return True
@@ -996,9 +1196,10 @@ def at_stake(state: RainEventsState) -> bool:
 def overall_status(view: dict[str, Any]) -> str:
     """Return the sensor state for a published view.
 
-    ``ongoing`` if any event is, else ``upcoming`` if any is, else ``none``.
-    An ``unseen`` event is one the latest forecast does not show, so it does
-    not make rain upcoming on its own.
+    ``ongoing`` if any event is, else ``upcoming`` if any is, else ``none``. An
+    ``unseen`` event is one the latest forecast does not show, so it does not
+    make rain upcoming on its own.
+
     """
     statuses = {event.get("status") for event in view.get("events") or ()}
     for status in (ONGOING, UPCOMING):

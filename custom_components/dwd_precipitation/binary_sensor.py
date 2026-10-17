@@ -46,7 +46,14 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up the binary sensor platform."""
+    """Set up the binary sensor platform for one config entry.
+
+    Home Assistant calls this once per entry after the integration's own setup.
+    It creates the one binary sensor, "Precipitation expected", on the entry's
+    RV coordinator (the 5-minute RADVOR forecast), which setup has already
+    refreshed once.
+
+    """
     coordinators = entry.runtime_data.coordinators
 
     async_add_entities(
@@ -68,10 +75,26 @@ class DwdBinarySensorEntity(DwdCoordinatorEntity, BinarySensorEntity):
 
     @property
     def is_on(self) -> bool | None:
-        """Return True when precipitation is forecast within the horizon."""
+        """Return True when precipitation is forecast within the horizon.
+
+        That is RV's ``rain_within_2h``: rain is falling now or forecast within
+        the next two hours, above the configured precipitation threshold. False
+        means dry for the whole forecast; None while the coordinator has no
+        data yet.
+
+        """
         return self._value()
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Expose the forecast start and the 5-minute RV forecast."""
+        """Return when the rain starts, and the 5-minute forecast series.
+
+        ``minutes_until`` and ``at`` say when precipitation begins (None when
+        it is not forecast). ``forecast_5min`` is RV's whole 25-step series,
+        one point per 5 minutes with its window, amount and rate. Automations
+        and blueprints read it, so it is always exposed, unlike the other
+        sensors' diagnostics, and it is kept out of the recorder so it does not
+        bloat the history.
+
+        """
         return self._described_attributes()

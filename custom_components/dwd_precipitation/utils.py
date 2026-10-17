@@ -47,12 +47,20 @@ class DownloadCache:
 
     Each waiter awaits the download through a shield, so one caller being
     cancelled (an unloading entry) does not abort it for the others.
+
     """
 
     def __init__(
         self, ttl: float, clock: Callable[[], float] = time.monotonic
     ) -> None:
-        """Keep finished downloads for ``ttl`` seconds of ``clock``."""
+        """Keep finished downloads for ``ttl`` seconds of ``clock``.
+
+        Setup creates one cache per config entry and hands it to the products
+        whose files overlap (RW and its 10-minute runs, SF and its daily
+        total). ``clock`` defaults to a monotonic clock and can be replaced so
+        tests can move time.
+
+        """
         self._ttl = ttl
         self._clock = clock
         self._done: dict[str, tuple[float, AsyncResponse]] = {}
@@ -61,7 +69,15 @@ class DownloadCache:
     async def async_get(
         self, url: str, fetch: Callable[[], Coroutine[Any, Any, AsyncResponse]]
     ) -> AsyncResponse:
-        """Return ``url``'s response, downloading it with ``fetch`` only if needed."""
+        """Return ``url``'s response, downloading it with ``fetch`` only if needed.
+
+        ``fetch`` is the download to run when nothing usable is held, usually a
+        call of async_get. A download already running for the same URL is
+        awaited instead of started again, and a finished one is reused until
+        its time to live runs out. A failed download raises to every waiter and
+        is not kept.
+
+        """
         now = self._clock()
         self._done = {u: hit for u, hit in self._done.items() if hit[0] > now}
         if (hit := self._done.get(url)) is not None:
@@ -74,7 +90,13 @@ class DownloadCache:
         return await asyncio.shield(task)
 
     def _finished(self, url: str, task: asyncio.Task[AsyncResponse]) -> None:
-        """Keep a successful download; forget a failed or cancelled one."""
+        """Keep a successful download; forget a failed or cancelled one.
+
+        Runs when the download task ends, whoever is still waiting for it. Only
+        a successful response is kept, with its expiry time, so the next ask
+        after a failure downloads again.
+
+        """
         self._pending.pop(url, None)
         if not task.cancelled() and task.exception() is None:
             self._done[url] = (self._clock() + self._ttl, task.result())
@@ -86,20 +108,37 @@ class FailureLatch:
     ``fail()`` is True only for the first failure of a run and ``ok()`` only
     for the first success after one: log on those, and the failures in
     between stay quiet.
+
     """
 
     def __init__(self) -> None:
-        """Start with nothing failing."""
+        """Start with nothing failing.
+
+        The first failure recorded after this starts a run of failures, which
+        the caller then reports once.
+
+        """
         self.failing = False
 
     def fail(self) -> bool:
-        """Record a failure; return whether it starts a run."""
+        """Record a failure; return whether it starts a run.
+
+        Callers log only when this is True, so a long outage gives one message
+        instead of one per attempt. Every further failure returns False until a
+        success (ok) ends the run.
+
+        """
         first = not self.failing
         self.failing = True
         return first
 
     def ok(self) -> bool:
-        """Record a success; return whether it ends a run."""
+        """Record a success; return whether it ends a run.
+
+        True only for the first success after one or more failures, so callers
+        can log the recovery once; False when nothing was failing.
+
+        """
         ended = self.failing
         self.failing = False
         return ended
@@ -115,7 +154,13 @@ class AsyncResponse:
 
 
 def _validate_url(url: str) -> None:
-    """Reject any URL that is not HTTPS on a trusted DWD host."""
+    """Reject any URL that is not HTTPS on a trusted DWD host.
+
+    Raises ValueError otherwise. A guard against a future change pointing a
+    fetch at a plaintext or foreign host: only https://opendata.dwd.de passes,
+    and TLS certificate checks then authenticate the server.
+
+    """
     parts = urlsplit(url)
     if parts.scheme != "https":
         raise ValueError(f"Refusing non-HTTPS DWD URL: {url!r}")
@@ -130,6 +175,9 @@ async def _read_capped(response: aiohttp.ClientResponse, max_bytes: int) -> byte
 
     Checks the declared Content-Length first (cheap early rejection), then caps
     the streamed read as well, since the header may be absent or untruthful.
+    Raises ValueError when the cap is exceeded, so a huge or endless body
+    cannot fill the memory of a small Home Assistant host.
+
     """
     declared = response.content_length
     if declared is not None and declared > max_bytes:
@@ -157,16 +205,16 @@ async def async_get(
     headers: Mapping[str, str] | None = None,
     partial_max_bytes: int | None = None,
 ) -> AsyncResponse:
-    """Send a HTTP GET request using an aiohttp session.
+    """Download a DWD file with the integration's safety checks.
 
-    Enforces the security invariants for DWD fetches: HTTPS on a trusted host,
-    no cross-host redirects (so provenance can't be redirected away), and a hard
-    cap on the buffered body size. Retries on connection errors up to `attempts`
-    times. Raises immediately on 4xx/5xx responses without retrying.
+    Every product fetch goes through here. It allows HTTPS to DWD OpenData
+    only, refuses redirects, caps the size of the body and gives up on a
+    stalled request. A connection error is retried (once by default); an HTTP
+    error status (a 404 for a file DWD has not published yet, say) raises at
+    once as aiohttp.ClientResponseError, so the coordinator's retry ramp takes
+    over. ``headers`` are sent as they are (a Range request, say), and a 206
+    answer can be held to its own, smaller cap (``partial_max_bytes``).
 
-    ``headers`` are sent as given (a Range request, say). A 206 answer is held
-    to ``partial_max_bytes`` when set, so a range read stays small, while a 200
-    -- a server ignoring the range -- may still be a whole file.
     """
     _validate_url(url)
     for attempt in range(attempts):

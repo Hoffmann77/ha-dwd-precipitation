@@ -2,7 +2,7 @@
 
 ## What this is
 
-A HomeAssistant custom component that pulls DWD (German Weather Service) radar composites and exposes per-location precipitation sensors. It fetches Cartesian grids, finds the nearest grid cell to the user's configured lat/lon, and reports the cell value.
+A HomeAssistant custom component that pulls DWD (German Weather Service) radar composites and exposes per-location precipitation sensors. It fetches Cartesian grids, finds the grid cell that contains the user's configured lat/lon, and reports the cell value.
 
 Why things are the way they are, and what they were before, is in
 `docs/adr/` (architecture decision records); this guide states the rules.
@@ -629,7 +629,7 @@ save policy, warnings); `RadvorRV` only hands it each adopted release in
 callback; `RainEventsSensor` in sensor.py is the entity.
 
 - **Opt-in.** The `rain_events` option (Advanced, default off) gates all of it:
-  `rain_events_enabled()` decides whether `RadvorRV` gets a tracker, and
+  `RadvorRV.__init__` builds a tracker only when `options.rain_events` is on, and
   without one there is nothing to track, so an entry that does not use it makes no fill
   requests and writes nothing. Turning it off removes the entity from the
   registry (rather than leaving "no longer provided") and deletes the store,

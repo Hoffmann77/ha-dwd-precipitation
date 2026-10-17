@@ -2,8 +2,8 @@
 
 RADVOR RS/RV releases are plain (uncompressed) ustar archives of 25 ODIM_H5
 members in a fixed order, served by DWD OpenData as static files with range
-support. Most callers need only a few members — RS decodes three by default,
-the RV backfill only the analysis — so downloading the whole archive (1-8 MB)
+support. Most callers need only a few members — RS decodes three, the RV
+backfill only the analysis — so downloading the whole archive (3.5-17.5 MB)
 moves several times more bytes than are used.
 
 A tar member is a 512-byte header followed by its data, padded to 512 bytes.
@@ -22,6 +22,7 @@ A failed fetch (404, network) is not a surprise and propagates.
 HA-free: the caller passes ``fetch(url, headers) -> response`` with
 ``status``, ``headers`` (case-insensitive mapping) and ``content`` (bytes),
 which must raise on any 4xx/5xx except 416.
+
 """
 
 from __future__ import annotations
@@ -89,6 +90,14 @@ class _WholeArchive(Exception):
     """The server sent the whole archive (HTTP 200); use it as it is."""
 
     def __init__(self, content: bytes) -> None:
+        """Keep the whole archive the server sent.
+
+        Raised when a range request was answered with the complete file (HTTP
+        200): the server ignores ranges, or the file was replaced and If-Range
+        made it send the new one. The content is then used as it is, without a
+        second download.
+
+        """
         super().__init__("server sent the whole archive")
         self.content = content
 
@@ -117,14 +126,25 @@ class _Remote:
     segments: list[tuple[int, bytes]] = field(default_factory=list)
 
     def cached(self, start: int, end: int) -> bytes | None:
-        """Return bytes [start, end) if one fetched segment holds them."""
+        """Return bytes [start, end) if one fetched segment holds them.
+
+        Each range request's answer is kept as a segment. None when no single
+        segment covers the range; reading from what is held costs no request.
+
+        """
         for seg_start, data in self.segments:
             if seg_start <= start and end <= seg_start + len(data):
                 return data[start - seg_start:end - seg_start]
         return None
 
     async def slice(self, start: int, end: int) -> bytes:
-        """Return bytes [start, end), fetching only what no segment starts with."""
+        """Return bytes [start, end), fetching only what no segment starts with.
+
+        Cuts a member out once its header is known: a member often begins
+        inside a window already fetched to find its header, so that part is
+        reused and only the rest is requested.
+
+        """
         if (data := self.cached(start, end)) is not None:
             return data
         for seg_start, seg in self.segments:
@@ -134,7 +154,15 @@ class _Remote:
         return await self.read(start, end)
 
     async def read(self, start: int, end: int) -> bytes:
-        """Fetch bytes [start, end), clamped to the file."""
+        """Fetch bytes [start, end), clamped to the file.
+
+        One Range request, checked against what was asked for, and kept as a
+        segment. Anything unexpected (no 206, a mismatching range, a file
+        replaced in between, the request budget spent) raises, so the caller
+        downloads the whole archive instead. A 404 or network error propagates
+        as it is.
+
+        """
         if self.total is not None:
             end = min(end, self.total)
         if start >= end:
@@ -178,13 +206,22 @@ class _Remote:
 
         self.total = total
         if self.etag is None:
-            self.etag = response.headers.get("ETag")
+            # If-Range also takes the Last-Modified date, for a server
+            # without ETags.
+            self.etag = response.headers.get("ETag") or response.headers.get(
+                "Last-Modified"
+            )
         self.segments.append((start, response.content))
         return response.content
 
 
 def _padded(size: int) -> int:
-    """Return ``size`` rounded up to whole tar blocks."""
+    """Return ``size`` rounded up to whole tar blocks.
+
+    Tar stores member data in 512-byte blocks, so the next header starts at the
+    next block boundary after a member's data.
+
+    """
     return -(-size // BLOCK) * BLOCK
 
 
@@ -197,9 +234,11 @@ def _scan(
 ) -> bool:
     """Record every member header found in a segment; return whether any was new.
 
-    Only 512-byte-aligned blocks that start with the member name prefix are
-    parsed, and ``tarfile`` verifies the header checksum, so member data cannot
-    be mistaken for a header.
+    ``data`` was read at offset ``seg_start``; found headers go into ``known``
+    as position -> (offset, size). Only 512-byte-aligned blocks that start with
+    the member name prefix are parsed, and ``tarfile`` verifies the header
+    checksum, so member data cannot be mistaken for a header.
+
     """
     found = False
     first = _padded(seg_start)
@@ -223,7 +262,12 @@ def _scan(
 
 
 def _next_header(known: dict[int, tuple[int, int]], pos: int) -> int:
-    """Return the offset just past member ``pos`` (where the next header sits)."""
+    """Return the offset just past member ``pos`` (where the next header sits).
+
+    Its header block, plus its data padded to whole blocks, measured from where
+    its header was found.
+
+    """
     offset, size = known[pos]
     return offset + BLOCK + _padded(size)
 
@@ -236,7 +280,16 @@ async def _locate(
     positions: Mapping[str, int],
     known: dict[int, tuple[int, int]],
 ) -> None:
-    """Find member ``pos``'s header, reading windows around estimates."""
+    """Find member ``pos``'s header, reading windows around estimates.
+
+    The members sit in lead order without an index, so its position is
+    estimated from the members already found: right after the previous one,
+    interpolated between two known headers where possible, or near the end of
+    the file for the last member. A window around the estimate is read and
+    scanned, and a window that finds nothing is widened the next time round.
+    Raises _Fallback when the member cannot be found.
+
+    """
     widen = 1.0
     # Bounded separately from the request budget: a window served from cache
     # costs no request, and must not let a fruitless search spin.
@@ -287,7 +340,10 @@ async def _locate(
 def members_from_archive(content: bytes, wanted: Sequence[str]) -> dict[str, bytes]:
     """Extract the wanted members from a whole archive; missing ones are left out.
 
-    Blocking: walks the archive with ``tarfile``.
+    ``content`` is the complete tar, ``wanted`` the member names. Returns their
+    bytes by name. Blocking (it walks the archive with tarfile), so callers on
+    the event loop run it in an executor.
+
     """
     out: dict[str, bytes] = {}
     with tarfile.open(fileobj=io.BytesIO(content), mode="r") as tf:
@@ -308,13 +364,16 @@ async def fetch_tar_members(
     wanted: Sequence[str],
     extract: Extract | None = None,
 ) -> TarRead:
-    """Return the ``wanted`` members of the archive at ``url``.
+    """Return the ``wanted`` members of the remote archive at ``url``.
 
-    ``names`` is every member in archive order (the layout DWD uses); a member
-    missing from the archive is simply absent from the result. Whenever range
-    reading cannot proceed, the whole archive is fetched (without a Range
-    header) and ``extract`` takes the members from it; pass one that runs
-    :func:`members_from_archive` in an executor to keep it off an event loop.
+    ``names`` lists every member in archive order, ``wanted`` the ones needed.
+    Reads them by HTTP range requests where it can: a head, then windows around
+    estimated headers. Whenever that cannot go on, it downloads the whole
+    archive and takes the members out with ``extract`` (in place if none is
+    given). The result also counts the requests and bytes, and says whether the
+    whole file was read. A member missing from the archive is absent from the
+    result.
+
     """
     positions = {name: i for i, name in enumerate(names)}
     prefix = os.path.commonprefix(list(names)).encode()
@@ -355,7 +414,14 @@ async def fetch_tar_members(
 
 
 def member_names(prefix: str, leads: Sequence[int]) -> list[str]:
-    """Return RADVOR member names (``<prefix>_<lead>-hd5``) in archive order."""
+    """Return RADVOR member names (``<prefix>_<lead>-hd5``) in archive order.
+
+    ``prefix`` is the release's name stem (see radar/urls.py), ``leads`` the
+    forecast minutes, e.g. [0, 60, 120] -> ``..._000-hd5``, ``..._060-hd5``,
+    ``..._120-hd5``. The archive holds them in lead order, which the range
+    reader relies on.
+
+    """
     return [f"{prefix}_{lead:03d}-hd5" for lead in leads]
 
 

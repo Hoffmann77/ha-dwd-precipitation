@@ -57,7 +57,17 @@ class DwdRuntimeData:
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: DwdConfigEntry) -> bool:
-    """Set up DWD Precipitation from a config entry."""
+    """Set up DWD Precipitation from a config entry.
+
+    Builds one coordinator per DWD product the entry's options need, fetches
+    every product once in parallel, and registers each product's release
+    schedule, so later fetches happen when DWD publishes. The entry fails to
+    load (ConfigEntryNotReady, which Home Assistant retries) only if no product
+    could be fetched at all; a single failing product just leaves its own
+    sensors unavailable while it keeps retrying. Finally the sensor and binary
+    sensor platforms are set up on the coordinators.
+
+    """
     client = async_get_clientsession(hass)
 
     lat = entry.data["latitude"]
@@ -127,7 +137,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: DwdConfigEntry) -> bool:
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Migrate an older config entry to the current version."""
+    """Migrate an older config entry to the current version.
+
+    Home Assistant calls this before setup whenever an entry's stored version
+    is older than ConfigFlow.VERSION / MINOR_VERSION. Entries from before
+    version 1.2 get the dry-streak source they have always counted (RS) written
+    into their options, so an upgrade does not change their sensor. Entries
+    from a newer major version are refused, since this version cannot know
+    their format.
+
+    """
     if entry.version > 1:
         # Written by a newer major version; HA refuses to load it either way.
         return False
@@ -145,15 +164,36 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def update_listener(hass: HomeAssistant, entry: DwdConfigEntry) -> None:
-    """Handle config entry updates."""
+    """Reload the entry when its options change.
+
+    Registered at setup; Home Assistant calls it after the options form is
+    saved. Coordinators and entities read the options once, when they are built
+    (DwdOptions is a snapshot), so a reload is how a changed option takes
+    effect.
+
+    """
     await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: DwdConfigEntry) -> bool:
-    """Unload a config entry."""
+    """Unload a config entry.
+
+    Called when the entry is disabled, deleted or reloaded. Removes the sensor
+    platforms; the coordinators cancel their timers and the rain-events tracker
+    saves its state through callbacks they registered with the entry, so
+    nothing needs doing here for them.
+
+    """
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Delete what the entry stored when it is removed."""
+    """Delete what the entry stored when it is removed.
+
+    Called once, after the user deletes the entry. Only the rain-events tracker
+    keeps a file of its own (a Store per entry); the totals and the dry streak
+    live in Home Assistant's restore state, which goes with the entities.
+    Deleting the file here means a removed entry leaves nothing behind.
+
+    """
     await RainEventsTracker.async_remove(hass, entry.entry_id)

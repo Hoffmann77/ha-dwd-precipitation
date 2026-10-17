@@ -5,6 +5,7 @@ The RV coordinator hands it every release it adopts and lends it two things:
 a way to fetch one missed analysis, and a way to publish a view that is ready
 after the RV update (a background fill). Everything else, from the Store to
 the save policy and the once-per-run warnings, lives here.
+
 """
 
 from __future__ import annotations
@@ -46,7 +47,12 @@ RAIN_IDLE_SAVE_DELAY = timedelta(hours=12)
 
 
 def rain_events_store_key(entry_id: str) -> str:
-    """Return the Store key of one config entry's rain_events state."""
+    """Return the Store key of one config entry's rain_events state.
+
+    One store per entry, under the integration's domain; Home Assistant keeps
+    it as a file in its .storage directory.
+
+    """
     return f"{DOMAIN}.{entry_id}.rain_events"
 
 
@@ -55,6 +61,7 @@ def rain_events_store(hass: HomeAssistant, entry_id: str) -> Store:
 
     The one place it is built, so a version bump (or a migration) reaches the
     tracker and the clean-up on option-off and entry removal alike.
+
     """
     return Store(hass, RAIN_EVENTS_STORE_VERSION, rain_events_store_key(entry_id))
 
@@ -62,8 +69,10 @@ def rain_events_store(hass: HomeAssistant, entry_id: str) -> Store:
 def _describe_fill_failure(err: Exception, step_end: datetime) -> str:
     """Return the warning for a missed RV analysis that could not be filled.
 
-    Only a failed download is DWD's doing; a file that arrived but could not
-    be read is worth a report. Plain ASCII, like _describe_fetch_error.
+    ``step_end`` is the step that stays unknown. Only a failed download is
+    DWD's doing; a file that arrived but could not be read is worth a report.
+    Plain ASCII, like _describe_fetch_error.
+
     """
     what = (
         f"the missed DWD RV release {step_end.strftime('%Y-%m-%d %H:%M UTC')} "
@@ -96,9 +105,13 @@ class RainEventsTracker:
     ) -> None:
         """Set up the tracker; nothing is loaded before the first release.
 
-        Writes the state once more when the entry unloads: an options change
-        reloads the entry, and the new tracker must read the current state,
-        not one a pending delayed save still holds.
+        ``threshold_mmh`` is the rain_event_threshold option,
+        ``fetch_analysis`` fetches one missed measured step and ``publish``
+        shows a view finished in the background (both lent by RadvorRV). Writes
+        the state once more when the entry unloads: an options change reloads
+        the entry, and the new tracker must read the current state, not one a
+        pending delayed save still holds.
+
         """
         self._hass = hass
         self._entry = entry
@@ -120,7 +133,11 @@ class RainEventsTracker:
 
     @staticmethod
     async def async_remove(hass: HomeAssistant, entry_id: str) -> None:
-        """Delete an entry's stored state (option turned off, entry removed)."""
+        """Delete an entry's stored state (option turned off, entry removed).
+
+        Turning the option on again then starts clean.
+
+        """
         await rain_events_store(hass, entry_id).async_remove()
 
     async def async_track(
@@ -128,21 +145,13 @@ class RainEventsTracker:
     ) -> RainEventsView | None:
         """Track the release just adopted; return the view to publish now.
 
-        ``metadata`` is RV's; its ``rain_within_2h`` samples are the analysis
-        followed by the 24 forecast steps.
+        ``metadata`` is RV's; its forecast series holds the analysis and the 24
+        forecast steps. Missed analyses must be filled before the release is
+        processed, or event ids can swap. A fill takes seconds, so when one is
+        needed it runs in a background task that publishes when done, and the
+        sensor keeps its previous view meanwhile. A failure is logged once and
+        gives None, never failing the RV update.
 
-        The missed analyses must be filled *before* the tracker sees the
-        release: updating first and recomputing after the fill can swap event
-        ids and lose ``forecast_at_onset`` when it rained during a downtime.
-        A fill takes seconds, though, and this runs inside the RV refresh
-        that setup waits for. So when there is anything to fill, the update
-        moves to a background task that fills, updates and publishes the
-        view; until then the sensor keeps the view it showed before (none
-        right after a restart). Every later release queues behind a running
-        fill, so releases always reach the tracker in order.
-
-        A failure here must not cost the RV sensors their update, so it is
-        logged (once per run of failures) and the view is left out (None).
         """
         try:
             series = metadata["rain_within_2h"]
@@ -172,7 +181,13 @@ class RainEventsTracker:
         values: list[float | None],
         milli: int,
     ) -> RainEventsView | None:
-        """Feed release ``base`` to the tracker (filled already); None on failure."""
+        """Feed release ``base`` to the tracker (filled already); None on failure.
+
+        ``values`` are the analysis and the 24 forecast steps, ``milli`` the
+        wet limit. On success the state is saved (see _schedule_save) and the
+        view kept for the next release that has to wait for a fill.
+
+        """
         try:
             view = update_rain_events(state, base, values[0], values[1:], milli)
         except Exception:
@@ -184,7 +199,12 @@ class RainEventsTracker:
         return view
 
     def _failed(self) -> None:
-        """Log a tracker failure once per run of failures."""
+        """Log a tracker failure once per run of failures.
+
+        With the traceback, since a failure here is a bug or an unexpected
+        file; the other RV sensors are not affected.
+
+        """
         if self._track_latch.fail():
             _LOGGER.exception(
                 "Could not update the Rain events sensor; the other RV "
@@ -199,7 +219,13 @@ class RainEventsTracker:
         values: list[float | None],
         milli: int,
     ) -> None:
-        """Fill release ``base``'s window, track it, and publish the view."""
+        """Fill release ``base``'s window, track it, and publish the view.
+
+        The background round async_track starts. It waits for the previous
+        round first, so releases reach the tracker in order. Only the newest
+        round publishes; an older one's view is already out of date.
+
+        """
         if previous is not None:
             await asyncio.wait([previous])
         try:
@@ -213,7 +239,13 @@ class RainEventsTracker:
             self._publish(view)
 
     async def _async_state(self) -> RainEventsState:
-        """Return the tracker state, loading it from the store on first use."""
+        """Return the tracker state, loading it from the store on first use.
+
+        A store that cannot be read is discarded with a warning: that costs the
+        event ids and up to an hour of history, where keeping it would fail
+        every release. Without a store the state starts empty.
+
+        """
         if self.state is None:
             try:
                 raw = await self.store.async_load()
@@ -234,10 +266,11 @@ class RainEventsTracker:
     async def _async_fill_missed(self, state: RainEventsState, base: datetime) -> None:
         """Fetch the analysis of each missed release still in the window.
 
-        Sequential, newest first, within RAIN_FILL_BUDGET; the first failure
-        ends the round and the rest wait for the next release. Each fill reads
-        only the analysis member, ~4-7 % of the archive. Runs in the
-        background round, never in the refresh (see async_track).
+        Sequential, newest first, within RAIN_FILL_BUDGET (30 s); the first
+        failure ends the round and the rest wait for the next release. Each
+        fill reads only the analysis member, about 4-7 % of the archive, and
+        records it in ``state``.
+
         """
         missing = steps_to_fill(state, base)
         if not missing:
@@ -271,11 +304,12 @@ class RainEventsTracker:
     def _schedule_save(self, state: RainEventsState) -> None:
         """Persist the tracker: soon while it matters, else at shutdown.
 
-        Every release changes the state, but on a dry day nothing in it is
-        worth an SD-card write every 5 minutes: losing it in a crash costs
-        one fill round after the restart. The long delay keeps being pushed
-        back by each release, and Home Assistant writes pending saves when
-        it stops.
+        While something is at stake (an event, an unknown or wet step, a new
+        ended event) the state is written RAIN_SAVE_DELAY after the release. On
+        a dry day nothing is worth an SD-card write every 5 minutes: the long
+        delay is pushed back by each release, and Home Assistant writes pending
+        saves when it stops.
+
         """
         ended = (state.last_ended or {}).get("id")
         if at_stake(state) or ended != self._saved_ended:
@@ -286,6 +320,10 @@ class RainEventsTracker:
         self.store.async_delay_save(state.as_dict, delay.total_seconds())
 
     async def async_save(self) -> None:
-        """Write the state now (entry unload), so a reload reads it back."""
+        """Write the state now (entry unload), so a reload reads it back.
+
+        Nothing is written before the state has been loaded.
+
+        """
         if self.state is not None:
             await self.store.async_save(self.state.as_dict())

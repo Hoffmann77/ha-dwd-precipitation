@@ -4,6 +4,7 @@ Every option's key and default live in DEFAULT_OPTIONS; DwdOptions is the
 typed snapshot every consumer reads, with one field per key, named like it.
 A snapshot is enough: changing an option reloads the entry, so a
 coordinator or entity never outlives the options it was built with.
+
 """
 
 from __future__ import annotations
@@ -73,7 +74,15 @@ class DwdOptions:
 
     @classmethod
     def from_options(cls, options: Mapping[str, Any]) -> DwdOptions:
-        """Read an entry's stored options, with the defaults for the rest."""
+        """Read an entry's stored options, with the defaults for the rest.
+
+        ``options`` is the entry's ``entry.options`` mapping, which holds only
+        what the user (or a migration) saved. Every key of DEFAULT_OPTIONS
+        becomes a field, taking the default when it is not stored. A dry-streak
+        source no version wrote is replaced by the default and kept in
+        ``unknown_dry_streak_source``, so sensor setup can warn about it.
+
+        """
         values = {key: options.get(key, default) for key, default in DEFAULT_OPTIONS.items()}
         if values["dry_streak_source"] not in DRY_STREAK_SOURCES:
             values["unknown_dry_streak_source"] = values["dry_streak_source"]
@@ -85,9 +94,11 @@ class DwdOptions:
     def dry_streak_coordinator_key(self) -> str:
         """Return the key of the coordinator the dry streak counts.
 
-        The source is a product key, except that RW counts its 10-minute
-        runs. RadolanRW10.is_needed and the sensor setup both ask this, so
-        the coordinator the sensor binds to is always one that was built.
+        The option's value is a product key ("rs" or "rw"), except that RW is
+        counted from its 10-minute runs, which have their own coordinator
+        ("rw_10min"). RadolanRW10.is_needed and the sensor setup both ask this,
+        so the coordinator the sensor binds to is always one that was built.
+
         """
         if self.dry_streak_source == DRY_STREAK_SOURCE_RW:
             return RW_SLIDING_KEY

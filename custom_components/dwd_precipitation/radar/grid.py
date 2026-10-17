@@ -11,6 +11,7 @@ an ellipsoid. A PROJ string is read in any parameter order and with the
 ellipsoid spelled out or named; anything this version would place wrongly is
 refused (UnsupportedGrid). Another projection would be one more branch in
 _projection.
+
 """
 
 from __future__ import annotations
@@ -48,7 +49,14 @@ class OutsideGrid(ValueError):
 
 
 def _t(phi: float, e: float) -> float:
-    """Snyder's t: the conformal latitude factor at latitude ``phi`` (radians)."""
+    """Return Snyder's t, the conformal latitude factor, at ``phi`` (radians).
+
+    Part of the ellipsoidal polar-stereographic formulas in Snyder's Map
+    Projections (§21): the distance of a point from the pole on the map is
+    proportional to t at its latitude. ``e`` is the ellipsoid's first
+    eccentricity.
+
+    """
     s = math.sin(phi)
     return math.tan(math.pi / 4 - phi / 2) / ((1 - e * s) / (1 + e * s)) ** (e / 2)
 
@@ -69,13 +77,30 @@ class _Stereographic:
     def create(
         cls, a: float, b: float, lat_ts: float, lon_0: float, x_0: float, y_0: float
     ) -> _Stereographic:
+        """Return the projection for an ellipsoid and a standard parallel.
+
+        ``a`` and ``b`` are the ellipsoid's semi-axes (m), ``lat_ts`` the
+        latitude where the map has true scale, ``lon_0`` the central meridian,
+        ``x_0`` and ``y_0`` the false easting and northing (m), all as the PROJ
+        string states them. The eccentricity and the scale terms at the
+        standard parallel are worked out once, so projecting a location takes
+        only a few operations.
+
+        """
         e = math.sqrt(1 - (b / a) ** 2)
         phi_c = math.radians(lat_ts)
         m_c = math.cos(phi_c) / math.sqrt(1 - e**2 * math.sin(phi_c) ** 2)
         return cls(a, e, lon_0, x_0, y_0, m_c, _t(phi_c, e))
 
     def xy(self, lat: float, lon: float) -> tuple[float, float]:
-        """Return the projected (x, y) of a location, in metres."""
+        """Return the projected (x, y) of a location, in metres.
+
+        ``lat`` and ``lon`` are in degrees (WGS84). x grows to the east of the
+        central meridian, y towards the pole; the false easting and northing
+        move the origin, as in PROJ, so the result can be compared with the
+        grid's projected corner.
+
+        """
         rho = self.a * self.m_c * _t(math.radians(lat), self.e) / self.t_c
         lam = math.radians(lon - self.lon_0)
         return rho * math.sin(lam) + self.x_0, -rho * math.cos(lam) + self.y_0
@@ -95,11 +120,24 @@ class Grid:
 
     @property
     def shape(self) -> tuple[int, int]:
-        """Return (rows, columns): the shape the file's datasets must have."""
+        """Return (rows, columns): the shape the file's datasets must have.
+
+        The grid's ysize and xsize from /where. The readers refuse a payload of
+        any other shape, so a crafted file cannot claim one size and hold
+        another.
+
+        """
         return self.ysize, self.xsize
 
     def cell(self, lat: float, lon: float) -> tuple[int, int]:
-        """Return the (row, col) of the cell holding a location; row 0 is the north edge."""
+        """Return the (row, col) of the cell holding a location.
+
+        Projects the location and floors its offset from the grid's outer
+        lower-left corner, in cells (ADR 0008: floor, never round, since the
+        corner is a cell edge, not a cell centre). Row 0 is the north edge, as
+        the data is stored. Raises OutsideGrid for a location off the grid.
+
+        """
         x, y = self.projection.xy(lat, lon)
         col = math.floor((x - self.x_ll) / self.xscale)
         row = self.ysize - 1 - math.floor((y - self.y_ll) / self.yscale)
@@ -109,7 +147,15 @@ class Grid:
 
 
 def grid_from_where(where: Mapping[str, Any]) -> Grid:
-    """Return the grid an ODIM /where group describes (attributes as read)."""
+    """Return the grid an ODIM /where group describes.
+
+    ``where`` holds the group's attributes as h5py reads them (bytes or str,
+    numpy or Python numbers): ``projdef`` (the PROJ string), the lower-left
+    corner ``LL_lat``/``LL_lon``, the cell size ``xscale``/``yscale`` (m) and
+    the size ``xsize``/``ysize``. Raises UnsupportedGrid when one is missing or
+    the grid cannot be computed.
+
+    """
     try:
         projdef = where["projdef"]
         description = (
@@ -138,6 +184,14 @@ def _grid(
     xsize: int,
     ysize: int,
 ) -> Grid:
+    """Build the grid of one /where description.
+
+    Cached: every member of a release repeats the same description, and every
+    product describes the same grid, so each is built once. A grid of an
+    implausible size (no cells, more than MAX_CELLS, a cell size that is not
+    positive) is refused before anything is computed.
+
+    """
     if not (xsize > 0 and ysize > 0 and xsize * ysize <= MAX_CELLS and xscale > 0 and yscale > 0):
         raise UnsupportedGrid(f"a {ysize} x {xsize} grid of {yscale} x {xscale} m cells")
     projection = _projection(projdef)
@@ -146,10 +200,20 @@ def _grid(
 
 
 def _projection(projdef: str) -> _Stereographic:
-    """Read a PROJ string, in any order; refuse what would be placed wrongly."""
+    """Read a PROJ string into the projection it describes.
+
+    A PROJ string lists ``+key=value`` parameters, e.g. "+proj=stere +lat_0=90
+    +lat_ts=60 +lon_0=10 +ellps=WGS84". They are taken in any order. Refused
+    with UnsupportedGrid is whatever this version would place wrongly: another
+    projection, an unknown or repeated parameter, a datum shift, a unit other
+    than metres.
+
+    """
     params: dict[str, str] = {}
     for token in projdef.split():
         key, _, value = token.removeprefix("+").partition("=")
+        if key in params:
+            raise UnsupportedGrid(f"+{key} given twice in {projdef!r}")
         params[key] = value
 
     if unknown := sorted(set(params) - _KNOWN):
@@ -176,7 +240,13 @@ def _projection(projdef: str) -> _Stereographic:
 
 
 def _ellipsoid(params: dict[str, str], projdef: str) -> tuple[float, float]:
-    """Return (a, b) from +a/+b, or from a named ellipsoid or datum."""
+    """Return the ellipsoid's semi-axes (a, b) from the PROJ parameters.
+
+    Spelled out as +a/+b (both are needed), or named by +ellps or +datum
+    (WGS84, GRS80). ``projdef`` is only for the error message; UnsupportedGrid
+    for an ellipsoid this version does not know.
+
+    """
     if "a" in params or "b" in params:
         return _number(params, "a"), _number(params, "b")
     if (name := params.get("ellps") or params.get("datum")) in _ELLIPSOIDS:
@@ -185,7 +255,12 @@ def _ellipsoid(params: dict[str, str], projdef: str) -> tuple[float, float]:
 
 
 def _number(params: dict[str, str], key: str, default: float | None = None) -> float:
-    """Return a numeric PROJ parameter; a missing one takes ``default`` if given."""
+    """Return a numeric PROJ parameter.
+
+    A missing one takes ``default`` when there is one; otherwise, or when its
+    value is not a number, the grid is refused with UnsupportedGrid.
+
+    """
     if key not in params:
         if default is None:
             raise UnsupportedGrid(f"no +{key} in the PROJ string")

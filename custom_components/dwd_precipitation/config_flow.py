@@ -31,7 +31,7 @@ from .const import (
     CONF_RAIN_EVENTS,
     CONF_RAIN_EVENT_THRESHOLD,
 )
-from .options import DEFAULT_OPTIONS
+from .options import DwdOptions
 
 # Where DWD's radar can have data for a location: a latitude/longitude box
 # around its DE1200 grid (45.69-56.21 N, 1.47-18.73 E), rounded outwards. It
@@ -50,7 +50,12 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def _number(unit: str) -> selector.NumberSelector:
-    """Return a non-negative number box in steps of 0.1 ``unit``."""
+    """Return a non-negative number box in steps of 0.1 ``unit``.
+
+    A Home Assistant number selector shown as a text box, for the thresholds in
+    the options form; ``unit`` ("mm/h" or "mm") is shown next to it.
+
+    """
     return selector.NumberSelector(
         selector.NumberSelectorConfig(
             min=0, step=0.1, unit_of_measurement=unit, mode=selector.NumberSelectorMode.BOX
@@ -59,7 +64,13 @@ def _number(unit: str) -> selector.NumberSelector:
 
 
 def _dropdown(options: list[str], translation_key: str) -> selector.SelectSelector:
-    """Return a dropdown of ``options``, labelled by ``translation_key``."""
+    """Return a dropdown of ``options``, labelled by ``translation_key``.
+
+    ``options`` are the values stored; the labels the user sees come from the
+    translations under ``translation_key`` (translations/en.json, de.json), so
+    the stored values never depend on the language.
+
+    """
     return selector.SelectSelector(
         selector.SelectSelectorConfig(
             options=options,
@@ -73,23 +84,33 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
     """Handle options flow for DWD Precipitation."""
 
     async def async_step_init(self, user_input=None) -> config_entries.ConfigFlowResult:
-        """Manage the options.
+        """Show the options form, or save what the user entered.
 
-        The form nests the rarely needed options in a collapsed section, but
-        they are stored flat like the rest: every option keeps its key, so
-        nothing reading ``entry.options`` notices the section and no
-        migration is needed.
+        Home Assistant calls this twice: without input to show the form, and
+        with the submitted values. The rarely needed options sit in a collapsed
+        "Advanced" section of the form, but they are stored flat like the rest:
+        every option keeps its key, so nothing that reads ``entry.options``
+        notices the section and no migration is needed. Saving reloads the
+        entry (see update_listener).
+
         """
         if user_input is not None:
             data = {k: v for k, v in user_input.items() if k != SECTION_ADVANCED}
             data.update(user_input.get(SECTION_ADVANCED, {}))
             return self.async_create_entry(title="", data=data)
 
-        options = self.config_entry.options
+        options = DwdOptions.from_options(self.config_entry.options)
 
         def current(key: str) -> vol.Optional:
-            """An optional field that shows the entry's value, else the default."""
-            return vol.Optional(key, default=options.get(key, DEFAULT_OPTIONS[key]))
+            """Return an optional field showing the stored value or the default.
+
+            Pre-fills each field from DwdOptions: the stored value, or the
+            default when nothing is stored. A stored value no version wrote
+            shows the default that replaces it, so saving the form unchanged
+            fixes it.
+
+            """
+            return vol.Optional(key, default=getattr(options, key))
 
         advanced = vol.Schema(
             {
@@ -143,24 +164,39 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     @staticmethod
     @callback
     def async_get_options_flow(config_entry) -> OptionsFlowHandler:
-        """Return the options flow handler."""
+        """Return the options flow handler.
+
+        Home Assistant calls this when the user opens the integration's
+        options; the handler shows the form
+        (OptionsFlowHandler.async_step_init).
+
+        """
         return OptionsFlowHandler()
 
     async def async_step_user(self, user_input=None) -> config_entries.ConfigFlowResult:
-        """Handle the user step."""
+        """Ask for a name and a location, and create the entry.
+
+        Home Assistant calls this when the user adds the integration: first
+        without input to show the form, then with what was entered. It rejects
+        an empty or already used name, and a location outside the box DWD's
+        radar covers, by showing the form again with an error. A new entry
+        stores the default dry-streak source explicitly, so a later change of
+        the default never moves it.
+
+        """
         errors: dict[str, str] = {}
 
         if user_input is not None:
             data = user_input.copy()
 
-            if not data[CONF_NAME].lstrip(" "):
+            if not data[CONF_NAME].strip():
                 errors["base"] = "invalid_name"
 
             existing_names = {
-                entry.title
+                entry.title.strip()
                 for entry in self.hass.config_entries.async_entries(DOMAIN)
             }
-            if data[CONF_NAME] in existing_names:
+            if data[CONF_NAME].strip() in existing_names:
                 errors["base"] = "name_already_exists"
 
             coords = data.pop(CONF_COORDS)
@@ -193,7 +229,13 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     @callback
     def get_schema_user_step(self) -> vol.Schema:
-        """Return the schema for the user step."""
+        """Return the form of the first setup step.
+
+        A name, defaulting to Home Assistant's location name, and a place on
+        the map, defaulting to Home Assistant's home coordinates. The name
+        becomes the device's name and the prefix of every entity id.
+
+        """
         schema = {
             vol.Required(
                 CONF_NAME, default=self.hass.config.location_name

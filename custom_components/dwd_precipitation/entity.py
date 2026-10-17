@@ -34,8 +34,10 @@ class DwdEntityDescriptionMixin:
 def plain_value(value: Any) -> Any:
     """Return an attribute value as HA stores it: a datetime as an ISO string.
 
-    Everything else the descriptions pass is already a plain float, int, str
-    or list: the readers turn HDF5's bytes and numpy values into those.
+    Used on every companion attribute the descriptions compute. Everything else
+    they pass is already a plain float, int, str or list, because the readers
+    turn HDF5's bytes and numpy values into those, so it is returned as it is.
+
     """
     return value.isoformat() if isinstance(value, datetime) else value
 
@@ -43,8 +45,11 @@ def plain_value(value: Any) -> Any:
 def unique_id_for(entry_id: str, key: str) -> str:
     """Return the unique id of an entry's entity with description ``key``.
 
-    Released ids must never change (it would orphan the user's entity), so
-    the format lives here only.
+    The entry id plus the key, e.g. "<entry_id>_radvor_rs_000". Home Assistant
+    uses the unique id to remember an entity's id, name and settings, so a
+    released id must never change (it would orphan the user's entity), and the
+    format lives here only.
+
     """
     return f"{entry_id}_{key}"
 
@@ -59,7 +64,14 @@ class DwdCoordinatorEntity(CoordinatorEntity[BaseProductUpdateCoordinator]):
         coordinator: BaseProductUpdateCoordinator,
         description: EntityDescription,
     ) -> None:
-        """Initialize the entity."""
+        """Set up the entity's description, unique id and device.
+
+        ``coordinator`` is the product the entity reads, ``description`` says
+        what it shows (key, name, unit, sub-key). Every entity of an entry
+        belongs to one service device named after the entry; its unique id is
+        the entry id plus the description's key.
+
+        """
         super().__init__(coordinator)
         self.entity_description = description
         self._attr_unique_id = unique_id_for(
@@ -73,13 +85,14 @@ class DwdCoordinatorEntity(CoordinatorEntity[BaseProductUpdateCoordinator]):
 
     @property
     def available(self) -> bool:
-        """Return True if the coordinator holds a value recent enough to show.
+        """Return whether the coordinator has a value recent enough to show.
 
-        Asking the coordinator what it is willing to report, rather than taking
-        last_update_success at face value, means a value that quietly ages out
-        stops being reported even if no further fetch is attempted. The rule
-        itself lives on the coordinator so the entity and the update loop cannot
-        answer this question differently.
+        It asks the coordinator's data_is_reportable rather than whether the
+        last update succeeded, so a value that ages out stops being shown even
+        when no further fetch happens, and the entity and the update loop
+        always agree. An unavailable entity shows "unavailable" in Home
+        Assistant.
+
         """
         return self.coordinator.data_is_reportable
 
@@ -87,25 +100,48 @@ class DwdCoordinatorEntity(CoordinatorEntity[BaseProductUpdateCoordinator]):
     def _description(self) -> DwdEntityDescriptionMixin:
         """Return the DWD part of this entity's description.
 
-        Every platform's description includes DwdEntityDescriptionMixin; HA
-        types entity_description as the plain EntityDescription.
+        Every platform's description includes DwdEntityDescriptionMixin
+        (product key, sub-key, attribute functions), but HA types
+        entity_description as the plain EntityDescription; this cast lets the
+        code use those fields with their types.
+
         """
         return cast(DwdEntityDescriptionMixin, self.entity_description)
 
     def _value(self) -> Any:
-        """Return what the description picks from the data, None without data."""
+        """Return the value this entity shows, from the coordinator's data.
+
+        The coordinator holds one release's values in a dict; the description's
+        sub_key picks this entity's from it. None while the coordinator has no
+        data, or when the release had none for the location.
+
+        """
         if self.coordinator.data is None:
             return None
         return self.coordinator.data.data.get(self._description.sub_key)
 
     def _metadata(self) -> ProductMetadata | None:
-        """Return this entity's ProductMetadata, if the coordinator has it."""
+        """Return this entity's ProductMetadata, if the coordinator has it.
+
+        Picked by the same sub_key as the value. It says which product and
+        release the value comes from, and the time window the value covers;
+        None while the coordinator has no data or the value has no metadata.
+
+        """
         if self.coordinator.data is None:
             return None
         return self.coordinator.data.metadata.get(self._description.sub_key)
 
     def _described_attributes(self) -> dict[str, Any]:
-        """Return the description's companion and metadata attributes."""
+        """Return the attributes the description adds to the entity.
+
+        ``attrs_fn`` computes companion values from the payload (the minutes
+        until rain, say), ``metadata_attrs_fn`` from the metadata (the data
+        window, say). Both are always shown, unlike the opt-in diagnostic
+        attributes, and every value is made storable with plain_value. Empty
+        while the coordinator has no data.
+
+        """
         attrs: dict[str, Any] = {}
         if self.coordinator.data is None:
             return attrs

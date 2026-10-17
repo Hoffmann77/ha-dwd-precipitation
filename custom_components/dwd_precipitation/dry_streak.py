@@ -3,6 +3,7 @@
 Holds the persisted-anchor payload and the pure helpers that decide where the
 dry-streak anchor should sit. Kept separate from ``sensor.py`` so the streak
 logic is easy to read and unit-test in isolation.
+
 """
 
 from __future__ import annotations
@@ -35,17 +36,38 @@ class DryStreakExtraData(ExtraStoredData):
     dry_since: datetime | None
 
     def as_dict(self) -> dict[str, Any]:
-        """Serialize the anchor for restore_state."""
+        """Serialize the anchor for restore_state.
+
+        The anchor (``dry_since``) is the time the dry streak counts from,
+        normally the end of the last hour that reached the reset threshold.
+        Home Assistant stores this dict with the entity's last state and hands
+        it back after a restart (see from_dict), so the streak survives
+        restarts.
+
+        """
         return {"dry_since": iso(self.dry_since)}
 
     @classmethod
     def from_dict(cls, restored: dict[str, Any]) -> "DryStreakExtraData":
-        """Rebuild the anchor from a restored dict, forcing UTC-awareness."""
+        """Rebuild the anchor from a restored dict.
+
+        The counterpart of as_dict. A missing or unreadable timestamp restores
+        as None, which the sensor treats like a fresh install, and one without
+        a time zone is taken as UTC.
+
+        """
         return cls(dry_since=parse_utc(restored.get("dry_since")))
 
 
 def amount_reading(coordinator: Any) -> Reading:
-    """Return a RADOLAN coordinator's amount and window; NO_READING without data."""
+    """Return a RADOLAN coordinator's amount and window.
+
+    ``coordinator`` is the entry's RW (last hour) or SF (last 24 hours)
+    coordinator, or None when the entry has none. Used at startup to look for
+    rain that fell during a downtime. Returns NO_READING when the coordinator,
+    its data or the amount is missing, so callers need only check the fields.
+
+    """
     cdata = getattr(coordinator, "data", None) if coordinator else None
     if cdata is None or (value := cdata.data.get(KEY_AMOUNT)) is None:
         return NO_READING
@@ -62,10 +84,15 @@ def amount_reading(coordinator: Any) -> Reading:
 def downtime_correction(
     threshold: float, rw: Reading, sf: Reading, now: datetime
 ) -> datetime | None:
-    """Newest time we have positive rain evidence, to clamp a stale anchor forward.
+    """Return when rain was last proven, to move a restored anchor forward.
 
-    Used only at startup to catch rain that fell while HA was down. Returns a UTC
-    datetime to clamp the anchor forward to, or None when there is no evidence.
+    Used only at startup, to catch rain that fell while Home Assistant was down
+    and the streak was not watching. RW's last hour is checked first: if it
+    reached the threshold, the streak starts at that hour's end. Otherwise SF's
+    last 24 hours: if they did, the streak starts at the start of that window,
+    since SF cannot say when within the day it rained. None when neither
+    reached the threshold.
+
     """
     if rw.value is not None and rw.value >= threshold:
         # Rain within the last hour -> the streak is effectively zero.
@@ -80,7 +107,14 @@ def downtime_correction(
 
 
 def fresh_anchor(threshold: float, rw: Reading, sf: Reading, now: datetime) -> datetime:
-    """Anchor for a fresh install: the oldest time we can prove it has been dry."""
+    """Return where a new install's dry streak starts.
+
+    A new install has no history, so the streak starts as far back as the
+    analyses prove it was dry: the start of SF's 24 hours if they stayed below
+    the threshold, else the start of RW's hour if it did, else now. Without it,
+    every new install would report 0 days even after a dry week.
+
+    """
     if sf.value is not None and sf.value < threshold and sf.start:
         return sf.start  # dry for at least the 24h SF window
 
