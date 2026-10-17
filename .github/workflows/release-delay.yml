@@ -25,11 +25,12 @@ jobs:
   release-delay:
     name: Check observed vs configured release delay
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
       - name: Install unit-test dependencies
-        run: uv sync --only-group unit-test
+        run: uv sync --locked --only-group unit-test
 
       - name: Restore consecutive-drift streak
         uses: actions/cache/restore@v6

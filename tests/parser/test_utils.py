@@ -139,6 +139,14 @@ def test_disables_cross_host_redirects():
     assert session.calls[0][1].get("allow_redirects") is False
 
 
+def test_times_out_a_stall_not_a_slow_download():
+    session = _FakeSession(_FakeResponse(chunks=(b"ok",)))
+    asyncio.run(async_get(_VALID_URL, session))
+    timeout = session.calls[0][1]["timeout"]
+    assert timeout.total is None  # a big archive on a slow line may finish
+    assert timeout.sock_read is not None and timeout.sock_connect is not None
+
+
 def test_redirect_status_rejected():
     session = _FakeSession(_FakeResponse(status=302))
     with pytest.raises(ValueError, match="redirect"):

@@ -1,6 +1,5 @@
 """ODIM_H5 reader for DWD RS Cartesian precipitation composites."""
 
-from datetime import datetime, timezone
 import re
 import math
 
@@ -143,6 +142,17 @@ def _open_composite(hf, dataset: str, moment: str, expected_shape):
     return dset, dataset_what, what
 
 
+def _cell(dset, row: int, col: int):
+    """Return the 1x1 slice of ``dset`` at (row, col), rejecting outside cells.
+
+    A negative index would otherwise wrap around to the far edge of the grid.
+    """
+    rows, cols = dset.shape
+    if not (0 <= row < rows and 0 <= col < cols):
+        raise ValueError(f"Cell ({row}, {col}) is outside the {dset.shape} grid")
+    return dset[row:row + 1, col:col + 1]
+
+
 def _scale(raw, what):
     """Turn raw ACRR counts into mm: nodata → NaN, undetect → 0.0."""
     gain     = float(what["gain"])
@@ -162,7 +172,11 @@ def read_odim_composite(
     moment: str = "data1",
     expected_shape=None,
 ):
-    """Read a Cartesian ODIM_H5 composite.
+    """Read a Cartesian ODIM_H5 composite, the whole grid.
+
+    No runtime caller: the integration reads one cell
+    (:func:`read_odim_composite_cell`). This is the oracle the test tiers and
+    scripts/ compare against.
 
     Returns (data, dataset_what) where data is a float32 array and dataset_what
     is the normalised /dataset/what attribute dict.
@@ -199,10 +213,7 @@ def read_odim_composite_cell(
     """
     with h5py.File(fileobj, "r") as hf:
         dset, dataset_what, what = _open_composite(hf, dataset, moment, expected_shape)
-        rows, cols = dset.shape
-        if not (0 <= row < rows and 0 <= col < cols):
-            raise ValueError(f"Cell ({row}, {col}) is outside the {dset.shape} grid")
-        raw = dset[row:row + 1, col:col + 1]
+        raw = _cell(dset, row, col)
 
     return _scale(raw, what)[0, 0], dataset_what
 
@@ -214,6 +225,9 @@ def read_odim_classification(
     expected_shape=None,
 ):
     """Read a Cartesian ODIM_H5 *classification* composite (e.g. HymecNG).
+
+    The whole grid, for the test tiers; HymecNG reads one cell with
+    :func:`read_odim_classification_cell`.
 
     Unlike :func:`read_odim_composite`, the payload holds a discrete class index
     (a precipitation-type category) rather than a physical quantity, so it is
@@ -229,20 +243,35 @@ def read_odim_classification(
     plain-dataset, shape-pinned checks as :func:`read_odim_composite`.
     """
     with h5py.File(fileobj, "r") as hf:
-        dataset_what = {
-            k: _normalise_attr_value(v)
-            for k, v in _resolve_hard(hf, f"{dataset}/what").attrs.items()
-        }
-        moment_what = {
-            k: _normalise_attr_value(v)
-            for k, v in _resolve_hard(hf, f"{dataset}/{moment}/what").attrs.items()
-        }
-        dset = _require_plain_dataset(
-            _resolve_hard(hf, f"{dataset}/{moment}/data"), expected_shape
+        dset, dataset_what, moment_what = _open_composite(
+            hf, dataset, moment, expected_shape
         )
         raw = dset[:]
 
     return raw, dataset_what, moment_what
+
+
+def read_odim_classification_cell(
+    fileobj,
+    row: int,
+    col: int,
+    dataset: str = "dataset1",
+    moment: str = "data1",
+    expected_shape=None,
+):
+    """Read one cell of a classification composite.
+
+    Returns ``(value, dataset_what, moment_what)``: the class index
+    :func:`read_odim_classification` would hold at ``[row, col]``, as an int,
+    with the same untrusted-input checks; a cell outside the grid raises.
+    """
+    with h5py.File(fileobj, "r") as hf:
+        dset, dataset_what, moment_what = _open_composite(
+            hf, dataset, moment, expected_shape
+        )
+        raw = _cell(dset, row, col)
+
+    return int(raw[0, 0]), dataset_what, moment_what
 
 
 def get_rs_grid_index(lat: float, lon: float, where: dict | None = None):

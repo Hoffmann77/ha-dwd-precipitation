@@ -47,7 +47,7 @@ def test_extract_timing_resolves_inheritance():
     timing = extract_timing("RadolanSF")
     assert timing["RELEASE_INTERVAL"] == timedelta(hours=1)
     assert timing["RELEASE_OFFSET"] == timedelta(minutes=50)
-    assert timing["RELEASE_DELAY"] == timedelta(minutes=28)
+    assert timing["RELEASE_DELAY"] == timedelta(minutes=31)  # the HDF5 edition
 
 
 # ---------------------------------------------------------------------------

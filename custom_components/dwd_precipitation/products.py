@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import bz2
 import logging
 import tarfile
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
 from functools import cached_property
 from io import BytesIO
-from typing import ClassVar
 
 import numpy as np
 
@@ -20,10 +18,8 @@ from .coordinator import (
 )
 from .utils import async_get
 from .radar import (
-    read_radolan_composite,
-    get_radolan_grid_index,
     read_odim_composite_cell,
-    read_odim_classification,
+    read_odim_classification_cell,
     get_rs_grid_index,
     RS_GRID_SHAPE,
 )
@@ -143,7 +139,7 @@ def _peak_hour_payload(
         for lead in series_leads
     ]
 
-    peak, peak_lead = peak_rolling_hour(sums, FUTURE_HOUR_LEADS)
+    peak, peak_lead = peak_rolling_hour(sums)
     # A dry forecast has no wettest hour, so it gets no window either.
     start, end = windows[peak_lead // LEAD_STEP] if peak else (None, None)
     return peak, ProductMetadata(
@@ -487,11 +483,9 @@ class HymecNG(BaseProductUpdateCoordinator):
 
     def _parse(self, content: bytes) -> tuple[str | None, ProductMetadata]:
         """Return the cell's precipitation-type label (blocking)."""
-        raw, dataset_what, moment_what = read_odim_classification(
-            BytesIO(content), expected_shape=RS_GRID_SHAPE
+        value, dataset_what, moment_what = read_odim_classification_cell(
+            BytesIO(content), *self.index, expected_shape=RS_GRID_SHAPE
         )
-        row, col = self.index
-        value = int(raw[row, col])
 
         nodata = int(round(float(moment_what.get("nodata", 255))))
         undetect = int(round(float(moment_what.get("undetect", 254))))
@@ -522,61 +516,61 @@ class HymecNG(BaseProductUpdateCoordinator):
 
 
 class RadolanProduct(BaseProductUpdateCoordinator, ABC):
-    """Abstract coordinator for bz2-compressed RADOLAN binary products.
+    """Abstract coordinator for the RADOLAN analyses (RW, SF), read as HDF5.
 
-    Concrete subclasses provide PRODUCT_KEY, timing constants, and get_url().
-    precipitation → float, metadata → ProductMetadata
+    DWD publishes RADOLAN both in its legacy binary format (.bz2, national
+    900x900 grid) and as ODIM_H5 on the DE1200 grid RS/RV/HymecNG use. The
+    binary format was announced to be switched off, so the HDF5 edition is
+    read: one cell via read_odim_composite_cell, located with
+    get_rs_grid_index like every other product. It is the same analysis on
+    another grid (area means agree to 1 %), so a location may land on a
+    slightly different cell than it did on the old grid.
 
+    Concrete subclasses provide PRODUCT_KEY, timing constants, and _get_url().
+    precipitation -> float, metadata -> ProductMetadata
     """
-
-    # National RADOLAN composite grid (rows, cols); validated on every parse.
-    EXPECTED_SHAPE: ClassVar[tuple[int, int]] = (900, 900)
 
     @cached_property
     def index(self) -> tuple[int, int]:
-        """Return the (row, col) of the RADOLAN 900×900 cell holding the location."""
-        return get_radolan_grid_index(*self.coords, *self.EXPECTED_SHAPE)
+        """Return the (row, col) of the DE1200 cell holding the location."""
+        return get_rs_grid_index(*self.coords)
 
     @abstractmethod
     def _get_url(self, ts: datetime) -> str:
-        """Return the bz2 file URL for the given release timestamp."""
+        """Return the HDF5 file URL for the given release timestamp."""
 
     async def _fetch_and_parse(self, ts: datetime) -> tuple[float | None, ProductMetadata]:
-        """Fetch one bz2 RADOLAN file and decode it off the event loop."""
+        """Fetch one RADOLAN HDF5 file and decode it off the event loop."""
         response = await async_get(self._get_url(ts), self.async_client)
         return await self.hass.async_add_executor_job(self._parse, response.content)
 
     def _parse(self, content: bytes) -> tuple[float | None, ProductMetadata]:
-        """Return (scalar_value, ProductMetadata) from the bz2 bytes (blocking).
+        """Return (scalar_value, ProductMetadata) from the HDF5 bytes (blocking).
 
         The value is ``None`` where the cell holds no data (radar outage, masked
-        cell, outside coverage), as for RS/RV/HymecNG. The reader marks those
-        cells with the ``nodataflag`` sentinel (-9999), not NaN, and passing it
-        on showed -9999 mm and counted as a dry hour for the dry streak.
+        cell, outside coverage), as for RS/RV/HymecNG: the reader returns NaN
+        for the ODIM ``nodata`` sentinel.
         """
-        f = bz2.open(BytesIO(content))
-        data, raw = read_radolan_composite(f)
-
-        if data.shape != self.EXPECTED_SHAPE:
-            raise ValueError(
-                f"Unexpected RADOLAN grid shape {data.shape}, "
-                f"expected {self.EXPECTED_SHAPE}"
-            )
-
-        dt_end = _utc(raw.get("datetime"))
-        interval = raw.get("intervalseconds")
-        data_start = dt_end - timedelta(seconds=interval) if (dt_end and interval) else None
-
-        value = float(data[self.index])
-        if value == raw.get("nodataflag", -9999) or value != value:  # sentinel or NaN
-            value = None
-
-        return value, ProductMetadata(
-            source_product=raw.get("producttype"),
-            source_timestamp=dt_end,
-            data_start=data_start,
-            data_end=dt_end,
+        value, what = read_odim_composite_cell(
+            BytesIO(content), *self.index, expected_shape=RS_GRID_SHAPE
         )
+        value = float(value)
+        data_start, data_end = _odim_window(what)
+
+        return (None if value != value else value), ProductMetadata(
+            source_product=what.get("prodname") or what.get("product"),
+            source_timestamp=data_end,
+            data_start=data_start,
+            data_end=data_end,
+        )
+
+
+def _radolan_url(product: str, ts: datetime) -> str:
+    """Return the URL of a RADOLAN analysis in its HDF5 edition."""
+    return (
+        f"{DWD_RADOLAN_URL}/{product}/raa01-{product}_10000-"
+        f"{ts.strftime('%y%m%d%H%M')}-dwd---bin.hdf5"
+    )
 
 
 class RadolanRW(RadolanProduct):
@@ -597,11 +591,8 @@ class RadolanRW(RadolanProduct):
     OVERDUE_GRACE = DEFAULT_OVERDUE_GRACE
 
     def _get_url(self, ts: datetime) -> str:
-        """Return the bz2 URL."""
-        return (
-            f"{DWD_RADOLAN_URL}/rw/raa01-rw_10000-"
-            f"{ts.strftime('%y%m%d%H%M')}-dwd---bin.bz2"
-        )
+        """Return the HDF5 URL."""
+        return _radolan_url("rw", ts)
 
 
 class RadolanSF(RadolanProduct):
@@ -613,7 +604,10 @@ class RadolanSF(RadolanProduct):
 
     RELEASE_INTERVAL = timedelta(hours=1)
 
-    RELEASE_DELAY = timedelta(minutes=28)
+    # The HDF5 edition appears ~29.3 min after the window ends (48 files,
+    # 2026-10-10..12), ~2.5 min after the legacy binary one; 31 keeps the
+    # same ~2 min margin RW has.
+    RELEASE_DELAY = timedelta(minutes=31)
 
     RELEASE_OFFSET = timedelta(minutes=50)
 
@@ -621,11 +615,8 @@ class RadolanSF(RadolanProduct):
     OVERDUE_GRACE = DEFAULT_OVERDUE_GRACE
 
     def _get_url(self, ts: datetime) -> str:
-        """Return the bz2 URL."""
-        return (
-            f"{DWD_RADOLAN_URL}/sf/raa01-sf_10000-"
-            f"{ts.strftime('%y%m%d%H%M')}-dwd---bin.bz2"
-        )
+        """Return the HDF5 URL."""
+        return _radolan_url("sf", ts)
 
 
 class RadolanSFLastYesterday(RadolanSF):
@@ -637,7 +628,7 @@ class RadolanSFLastYesterday(RadolanSF):
 
     RELEASE_INTERVAL = timedelta(hours=24)
 
-    RELEASE_DELAY = timedelta(minutes=28)
+    RELEASE_DELAY = timedelta(minutes=31)
 
     RELEASE_OFFSET = timedelta(hours=23, minutes=50)
 

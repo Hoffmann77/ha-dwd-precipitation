@@ -14,7 +14,6 @@ downloads; only "nothing downloadable at all" is treated as failure.
 
 from __future__ import annotations
 
-import bz2
 import io
 import tarfile
 from datetime import datetime, timedelta, timezone
@@ -23,7 +22,7 @@ import numpy as np
 import pytest
 import requests
 
-from radar import read_odim_composite, read_radolan_composite
+from radar.odim import read_odim_composite
 
 _OPENDATA = "https://opendata.dwd.de/weather/radar"
 
@@ -40,7 +39,7 @@ def _rs_candidates(now: datetime) -> list[datetime]:
 
 
 def _radolan_candidates(now: datetime) -> list[datetime]:
-    """RADOLAN RW/SF: hourly at HH:50, available ~28 min later; cover ~6 h."""
+    """RADOLAN RW/SF: hourly at HH:50, available ~26-30 min later; cover ~6 h."""
     ts = now.replace(minute=50, second=0, microsecond=0)
     if ts > now - timedelta(minutes=35):
         ts -= timedelta(hours=1)
@@ -60,7 +59,8 @@ def _parse_rs(content: bytes, ts: datetime) -> np.ndarray:
 
 
 def _parse_radolan(content: bytes, _ts: datetime) -> np.ndarray:
-    data, _ = read_radolan_composite(bz2.open(io.BytesIO(content)))
+    """RADOLAN in its HDF5 edition: ODIM_H5 on the DE1200 grid."""
+    data, _ = read_odim_composite(io.BytesIO(content))
     return data
 
 
@@ -77,19 +77,19 @@ _PRODUCTS = {
         "candidates": _radolan_candidates,
         "url": lambda ts: (
             f"{_OPENDATA}/radolan/rw/raa01-rw_10000-"
-            f"{ts.strftime('%y%m%d%H%M')}-dwd---bin.bz2"
+            f"{ts.strftime('%y%m%d%H%M')}-dwd---bin.hdf5"
         ),
         "parse": _parse_radolan,
-        "shape": (900, 900),
+        "shape": (1200, 1100),
     },
     "sf": {
         "candidates": _radolan_candidates,
         "url": lambda ts: (
             f"{_OPENDATA}/radolan/sf/raa01-sf_10000-"
-            f"{ts.strftime('%y%m%d%H%M')}-dwd---bin.bz2"
+            f"{ts.strftime('%y%m%d%H%M')}-dwd---bin.hdf5"
         ),
         "parse": _parse_radolan,
-        "shape": (900, 900),
+        "shape": (1200, 1100),
     },
 }
 
