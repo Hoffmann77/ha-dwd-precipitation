@@ -58,16 +58,27 @@ in it ships with the integration.
 
 ## Pipeline
 
-All on one server (Ubuntu 24, J4105), in one Docker container.
+All on one server (Ubuntu 24, J4105), as **one Docker Compose service that
+is started once and runs on its own**. There is no command-line interface:
+the container runs a single long-lived Python process that schedules its
+three jobs internally.
 
-| Step | Schedule (UTC) | What |
+| Job | When (UTC) | What |
 |---|---|---|
-| `log` | every 5 min | List RV on OpenData; for every release of the last 48 h not yet in the database, download, read the 5x5 window around each station for all 25 members, write. Gap-filling makes a missed run or a restart harmless as long as it lasts less than ~48 h. |
-| `gauges` | daily, 03:30 | Refresh the last few days of 1-minute data from `recent/` (updated ~02:00), sum to 5-minute windows, upsert. |
-| `evaluate` | 3rd of each month, 04:00 | Score the previous month, write `results/YYYY-MM.json` + `.md`, commit and push to the `eval-results` branch. |
+| Radar | every 5 min | List RV on OpenData; for every release of the last 48 h not yet in the database, download, read the 5x5 window around each station for all 25 members, write. |
+| Gauges | daily, after 03:30 | Refresh the last few days of 1-minute data from `recent/` (updated ~02:00), sum to 5-minute windows, upsert. |
+| Evaluate | from the 3rd of each month, 04:00 | For every completed month without a result, score it, write `results/YYYY-MM.json` + `.md`, commit and push to the `eval-results` branch. |
+
+**Every job is "catch up", not "run at time X".** Each one works out from the
+database what is missing — unlogged releases, stale gauge days, months
+without a result — and does exactly that. So a restart, a reboot or a few
+hours of downtime need no special handling: on start-up the process runs all
+three checks once, then follows the schedule. Only an outage longer than
+~48 h loses data (the RV releases that expired meanwhile).
 
 A tar is written to a temp file and only marked as logged once every member
-has been read, so an interrupted download never looks like data.
+has been read, so an interrupted download never looks like data. A failing
+job is logged and retried on its next turn; it never stops the process.
 
 ## Database (SQLite, WAL mode)
 
@@ -167,17 +178,38 @@ this repository only; nothing is pushed to `main`.
 
 ## Deployment
 
+- **`deploy/precip-eval/compose.yaml`** builds the image from the repository
+  checkout and runs it with `restart: unless-stopped`. Start it once with
+  `docker compose up -d`; update with `git pull` and the same command.
 - Image: official **`python:3.14-slim`**, **`uv`** (copied from the
-  `ghcr.io/astral-sh/uv` image, pinned), **supercronic** as in-container
-  scheduler (pinned version + checksum), `git` and `openssh-client` for the
-  push. Dependencies from a new `precip-eval` group in `pyproject.toml`
-  (`numpy`, `h5py`, `requests`), resolved through the existing `uv.lock`.
-- One long-running container (`docker compose`), `TZ=UTC`, restart
-  `unless-stopped`.
-- Volumes: `/data` (SQLite) on the host disk; the deploy key mounted
-  read-only.
+  `ghcr.io/astral-sh/uv` image, pinned), `git` and `openssh-client` for the
+  push. No cron or supercronic — scheduling is in the Python process.
+- Dependencies from a new `precip-eval` group in `pyproject.toml` (`numpy`,
+  `h5py`, `requests`), resolved through the existing `uv.lock`. Everything
+  else is standard library.
+- Integration code is reused directly (`from radar.odim import ...` with
+  `custom_components/dwd_precipitation` on `PYTHONPATH`, as the parser tests
+  do), so Home Assistant is never imported.
+- Configuration through environment variables in the compose file, all with
+  defaults: data directory, push target (branch `eval-results`), git author.
+- Volumes: `./data` -> `/data` (SQLite, on the host disk); the deploy key
+  mounted read-only.
+- `TZ=UTC`; logs go to stdout (`docker compose logs`). A Docker healthcheck
+  reads a heartbeat the scheduler writes each loop, so a hung process shows
+  as `unhealthy` and is visible in `docker ps`.
 - The code commit is baked in at build time (build arg) for the provenance
   field.
+
+### One-time setup
+
+1. Clone the repository on the server.
+2. Create an SSH key pair; add the public key to the GitHub repository as a
+   **deploy key with write access**; put the private key next to the compose
+   file (path set in `compose.yaml`).
+3. `docker compose up -d` in `deploy/precip-eval/`.
+
+The station list is generated during development and committed, so nothing
+has to be run by hand on the server.
 
 ## Repository layout
 
@@ -185,11 +217,12 @@ this repository only; nothing is pushed to `main`.
 custom_components/dwd_precipitation/radar/odim.py
     + read_odim_composite_window()   one hyperslab read for a window;
                                      reused later by an interpolation option
-scripts/precip_eval/                 package: cli (log | gauges | evaluate |
-                                     select-stations), db, rv, gauges,
-                                     stations, metrics, report
+scripts/precip_eval/                 package: __main__ (the scheduler loop,
+                                     the container's only entry point), db,
+                                     rv, gauges, stations, metrics, report,
+                                     publish (git push)
 scripts/precip_eval/stations.csv     the committed station list
-deploy/precip-eval/                  Dockerfile, compose.yaml, crontab
+deploy/precip-eval/                  Dockerfile, compose.yaml
 tests/precip_eval/                   window read, pairing, sparse rule,
                                      metrics on synthetic data
 ```
@@ -198,7 +231,8 @@ tests/precip_eval/                   window read, pairing, sparse rule,
 
 1. `read_odim_composite_window` + tests against the existing fixture.
 2. Station selection → commit `stations.csv`.
-3. `log` with gap-filling; run it locally against live OpenData.
-4. Container + deploy; logging starts (the 48 h window makes this the urgent part).
-5. `gauges`.
-6. `evaluate` + report; first run once a full month is logged.
+3. Scheduler loop + radar job with gap-filling; tested against live OpenData.
+4. Dockerfile + compose; deploy, logging starts (the 48 h window makes this
+   the urgent part). Gauges and evaluate are no-ops until implemented.
+5. Gauge job.
+6. Evaluate job + report + push; first result once a full month is logged.
