@@ -1242,7 +1242,7 @@ wheels = [
 
 [[package]]
 name = "ha-dwd-precipitation"
-version = "2026.10.1rc1"
+version = "2026.10.1"
 source = { virtual = "." }
 
 [package.dev-dependencies]
