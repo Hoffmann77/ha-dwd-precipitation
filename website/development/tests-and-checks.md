@@ -71,7 +71,7 @@ regenerate the real-file fixtures.
 | `live.yml` | daily | live download and parse; opens an issue on failure |
 | `live-wradlib.yml` | daily, or by hand | wradlib comparison on live files; opens an issue on failure |
 | `ha-compat.yml` | weekly | the integration tier against the latest and dev Home Assistant test harness |
-| `hassfest.yaml`, `validate.yaml` | daily | Home Assistant manifest and HACS validation |
+| `hassfest.yaml`, `validate.yaml` | pushes, PRs, daily | Home Assistant manifest and HACS validation |
 | `release-delay.yml` | scheduled | checks each product's `RELEASE_DELAY` against DWD's actual publication |
 | `release-drafter.yml` | pushes to main, PRs | drafts the next release notes |
 

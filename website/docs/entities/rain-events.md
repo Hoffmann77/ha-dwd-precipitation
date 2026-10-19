@@ -82,7 +82,11 @@ release does not leave a gap.
 ### Events
 
 - Two dry steps in a row end an event; a single one does not.
-- A step without data never splits or ends an event.
+- A measured step without data does not split an event. Once it can no
+  longer be fetched, it counts as dry when deciding whether the event has
+  ended, and an event ended that way has `end_clipped` set. More than 3 hours
+  of steps without data in a row count as dry.
+- A forecast step without data counts as dry.
 - An upcoming event that one release does not show stays for that release as
   `unseen`.
 - When several events join, the one first seen earliest keeps its id and

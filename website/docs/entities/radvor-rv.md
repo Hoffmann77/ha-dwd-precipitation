@@ -49,7 +49,7 @@ per hour), so it suits alert automations.
 
 It is calculated from the RV 5-minute forecast, which adds up to the RS
 rolling hours. In the rare cells where DWD's two products differ, it can read
-a few hundredths of a millimetre below `Precipitation next 60 min`, which it
+below `Precipitation next 60 min` (by up to about half a millimetre), which it
 otherwise never does.
 
 | Attribute | Meaning |

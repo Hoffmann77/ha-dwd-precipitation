@@ -56,8 +56,8 @@ the single cell that contains your location; see
 
 | Product | Published as | Read |
 |---------|--------------|------|
-| RS | one archive of 25 HDF5 files every 5 min, under 1 MB to about 17 MB | the three hours it needs, by HTTP range requests (about a fifth of the archive) |
-| RV | one archive of 25 HDF5 files every 5 min, under 1 MB to about 17 MB | the whole archive |
+| RS | one archive of 25 HDF5 files every 5 min, under 1 MB to about 17.5 MB depending on rain across Germany | the three hours it needs, by HTTP range requests (about a fifth of the archive) |
+| RV | one archive of 25 HDF5 files every 5 min, of similar size | the whole archive |
 | HymecNG | one HDF5 file every 5 min | the whole file |
 | RW, SF | one small HDF5 file per run | the whole file |
 

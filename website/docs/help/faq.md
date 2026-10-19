@@ -16,14 +16,14 @@ free and needs no registration.
 
 ## How much data does it download?
 
-It depends on the weather, and not only at your location: DWD's files cover
-all of Germany, and rain anywhere makes them larger. The RV archive, read
-completely every 5 minutes, is most of it, at under 1 MB on a dry day and up
-to about 17 MB when it rains widely. RS adds about a fifth of that (it is read
-partially), and HymecNG and the RADOLAN files are small.
+About 1 GB a day on average: measured over three days in October 2026, an
+installation downloaded about 0.9 GB a day. It depends on the weather, and not
+only at your location: DWD's files cover all of Germany, and rain anywhere
+makes them larger, so a dry day costs less and a day of widespread rain more.
 
-That comes to roughly 250 MB on a dry day and several gigabytes on a very wet
-one. Keep it in mind on a metered connection.
+Most of it is the RV archive, read completely every 5 minutes. RS is read
+partially (about a fifth of each archive), and HymecNG and the RADOLAN files
+are small. Keep it in mind on a metered connection.
 
 ## Why does "now" lag a few minutes?
 

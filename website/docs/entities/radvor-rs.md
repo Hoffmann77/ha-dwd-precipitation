@@ -66,5 +66,5 @@ is, since half a forecast is not a two-hour total.
   location, for example while a nearby radar is out of service. The log says
   so once, and again when data is back.
 - **Data volume:** DWD publishes all 25 rolling hours in one archive of up to
-  about 17 MB. The integration downloads only the three hours it needs, about a
+  about 17.5 MB. The integration downloads only the three hours it needs, about a
   fifth of the file.

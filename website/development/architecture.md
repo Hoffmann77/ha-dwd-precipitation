@@ -108,8 +108,8 @@ lower-left corner: the corner references are pixel edges, not centres
 ## Range reads
 
 RS and RV archives are plain tar files of 25 members. RS needs only three of
-them, so `radar/tar_range.py` reads those by HTTP range requests: a head
-request finds the first member and the file size, and the rest are located by
+them, so `radar/tar_range.py` reads those by HTTP range requests: a range
+request for the first 128 KiB gives the first member and the file size, and the rest are located by
 interpolating between known headers. Anything unexpected falls back to the
 whole archive, with one warning per run of fallbacks.
 

@@ -10,7 +10,7 @@ garden after three dry days".
 | Attribute | Meaning |
 |-----------|---------|
 | `hours_without_precipitation` | The same streak in hours; `null` until the counter has started |
-| `dry_since` | Time of the rain that last reset the counter, ISO-8601 UTC |
+| `dry_since` | The time the counter counts from, ISO-8601 UTC: the end of the hour that last reset it, or on a new install the start of the dry period DWD's data shows |
 
 A new install does not start at zero: the counter starts as far back as
 DWD's gauge-adjusted analyses prove it was dry, up to 24 hours (when
@@ -30,7 +30,7 @@ Two options decide it:
 | Source | Updated | A reset shows | Notes |
 |--------|---------|---------------|-------|
 | **Gauge-adjusted hour (RW)** | every 10 min | 30 to 40 min after the rain | Corrected with rain gauges, more accurate. Default for new installs |
-| **Precipitation last 60 min (RS)** | every 5 min | within 5 to 10 min | Radar only, noisier; its rolling hour keeps resetting the counter for up to an hour after the rain stops |
+| **Precipitation last 60 min (RS)** | every 5 min | a few minutes after the rain | Radar only, noisier; its rolling hour keeps resetting the counter for up to an hour after the rain stops |
 
 With RW, the counter follows DWD's reruns of the analysis every 10 minutes,
 each covering the hour ending then. A reset moves `dry_since` to the end of
