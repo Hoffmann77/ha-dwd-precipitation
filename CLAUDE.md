@@ -292,8 +292,9 @@ for `Precipitation yesterday`. They are separate entities rather
 than one with a source option, because switching the source would make a
 `TOTAL_INCREASING` sensor jump (ADR 0005).
 
-**Backfill.** Missed releases (`missed_releases`, at most `max_backfill`: 48
-for RW, 7 for `sf_2350`, what OpenData keeps) go on a `pending` list stored in
+**Backfill.** Missed releases (`missed_releases`, at most `max_backfill`: 47
+for RW, 1 for `sf_2350`, what OpenData keeps besides the current release: 48 h
+of RW runs and 48 hourly SF files) go on a `pending` list stored in
 the restore data with the total. `_async_backfill` fetches them oldest first
 and removes each only once it has been added (or turned out to hold no data
 for the cell), so a restart resumes the list (`_start_backfill` at startup)
