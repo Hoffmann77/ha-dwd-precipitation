@@ -22,8 +22,10 @@ Files are named for what they test, so the pattern says where a test belongs:
 
 - **`parser/`** — the HA-free code, no HA, no network: `test_<module>.py` for
   each module of `radar/` and for `release_grid`, `utils` and the like, plus
-  `test_translations.py` (en/de key parity) and `test_docs.py` (the README
-  names the old id of every renamed entity, from `entity_ids.py`).
+  `test_translations.py` (en/de key parity), `test_docs.py` (the README
+  names the old id of every renamed entity, from `entity_ids.py`) and
+  `test_website.py` (every page of the docs site has an English and a German
+  version).
 - **`integration/`** — the HA-facing layer (imports `homeassistant`):
   `test_product_<key>.py` for each product's fetch and parse (shared helpers in
   `product_helpers.py`), `test_products.py` for what every product shares, and

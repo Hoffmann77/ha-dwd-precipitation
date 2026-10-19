@@ -497,6 +497,34 @@ importing probatio ourselves would break every HA from before that alias.
 `reportIncompatibleVariableOverride` is off: HA entities override
 `entity_description` and their cached properties by design.
 
+## Documentation site
+
+`website/` is a Docusaurus site, published to GitHub Pages
+(`https://hoffmann77.github.io/ha-dwd-precipitation/`) by `docs-deploy.yml`
+when a release is published, so it describes the latest release; no
+versioned docs. `docs-build.yml` builds it on PRs, and the build throws on a
+broken link, anchor or Markdown link. Three docs instances, each with its own
+sidebar file:
+
+- `website/docs/` — user docs, at the site root (no homepage: `intro.md` is `/`)
+- `website/development/` — contributor docs, at `/development`
+- `docs/adr/` — the ADRs, read in place at `/development/adr`, number kept in
+  the URL (`numberPrefixParser: false`); a new record joins the sidebar by
+  file name
+
+**Every page exists in English and German**, ADRs included:
+`website/i18n/de/docusaurus-plugin-content-docs{,-development,-adr}/current/`
+mirrors the three folders file for file, and `tests/parser/test_website.py`
+fails on a page missing on either side. So a change to a page, or a new ADR,
+comes with its German counterpart. UI labels (navbar, footer, sidebar
+categories) are in the JSON files next to them (`npm run write-translations`
+adds new keys); `code.json` keeps only overrides of the theme's own German.
+`.md` is CommonMark and `.mdx` MDX (`markdown.format: 'detect'`).
+
+npm, Node from `website/.nvmrc`; Renovate groups the `@docusaurus/*`
+packages. Locally: `npm ci`, then `npm start` (or `npm run start:de`) in
+`website/`; search only works in a build (`npm run build && npm run serve`).
+
 ## RS product specifics
 
 - **URL**: `https://opendata.dwd.de/weather/radar/composite/rs/composite_rs_YYYYMMDD_HHMM.tar`
