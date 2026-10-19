@@ -141,14 +141,25 @@ def test_split_fetchable_gives_up_beyond_the_backfill_window():
 
 
 def test_split_fetchable_counts_local_days_across_dst():
-    """sf_2350's window is 7 releases even when one of the days has 25 hours."""
-    current = dt_util.as_utc(datetime(2026, 10, 27, 23, 50, tzinfo=BERLIN))
-    week = dt_util.as_utc(datetime(2026, 10, 20, 23, 50, tzinfo=BERLIN))
-    eight_days = dt_util.as_utc(datetime(2026, 10, 19, 23, 50, tzinfo=BERLIN))
+    """sf_2350's window is one release even when that day has 25 hours."""
+    current = dt_util.as_utc(datetime(2026, 10, 25, 23, 50, tzinfo=BERLIN))
+    day_before = dt_util.as_utc(datetime(2026, 10, 24, 23, 50, tzinfo=BERLIN))
+    two_days = dt_util.as_utc(datetime(2026, 10, 23, 23, 50, tzinfo=BERLIN))
+    assert current - day_before == timedelta(hours=25)
 
-    keep, drop = split_fetchable(SF_2350_GRID, [week, eight_days], current, 7)
-    assert keep == [week]
-    assert drop == [eight_days]
+    keep, drop = split_fetchable(
+        SF_2350_GRID, [day_before, two_days], current, SF_DESC.max_backfill
+    )
+    assert keep == [day_before]
+    assert drop == [two_days]
+
+
+def test_backfill_windows_are_what_opendata_keeps():
+    """Counted on the 2026-10-19 listing: 288 RW runs (48 h, so 48 at :00)
+    and 48 SF files (2 at 23:50 local). The window is the releases before the
+    current one, so asking one further back is a 404 every round."""
+    assert RW_DESC.max_backfill == 48 - 1
+    assert SF_DESC.max_backfill == 2 - 1
 
 
 def test_missed_releases_hourly():

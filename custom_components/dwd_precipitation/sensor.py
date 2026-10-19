@@ -115,7 +115,8 @@ class PrecipitationTotalEntityDescription(SensorEntityDescription):
     """Provide a description for a cumulative precipitation total."""
 
     product_key: str
-    # How many missed releases to fetch after a gap (see missed_releases).
+    # How many releases before the current one OpenData still keeps, i.e. how
+    # far back a missed one can be fetched (see missed_releases).
     max_backfill: int
 
 
@@ -129,7 +130,9 @@ TOTAL_SENSORS = (
         translation_key="precipitation_total",
         **_MM_TOTAL,
         product_key="rw",
-        max_backfill=48,
+        # DWD keeps 48 h of RW runs, ten minutes apart: the current :00 run
+        # and the 47 before it.
+        max_backfill=47,
     ),
     PrecipitationTotalEntityDescription(
         key="radolan_sf_yesterday_total",
@@ -140,7 +143,9 @@ TOTAL_SENSORS = (
         entity_registry_enabled_default=False,
         **_MM_TOTAL,
         product_key="sf_2350",
-        max_backfill=7,
+        # DWD keeps 48 SF files, one an hour: two of them are 23:50 runs, the
+        # current one and the one before it.
+        max_backfill=1,
     ),
 )
 
@@ -757,7 +762,7 @@ class PrecipitationTotalSensor(DwdCoordinatorEntity, RestoreEntity, SensorEntity
         finally:
             self._backfilling = False
             # One state write per round, not one per release: a restart after
-            # two days down backfills 48 releases.
+            # two days down backfills 47 releases.
             if added:
                 self.async_write_ha_state()
 
