@@ -639,10 +639,10 @@ async def test_restart_checks_the_rw_hours_the_dry_streak_did_not_watch(
         await hass.async_block_till_done()
         fetched = RadolanRW._fetch_and_parse.call_args_list
 
-    # RW's live 12:00, then the hours overlapping 08:30-11:00, which RS's
-    # 12:00 reading (11:00-12:00) does not cover.
+    # RW's live 12:00, then, newest first, the hours overlapping 08:30-11:00,
+    # which RS's 12:00 reading (11:00-12:00) does not cover.
     assert [c.args[0] for c in fetched] == [
-        datetime(2025, 6, 1, h, 0, tzinfo=timezone.utc) for h in (12, 9, 10, 11)
+        datetime(2025, 6, 1, h, 0, tzinfo=timezone.utc) for h in (12, 11, 10, 9)
     ]
     sensor = _dry_streak_sensor(hass)
     assert sensor._dry_since == restored.dry_since

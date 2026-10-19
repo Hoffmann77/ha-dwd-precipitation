@@ -293,8 +293,9 @@ for `Precipitation yesterday`. They are separate entities rather
 than one with a source option, because switching the source would make a
 `TOTAL_INCREASING` sensor jump (ADR 0005).
 
-**Backfill.** Missed releases (`missed_releases`, at most `max_backfill`: 48
-for RW, 7 for `sf_2350`, what OpenData keeps) go on a `pending` list stored in
+**Backfill.** Missed releases (`missed_releases`, at most `max_backfill`: 47
+for RW, 1 for `sf_2350`, what OpenData keeps besides the current release: 48 h
+of RW runs and 48 hourly SF files) go on a `pending` list stored in
 the restore data with the total. `_async_backfill` fetches them oldest first
 and removes each only once it has been added (or turned out to hold no data
 for the cell), so a restart resumes the list (`_start_backfill` at startup)
@@ -560,10 +561,12 @@ A new reading whose hour starts after it left time unwatched (no data for the
 cell, DWD failing, HA down: `watched_until` is restored with `dry_since`), and
 `unwatched_hours` lists the RW clock hours overlapping that stretch. They go
 on `gap_hours`, stored with the anchor, and are fetched in the background with
-`rw.async_fetch_release`, oldest first, within `RW_KEPT` (48, shared with the
-RW total); an hour at or above the threshold moves `dry_since` to its end,
-never back. An hour leaves the list once fetched (dry, wet or without data);
-the first failure ends the round, and only a *new* reading retries, so a
+`rw.async_fetch_release`, newest first, within `RW_KEPT` (47, shared with the
+RW total's `max_backfill`); an hour at or above the threshold moves
+`dry_since` to its end, never back. An hour leaves the list once fetched (dry,
+wet or without data); the first failure ends the round (newest first, so an
+hour deleted early at the old end cannot hold up the rest), and only a *new*
+reading retries, so a
 coordinator's own retries never refetch. Hours not released yet wait for a
 later reading. RW for both sources: for `rw` it is the same family the source
 reads (the :00 run of `rw_10min`). SF is not used for gaps: a 24 h total

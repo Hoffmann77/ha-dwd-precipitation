@@ -117,13 +117,14 @@ class PrecipitationTotalEntityDescription(SensorEntityDescription):
     """Provide a description for a cumulative precipitation total."""
 
     product_key: str
-    # How many missed releases to fetch after a gap (see missed_releases).
+    # How many releases before the current one OpenData still keeps, i.e. how
+    # far back a missed one can be fetched (see missed_releases).
     max_backfill: int
 
 
-# How many RW releases OpenData keeps, i.e. how far back a missed one can still
-# be fetched: two days of clock hours.
-RW_KEPT = 48
+# How many RW releases before the current one OpenData keeps: 48 h of runs,
+# ten minutes apart, so the current :00 run and the 47 before it.
+RW_KEPT = 47
 
 
 # Two totals over the same rain: RW counts each hour as soon as it is analysed,
@@ -147,7 +148,9 @@ TOTAL_SENSORS = (
         entity_registry_enabled_default=False,
         **_MM_TOTAL,
         product_key="sf_2350",
-        max_backfill=7,
+        # DWD keeps 48 SF files, one an hour: two of them are 23:50 runs, the
+        # current one and the one before it.
+        max_backfill=1,
     ),
 )
 
@@ -764,7 +767,7 @@ class PrecipitationTotalSensor(DwdCoordinatorEntity, RestoreEntity, SensorEntity
         finally:
             self._backfilling = False
             # One state write per round, not one per release: a restart after
-            # two days down backfills 48 releases.
+            # two days down backfills 47 releases.
             if added:
                 self.async_write_ha_state()
 
@@ -973,19 +976,21 @@ class TimespanWithoutPrecipitationSensor(
     async def _async_fill_gap(
         self, rw: BaseProductUpdateCoordinator, latest: datetime
     ) -> None:
-        """Fetch the released gap hours, oldest first, and reset on rain.
+        """Fetch the released gap hours, newest first, and reset on rain.
 
         An hour leaves the list once fetched, whether it reached the threshold,
         stayed below it or held no data for the location. The first failed
         fetch ends the round, so an RW outage costs one request per new
-        reading; the next new reading retries. The state is written once per
-        round, and only if the anchor moved.
+        reading; the next new reading retries. Newest first, so an hour DWD
+        deleted a little early at the old end of the window cannot hold up
+        the rest. The state is written once per round, and only if the
+        anchor moved.
 
         """
         moved = False
         try:
             while todo := [hour for hour in self._gap_hours if hour <= latest]:
-                hour = todo[0]
+                hour = todo[-1]
                 try:
                     fetched = await rw.async_fetch_release(hour)
                 except Exception as err:  # noqa: BLE001 - retried next reading

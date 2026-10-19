@@ -33,9 +33,10 @@ DWD's archive (CDC `RW-hdf5-261013`, `SF-hdf5-261013`) for that day shows:
 - `watched_until` and the hours still to fetch are stored with the anchor, so
   a downtime is a gap like any other, and a restart resumes the check. The
   startup correction from RW/SF stays as it was.
-- Only RW, as far back as OpenData keeps it (48 hours plus the latest, the
-  same window as the RW total's backfill). An hour leaves the list once
-  fetched; the first failure ends the round, and only a new reading retries.
+- Only RW, as far back as OpenData keeps it (the latest hour and the 47
+  before it, the same window as the RW total's backfill). Newest first; an
+  hour leaves the list once fetched; the first failure ends the round, and
+  only a new reading retries.
 
 ## Alternatives turned down
 

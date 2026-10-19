@@ -477,7 +477,7 @@ async def test_rain_in_a_gap_resets_to_the_end_of_its_rw_hour(make_gap_sensor):
     assert len(tasks) == 1
     await tasks[0]
 
-    assert _fetched(sensor) == GAP_HOURS
+    assert _fetched(sensor) == GAP_HOURS[::-1]  # newest first
     assert _anchor(sensor) == rain
     assert sensor._gap_hours == []
     assert sensor._filling is False
@@ -506,14 +506,14 @@ async def test_rw_never_moves_the_anchor_back(make_gap_sensor):
 
 @pytest.mark.asyncio
 async def test_failed_fetch_ends_the_round_and_waits_for_a_new_reading(make_gap_sensor):
-    sensor, tasks = make_gap_sensor(rw={GAP_HOURS[1]: OSError("DWD down")})
+    sensor, tasks = make_gap_sensor(rw={GAP_HOURS[-2]: OSError("DWD down")})
     report(sensor, 0.0, BACK)
     await tasks[0]
 
     # One failure ends the round: the rest are kept, nothing more is asked.
-    assert _fetched(sensor) == GAP_HOURS[:2]
-    assert sensor._gap_hours == GAP_HOURS[1:]
-    assert sensor.extra_restore_state_data.gap_hours == GAP_HOURS[1:]
+    assert _fetched(sensor) == GAP_HOURS[:-3:-1]
+    assert sensor._gap_hours == GAP_HOURS[:-1]
+    assert sensor.extra_restore_state_data.gap_hours == GAP_HOURS[:-1]
 
     # A coordinator update without a new reading retries nothing...
     report(sensor, 0.0, BACK)
@@ -536,7 +536,7 @@ async def test_unreleased_rw_hour_waits_for_a_later_reading(make_gap_sensor, fre
     report(sensor, 0.0, datetime(2026, 10, 13, 17, 15, tzinfo=UTC))
     await tasks[0]
 
-    assert _fetched(sensor) == GAP_HOURS[:-1]
+    assert _fetched(sensor) == GAP_HOURS[-2::-1]
     assert sensor._gap_hours == GAP_HOURS[-1:]
 
     freezer.move_to(datetime(2026, 10, 13, 17, 35, tzinfo=UTC))
@@ -544,6 +544,19 @@ async def test_unreleased_rw_hour_waits_for_a_later_reading(make_gap_sensor, fre
     await tasks[1]
     assert _fetched(sensor)[-1] == GAP_HOURS[-1]
     assert sensor._gap_hours == []
+
+
+@pytest.mark.asyncio
+async def test_hour_gone_at_the_old_end_does_not_hold_up_the_rest(make_gap_sensor):
+    """DWD may delete the oldest hour minutes before the window moves on."""
+    sensor, tasks = make_gap_sensor(
+        rw={GAP_HOURS[0]: OSError("404"), GAP_HOURS[1]: 2.0}
+    )
+    report(sensor, 0.0, BACK)
+    await tasks[0]
+
+    assert _anchor(sensor) == GAP_HOURS[1]
+    assert sensor._gap_hours == GAP_HOURS[:1]
 
 
 async def test_only_one_gap_check_runs_at_a_time(make_gap_sensor):
@@ -565,11 +578,11 @@ async def test_gap_older_than_rw_on_opendata_is_given_up(make_gap_sensor, caplog
     sensor._watched_until = LAST_SEEN - timedelta(days=3)
     report(sensor, 0.0, BACK)
 
-    # The latest RW hour and the 48 before it are fetched, as for the total;
+    # The latest RW hour and the 47 before it are fetched, as for the total;
     # the older ones are logged once.
-    assert sensor._gap_hours[0] == datetime(2026, 10, 11, 17, tzinfo=UTC)
+    assert sensor._gap_hours[0] == datetime(2026, 10, 11, 18, tzinfo=UTC)
     assert sensor._gap_hours[-1] == datetime(2026, 10, 13, 17, tzinfo=UTC)
-    assert len(sensor._gap_hours) == 49
+    assert len(sensor._gap_hours) == 48
     assert "while DWD still served them" in caplog.text
     _close(tasks)
 
