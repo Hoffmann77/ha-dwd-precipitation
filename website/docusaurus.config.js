@@ -51,6 +51,9 @@ const config = {
   projectName: 'ha-dwd-precipitation',
   trailingSlash: false,
 
+  // The README's screenshots and logo, served at the site root.
+  staticDirectories: ['../docs/assets'],
+
   onBrokenLinks: 'throw',
   onBrokenAnchors: 'throw',
   onDuplicateRoutes: 'throw',
@@ -210,8 +213,9 @@ const config = {
       prism: {
         theme: prismThemes.github,
         darkTheme: prismThemes.dracula,
-        // django brings jinja2 (HA templates); yaml is in the default bundle.
-        additionalLanguages: ['django'],
+        // django brings jinja2 (HA templates) and needs markup-templating
+        // loaded before it; yaml is in the default bundle.
+        additionalLanguages: ['markup-templating', 'django'],
       },
     }),
 };

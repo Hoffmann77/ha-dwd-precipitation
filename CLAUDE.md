@@ -257,7 +257,7 @@ unlike `60 min`) because a space would change its slug for nothing.
 from the same product as `next 60 min` / `next 60–120 min`. RW is a clock hour
 (the run ending on the hour, see "RW 10-minute runs"), so it is `Precipitation
 previous hour`. No two names share a window, so none needs a source qualifier:
-radar vs. gauge-adjusted is explained in the README, not carried in names.
+radar vs. gauge-adjusted is explained in the docs, not carried in names.
 
 **Never reuse an old slug for a different value.** A rename keeps the key, so
 existing installs keep their entity ids and only see the new name; new
@@ -265,12 +265,12 @@ installs get the new slug. A new slug must not be one a released version gave
 another entity: on an old install that entity still holds it, and HA's
 "recreate entity ids" would put the new one on `_2`. `tests/entity_ids.py`
 records the released ids by key; the setup test checks new installs against
-it, and a docs test checks that the README's note for older installs names
-every renamed one.
+it, and a docs test checks that the docs' Upgrading page (English and
+German) maps every renamed one from its old id to its new one.
 
 `now` means the latest 5-minute analysis, ending at the release time:
 `Precipitation intensity now` (RV lead 0 × 12, mm/h) and `Precipitation type
-now` (HymecNG). The README states that "now" is the analysis window, which
+now` (HymecNG). The docs state that "now" is the analysis window, which
 ended 3–10 minutes before the value appears. A window total is never `now`.
 
 `Precipitation next 120 min` (RS `_060 + _120`) and `Peak intensity next 120
@@ -687,7 +687,7 @@ of the bytes (archives are 3.5-17.5 MB), an RV analysis 1-2 requests and 4-7 %.
 The `Rain events` sensor (`sensor.<device>_rain_events`, key
 `radvor_rv_rain_events`) publishes the tracker's view (schema 1) as its
 attributes, a contract with blueprints: field names and semantics in the
-README section "Rain events". `radar/rain_events.py` holds the logic;
+docs page `website/docs/entities/rain-events.md`. `radar/rain_events.py` holds the logic;
 `RainEventsTracker` (`rain_events_tracker.py`) its life in HA (store, fill,
 save policy, warnings); `RadvorRV` only hands it each adopted release in
 `_async_on_new_release` and lends it an analysis fetch and a publish

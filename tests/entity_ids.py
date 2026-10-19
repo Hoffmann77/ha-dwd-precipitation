@@ -1,9 +1,9 @@
 """Entity ids by key: what released versions gave, and what is new since.
 
 The one record of them: the setup test checks a new install against it, and
-the docs test checks that the README's note for older installs names every
-old id. Ids are the object id after ``<device>_`` (``sensor.home_<id>``).
-HA-free.
+the docs test checks that the docs' Upgrading page maps every renamed
+entity's old id to its new one. Ids are the object id after ``<device>_``
+(``sensor.home_<id>``). HA-free.
 """
 
 from __future__ import annotations
