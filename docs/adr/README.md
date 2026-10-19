@@ -20,3 +20,4 @@ one. Releases are named by their version (`2026.11.0`).
 | [0008](0008-grid-lookup-floors-from-the-outer-corner.md) | The grid lookup floors from the outer corner | 2026.10.0 |
 | [0009](0009-full-rolling-series-from-rv.md) | The full rolling-hour series is built from RV, not RS | 2026.11.0 |
 | [0010](0010-cells-on-the-grid-each-file-describes.md) | Each product reads its cell on the grid its file describes | 2026.11.0 |
+| [0011](0011-dry-streak-gaps-checked-against-rw.md) | Gaps in the dry-streak source are checked against RW's hours | 2026.11.0 |
