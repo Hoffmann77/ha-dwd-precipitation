@@ -11,6 +11,7 @@ import pytest
 
 from radar.grid import OutsideGrid, UnsupportedGrid
 from radar.odim import (
+    _parse_nodes,
     read_odim_classification,
     read_odim_classification_at,
     read_odim_composite,
@@ -302,3 +303,55 @@ def test_real_hymecng_cell(kind):
     )
     assert value == cell["value"]
     assert (int(moment_what["undetect"]), int(moment_what["nodata"])) == (254, 255)
+
+
+# --- the radars a composite was built from (/how nodes) ----------------------
+
+# The 17 German radars, as DWD lists them in /how nodes.
+_DWD_NODES = (
+    "deasb", "deboo", "dedrs", "deeis", "deess", "defbg", "defld", "dehnr",
+    "deisn", "demem", "deneu", "denhb", "deoft", "depro", "deros", "detur", "deumd",
+)
+
+
+def _with_nodes(buf, nodes):
+    """Return ``buf`` with a /how group listing ``nodes`` the way DWD does."""
+    with h5py.File(buf, "r+") as f:
+        f.create_group("how").attrs["nodes"] = np.bytes_(
+            ",".join(f"'{node}'" for node in nodes).encode()
+        )
+    buf.seek(0)
+    return buf
+
+
+def test_parse_nodes_reads_dwds_quoted_list():
+    assert _parse_nodes("'deasb','deboo', 'depro'") == ("deasb", "deboo", "depro")
+    assert _parse_nodes("") == ()
+
+
+def test_cell_readers_name_the_radars():
+    """Both cell readers add the file's /how nodes to the dataset's what."""
+    location = DE1200_WHERE["LL_lat"] + 0.01, DE1200_WHERE["LL_lon"] + 0.01
+    _, what = read_odim_composite_at(_with_nodes(make_odim_h5(), ("deboo", "depro")), *location)
+    assert what["nodes"] == ("deboo", "depro")
+
+    _, what, _ = read_odim_classification_at(
+        _with_nodes(make_hymecng_h5(), ("deasb",)), *location
+    )
+    assert what["nodes"] == ("deasb",)
+
+
+def test_a_file_without_nodes_names_no_radars():
+    location = DE1200_WHERE["LL_lat"] + 0.01, DE1200_WHERE["LL_lon"] + 0.01
+    _, what = read_odim_composite_at(make_odim_h5(), *location)
+    assert "nodes" not in what
+
+
+@pytest.mark.parametrize("product", ["rv", "hymecng"])
+def test_real_files_name_their_radars(product):
+    """DWD's own files list the radars they were built from."""
+    content, _ = real_member(product)
+    cell = real_cells(product)["wet"]
+    reader = read_odim_composite_at if product == "rv" else read_odim_classification_at
+    what = reader(io.BytesIO(content), cell["lat"], cell["lon"])[1]
+    assert sorted(what["nodes"]) == sorted(_DWD_NODES)

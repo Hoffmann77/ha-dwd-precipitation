@@ -198,6 +198,18 @@ that from turning into noise:
   refreshes all products concurrently and raises `ConfigEntryNotReady` only if
   *every* one fails. A single dead product (DWD retiring one, say) leaves its
   own entities unavailable and logs a warning, while the rest keep working.
+- **A cell without data is logged on the change, not per release.** A radar
+  dropping out of DWD's composite turns the location's cell into nodata while
+  every fetch still succeeds, so nothing above would log it. Each product names
+  the sub-keys whose `None` means "no data here" (`COVERAGE_KEYS`: RS's three
+  hours, RV's analysis `amount_000`, HymecNG's type, RADOLAN's `amount`), and
+  `_track_coverage` compares each adopted release with the last: one WARNING
+  when data goes (naming the radars missing from the file's `/how` `nodes`,
+  `ProductMetadata.radars`, against the last release with data), one INFO when
+  it is back, nothing in between. No data in the *first* release read gets its
+  own WARNING, since nothing yet tells an outage from a location the product
+  never covers. The state is in memory, so a restart or reload during an
+  outage logs that first-release warning again.
 
 `_describe_fetch_error()` writes the message a user actually sees. HA logs it
 once per run of failures, so it is the only explanation they get: it must name
@@ -324,7 +336,9 @@ once released, since renaming one orphans the user's entity.
 2. Set `PRODUCT_KEY`, `PRODUCT_LABEL`, `RELEASE_INTERVAL`, `RELEASE_DELAY`,
    `RELEASE_OFFSET` and `OVERDUE_GRACE` (spelled out even when it is just
    `DEFAULT_OVERDUE_GRACE` — a test enforces this), plus
-   `MAX_FAST_POLL_INTERVAL` if the default does not fit
+   `MAX_FAST_POLL_INTERVAL` if the default does not fit, and `COVERAGE_KEYS`
+   (the sub-keys that are `None` without data for the cell; a test checks
+   every product has them)
 3. Add its URL pattern to `radar/urls.py` (`_get_url` derives the URL from
    `PRODUCT_KEY`). A `WholeFileProduct` implements the blocking
    `_parse(content, ts)`; the base downloads the file and runs `_parse` in the
@@ -452,7 +466,11 @@ single whole-grid chunk, so reading fewer *cells* cannot save more) and
 indices returned unscaled, with the `nodata`/`undetect` sentinels preserved so
 the caller can tell "outside coverage" from "dry"), with
 `read_odim_classification_at` as its one-cell form, which HymecNG uses. Both
-cell readers find the cell on the file's own grid (see "Grid lookup").
+cell readers find the cell on the file's own grid (see "Grid lookup"). Every
+reader adds the file's `/how` `nodes` (the radars the composite was built
+from, as a tuple) to the dataset `what` it returns, as `nodes`; RADOLAN files
+list them too. `_odim_metadata` turns it into `ProductMetadata.radars`, which
+no attribute shows: it only names the radars a lost cell is missing.
 `read_odim_grid` and the whole-grid readers have no runtime caller: they are
 the oracle for the parser, reference and live tiers and for `scripts/`.
 

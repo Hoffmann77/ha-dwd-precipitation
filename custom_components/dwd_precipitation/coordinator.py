@@ -111,6 +111,11 @@ def _format_duration(delta: timedelta) -> str:
     return f"{hours} h" if minutes == 0 else f"{hours} h {minutes} min"
 
 
+def _format_release(release: datetime) -> str:
+    """Return a release time as the log messages state it: "2026-10-14 07:15 UTC"."""
+    return release.astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC")
+
+
 def _describe_fetch_error(
     err: Exception, release: datetime, next_retry: timedelta
 ) -> str:
@@ -125,7 +130,7 @@ def _describe_fetch_error(
     the next retry is. Plain ASCII, so every log viewer shows it correctly.
 
     """
-    release_str = release.strftime("%Y-%m-%d %H:%M UTC")
+    release_str = _format_release(release)
 
     if isinstance(err, aiohttp.ClientResponseError):
         if err.status == HTTPStatus.NOT_FOUND:
@@ -165,6 +170,53 @@ def _describe_fetch_error(
     return f"{cause} Retrying in {_format_duration(next_retry)}."
 
 
+def _describe_coverage_loss(
+    label: str,
+    release: datetime,
+    missing: list[str] | None,
+) -> str:
+    """Return the warning for a location whose cell has just lost its data.
+
+    ``label`` names the product (and entry), ``release`` is the first release
+    without data, ``missing`` the radars that have dropped out of DWD's
+    composite since the last release with data (None or empty when that cannot
+    be told). Every fetch still succeeds in this case, so without it the
+    sensors would turn "unknown" with nothing in the log. Plain ASCII, like
+    every message a user reads.
+
+    """
+    radars = (
+        f" (radar(s) missing from the DWD composite: {', '.join(missing)})"
+        if missing
+        else ""
+    )
+    return (
+        f"{label}: no radar data for your location in the "
+        f"{_format_release(release)} release{radars}. The location is currently "
+        "outside DWD's radar coverage; this is a DWD outage, not a configuration "
+        'problem. The affected sensors show "unknown" until DWD restores '
+        "coverage, and recover on their own."
+    )
+
+
+def _describe_no_coverage_at_start(label: str, release: datetime) -> str:
+    """Return the warning for a location without data in the first release read.
+
+    ``label`` names the product (and entry), ``release`` is the release. With
+    nothing read before it, a location that this product never covers cannot be
+    told from a radar outage, so the message names both and is not repeated
+    until data arrives.
+
+    """
+    return (
+        f"{label}: no radar data for your location in the "
+        f"{_format_release(release)} release, the first one read. Either the "
+        "location is outside the area this product covers, or a DWD radar is "
+        'out. The affected sensors show "unknown" while this lasts; this is '
+        "logged again only when data arrives."
+    )
+
+
 @dataclass
 class ProductMetadata:
     """Parsed per-product metadata, ready for HA state attributes."""
@@ -182,6 +234,10 @@ class ProductMetadata:
     # point per 5-minute lead, each a dict of {"lead", "start", "end", "value"}
     # where value is a 60-minute total (mm).
     rolling_1h: list[dict[str, Any]] | None = None
+    # The radars the composite was built from (its ODIM /how nodes, e.g.
+    # ("deasb", "deboo", ...)), or None when the file does not say. Not shown
+    # to the user: it names the radars missing when the location loses data.
+    radars: tuple[str, ...] | None = None
 
 
 @dataclass
@@ -258,6 +314,12 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
     # Upper bound for the fast-poll retry interval (see _fast_poll_delay).
     MAX_FAST_POLL_INTERVAL: ClassVar[timedelta] = timedelta(minutes=5)
 
+    # The sub-keys whose value is None when the file has no data for the
+    # location's cell (a radar outage, or a location outside coverage). A
+    # release where any of them is None has no data; _track_coverage logs the
+    # change. Empty: the product is not watched.
+    COVERAGE_KEYS: ClassVar[tuple[str, ...]] = ()
+
     def __init__(
         self,
         hass: HomeAssistant,
@@ -290,6 +352,10 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
         self._fast_poll_failures = 0
         self._stale_unsub = None
         self._fetch_jitter = fetch_jitter_for(entry.entry_id, self.PRODUCT_KEY)
+        # Whether the last adopted release had data for the location (None
+        # before the first), and the radars of the last one that had.
+        self._has_data: bool | None = None
+        self._radars: tuple[str, ...] | None = None
         entry.async_on_unload(self._stop_fast_polling)
         entry.async_on_unload(self._cancel_stale_check)
 
@@ -701,6 +767,58 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
     # ------------------------------------------------------------------
 
     @callback
+    def _track_coverage(
+        self,
+        release: datetime,
+        data: dict[str, Any],
+        metadata: dict[str, ProductMetadata | None],
+    ) -> None:
+        """Log when the location loses its data, and when it gets it back.
+
+        Called for every adopted release. A cell without data (a COVERAGE_KEYS
+        value of None) does not fail the fetch, so the sensors would turn
+        "unknown" with nothing in the log. Logged on the change only: one
+        WARNING when the data goes, naming the radars that left the composite
+        since the last release with data, and one INFO when it is back. A
+        location without data in the first release read gets its own WARNING,
+        since nothing before it tells an outage from a location this product
+        never covers.
+
+        """
+        if not self.COVERAGE_KEYS:
+            return
+
+        has_data = all(data.get(key) is not None for key in self.COVERAGE_KEYS)
+        radars = next(
+            (
+                meta.radars
+                for key in self.COVERAGE_KEYS
+                if (meta := metadata.get(key)) is not None and meta.radars is not None
+            ),
+            None,
+        )
+        had_data, self._has_data = self._has_data, has_data
+
+        if has_data:
+            self._radars = radars
+            if had_data is False:
+                _LOGGER.info(
+                    "%s: radar data for your location again from the %s "
+                    "release; the affected sensors report values again",
+                    self.name,
+                    _format_release(release),
+                )
+        elif had_data is None:
+            _LOGGER.warning("%s", _describe_no_coverage_at_start(self.name, release))
+        elif had_data:
+            missing = (
+                sorted(set(self._radars) - set(radars))
+                if self._radars is not None and radars is not None
+                else None
+            )
+            _LOGGER.warning("%s", _describe_coverage_loss(self.name, release, missing))
+
+    @callback
     def _record_success(self, release: datetime) -> None:
         """Adopt a freshly fetched release as the cached one.
 
@@ -757,6 +875,7 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
             # Data is still fresh enough — retry silently
             return self.data
 
+        self._track_coverage(latest_release, data, metadata)
         await self._async_on_new_release(latest_release, data, metadata)
         self._record_success(latest_release)
 
