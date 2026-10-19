@@ -73,7 +73,18 @@ already translate.
 The German pages use the German entity names from
 `custom_components/dwd_precipitation/translations/de.json`, since that is what
 Home Assistant shows in German. Entity ids are the same in both languages:
-Home Assistant builds them from the English name.
+Home Assistant builds them from the English name. They address the reader
+with "du", as Home Assistant's German UI does.
+
+German headings carry the id of the English heading they translate, so that
+links to an anchor work in both languages:
+
+```md
+## Quelle des Trockenzählers {#dry-streak-source}
+```
+
+The id is the slug Docusaurus generates from the English heading. A missing
+or wrong id on a heading that is linked to fails the build.
 
 ## Publishing
 

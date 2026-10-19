@@ -516,7 +516,10 @@ sidebar file:
 `website/i18n/de/docusaurus-plugin-content-docs{,-development,-adr}/current/`
 mirrors the three folders file for file, and `tests/parser/test_website.py`
 fails on a page missing on either side. So a change to a page, or a new ADR,
-comes with its German counterpart. UI labels (navbar, footer, sidebar
+comes with its German counterpart. German pages say "du", use the entity
+names from `translations/de.json`, and give every heading the id of the
+English heading it translates (`## Quelle {#dry-streak-source}`), so anchor
+links work in both languages. UI labels (navbar, footer, sidebar
 categories) are in the JSON files next to them (`npm run write-translations`
 adds new keys); `code.json` keeps only overrides of the theme's own German.
 `.md` is CommonMark and `.mdx` MDX (`markdown.format: 'detect'`).
