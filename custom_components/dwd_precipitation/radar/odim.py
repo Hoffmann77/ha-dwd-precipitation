@@ -71,19 +71,48 @@ def _require_plain_dataset(dset, expected_shape=None):
     return dset
 
 
+def _parse_nodes(value) -> tuple[str, ...]:
+    """Return the radar names of an ODIM ``nodes`` attribute.
+
+    DWD writes them as one quoted, comma-separated string,
+    "'deasb','deboo',...,'depro',..."; this gives ("deasb", "deboo", ...), in
+    the file's order.
+
+    """
+    names = (part.strip().strip("'\"").strip() for part in str(value).split(","))
+    return tuple(name for name in names if name)
+
+
+def _file_nodes(hf) -> tuple[str, ...] | None:
+    """Return the radars the open composite was built from (its /how nodes).
+
+    None when the file does not say. A radar that drops out of DWD's composite
+    drops out of this list, which is how a lost cell is put down to it.
+
+    """
+    if "how" not in hf:
+        return None
+    nodes = _resolve_hard(hf, "how").attrs.get("nodes")
+    return None if nodes is None else _parse_nodes(_normalise_attr_value(nodes))
+
+
 def _open_composite(hf, dataset: str, moment: str, expected_shape):
     """Return a composite's payload dataset and the attributes describing it.
 
     ODIM_H5 keeps each grid in ``<dataset>/<moment>/data`` ("dataset1/data1" in
     DWD's files). Opens it with the hardening checks, along with the dataset's
     ``what`` group (validity window, product) and the moment's (gain, offset,
-    nodata), both as plain dicts. The payload is not read yet.
+    nodata), both as plain dicts. The radars the composite was built from (the
+    file's /how ``nodes``, see _file_nodes) are added to the dataset's dict as
+    ``nodes`` when the file lists them. The payload is not read yet.
 
     """
     dataset_what = {
         k: _normalise_attr_value(v)
         for k, v in _resolve_hard(hf, f"{dataset}/what").attrs.items()
     }
+    if (nodes := _file_nodes(hf)) is not None:
+        dataset_what["nodes"] = nodes
     what = {
         k: _normalise_attr_value(v)
         for k, v in _resolve_hard(hf, f"{dataset}/{moment}/what").attrs.items()
@@ -163,7 +192,7 @@ def read_odim_composite(
     """Read a whole Cartesian ODIM_H5 composite, in mm.
 
     Returns the float32 grid (NaN for no data, 0.0 for undetect) and its
-    /dataset/what attributes, under the same untrusted-file checks as the cell
+    /dataset/what attributes (with the file's radar ``nodes``), under the same untrusted-file checks as the cell
     reader. No runtime caller: the oracle the test tiers and scripts/ compare
     the cell reader against.
 
@@ -186,8 +215,8 @@ def read_odim_composite_at(
 
     What every amount product (RS, RV, RW, SF) reads per release. Returns the
     cell's value in mm, the value read_odim_composite would hold there (NaN for
-    no data), and the dataset's ``what`` attributes (validity window, product).
-    The cell is found on the file's own grid. libhdf5 still inflates the whole
+    no data), and the dataset's ``what`` attributes (validity window, product,
+    and the radars the composite was built from as ``nodes``). The cell is found on the file's own grid. libhdf5 still inflates the whole
     grid; reading one cell saves scaling and masking 1.3 million of them.
 
     """
@@ -206,8 +235,8 @@ def read_odim_classification(
     """Read a whole classification composite (HymecNG), unscaled.
 
     The cells are precipitation-type class indices (0 no precipitation, 3 rain,
-    7 snow, ...), returned as stored, together with the dataset's ``what`` and
-    the moment's ``what``, which says which values mean "no data" and "nothing
+    7 snow, ...), returned as stored, together with the dataset's ``what``
+    (with the file's radar ``nodes``) and the moment's ``what``, which says which values mean "no data" and "nothing
     detected". For the test tiers; HymecNG reads one cell with
     read_odim_classification_at.
 
@@ -231,8 +260,8 @@ def read_odim_classification_at(
     """Read the class index of the cell holding (lat, lon).
 
     From a classification composite (HymecNG), on the file's own grid. Returns
-    the index as an int, the dataset's ``what`` and the moment's ``what``,
-    which says which values mean "no data" and "nothing detected".
+    the index as an int, the dataset's ``what`` (with the file's radar
+    ``nodes``) and the moment's ``what``, which says which values mean "no data" and "nothing detected".
 
     """
     with h5py.File(fileobj, "r") as hf:

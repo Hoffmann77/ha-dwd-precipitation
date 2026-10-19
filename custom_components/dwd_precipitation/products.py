@@ -140,10 +140,10 @@ def _odim_window(what: dict) -> tuple[datetime | None, datetime | None]:
 def _odim_metadata(what: dict, lead: int | None = None) -> ProductMetadata:
     """Return the metadata of one ODIM grid from its /dataset/what.
 
-    The product name, the release (source timestamp), the lead and the validity
-    window. The window ends at the release time plus ``lead``, so the release
-    is the window end minus the lead; without a lead (RADOLAN, HymecNG) it is
-    the window end.
+    The product name, the release (source timestamp), the lead, the validity
+    window and the radars the composite was built from. The window ends at the
+    release time plus ``lead``, so the release is the window end minus the
+    lead; without a lead (RADOLAN, HymecNG) it is the window end.
 
     """
     data_start, data_end = _odim_window(what)
@@ -155,6 +155,7 @@ def _odim_metadata(what: dict, lead: int | None = None) -> ProductMetadata:
         lead_time_minutes=lead,
         data_start=data_start,
         data_end=data_end,
+        radars=what.get("nodes"),
     )
 
 
@@ -197,6 +198,7 @@ def _peak_hour_payload(
         data_start=start,
         data_end=end,
         rolling_1h=rolling_1h,
+        radars=base.radars if base else None,
     )
 
 
@@ -224,6 +226,7 @@ def _next_120(
         lead_time_minutes=120,
         data_start=meta1.data_start,
         data_end=meta2.data_end,
+        radars=meta1.radars,
     )
 
 
@@ -389,6 +392,8 @@ class RadvorRS(RadvorProduct):
 
     PRODUCT_LABEL = "RS precipitation nowcast"
 
+    COVERAGE_KEYS = (KEY_LAST_60, KEY_NEXT_60, KEY_NEXT_60_120)
+
     RELEASE_INTERVAL = timedelta(minutes=5)
 
     RELEASE_DELAY = timedelta(minutes=4, seconds=10)
@@ -446,6 +451,7 @@ class _RvSeries:
     starts: list[datetime | None]
     ends: list[datetime | None]
     base: datetime | None  # T, the end of the analysis window (lead 0)
+    radars: tuple[str, ...] | None = None  # the analysis's radar nodes
 
     @classmethod
     def from_cells(cls, cells: dict[int, tuple[float | None, dict] | None]) -> _RvSeries:
@@ -453,7 +459,7 @@ class _RvSeries:
 
         Amounts are rounded to the ODIM resolution (0.001 mm); a lead without
         data keeps None and no window. The release time T is taken from the
-        analysis's window end.
+        analysis's window end, the radars from its nodes.
 
         """
         values: list[float | None] = []
@@ -465,7 +471,9 @@ class _RvSeries:
             values.append(round_mm(cell[0]) if cell else None)
             starts.append(start)
             ends.append(end)
-        return cls(values, starts, ends, base=ends[0])
+        analysis = cells[0]
+        radars = analysis[1].get("nodes") if analysis else None
+        return cls(values, starts, ends, base=ends[0], radars=radars)
 
     def at(self, minutes: int | None) -> datetime | None:
         """Return T + ``minutes``; None without either.
@@ -498,6 +506,7 @@ class _RvSeries:
             data_start=self.starts[leads[0] // LEAD_STEP] if leads else None,
             data_end=self.ends[leads[-1] // LEAD_STEP] if leads else None,
             samples=samples,
+            radars=self.radars,
         )
 
     def samples(self) -> list[dict]:
@@ -639,6 +648,10 @@ class RadvorRV(RadvorProduct):
     PRODUCT_KEY = "rv"
 
     PRODUCT_LABEL = "RV precipitation forecast"
+
+    # The analysis: the forecast leads rarely lose a cell, since the nowcast
+    # moves data in from the neighbouring area.
+    COVERAGE_KEYS = ("amount_000",)
 
     RELEASE_INTERVAL = timedelta(minutes=5)
 
@@ -813,6 +826,8 @@ class HymecNG(WholeFileProduct):
 
     PRODUCT_LABEL = "HymecNG precipitation type"
 
+    COVERAGE_KEYS = (KEY_PRECIPITATION_TYPE,)
+
     RELEASE_INTERVAL = timedelta(minutes=5)
 
     # DWD publishes each file ~2 min after its nominal time; wait a little longer
@@ -877,6 +892,8 @@ class RadolanProduct(WholeFileProduct, ABC):
 
     # rw/rw_10min and sf/sf_2350 read the same files (small, ~30 KB).
     SHARES_FILES = True
+
+    COVERAGE_KEYS = (KEY_AMOUNT,)
 
     def _parse(self, content: bytes, ts: datetime) -> Payload:
         """Return the cell's amount (mm) and its metadata (blocking).

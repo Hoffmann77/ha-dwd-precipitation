@@ -273,9 +273,7 @@ Notes:
 
 **Sensors stay `unavailable` after setup.** Check the Home Assistant log for errors and verify that `opendata.dwd.de` is reachable from your network. If only some sensors are affected, the other DWD products keep working independently.
 
-**`Precipitation type now` shows `unknown`.** The location is outside the HymecNG radar coverage.
-
-**`Precipitation previous hour`, `last 24h` or `yesterday` shows `unknown`.** DWD's file has no data for your grid cell, usually because of a radar outage. The next file normally fills it again; the running totals skip that window.
+**A sensor shows `unknown`, and the log says there is no radar data for your location.** DWD's file has no data for your grid cell, usually because a radar has dropped out of DWD's composite; the warning names the radar(s) missing (e.g. `depro`, Prötzel near Berlin) when it can tell. This is a DWD outage, not a configuration problem: the sensors recover on their own, and the log says so once data is back. It is logged once per outage, not for every file. If it is logged right after setup and data never arrives, the location is outside the area that product covers. This applies to every product, including `Precipitation type now` and `Precipitation previous hour`, `last 24h` and `yesterday`; the running totals skip the windows without data.
 
 **Old values persist after a DWD outage.** *Show sensors as unavailable when the data is out of date* is turned off, so the last value is kept. Turn it on to have sensors report `unavailable` instead.
 
