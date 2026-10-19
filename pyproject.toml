@@ -56,7 +56,7 @@ wradlib-comparison = [
 # Lint only: ruff, nothing imported. Not in the conflicts list above, so it
 # can be synced on its own (`uv run --only-group lint ruff check`).
 lint = [
-    "ruff==0.17.0",
+    "ruff==0.17.1",
 ]
 
 [tool.ruff]
