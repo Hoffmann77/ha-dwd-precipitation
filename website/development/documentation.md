@@ -84,7 +84,8 @@ links to an anchor work in both languages:
 ```
 
 The id is the slug Docusaurus generates from the English heading. A missing
-or wrong id on a heading that is linked to fails the build.
+or wrong id fails the build as soon as a link points to the heading, and
+`tests/parser/test_website.py` checks every heading.
 
 ## Publishing
 

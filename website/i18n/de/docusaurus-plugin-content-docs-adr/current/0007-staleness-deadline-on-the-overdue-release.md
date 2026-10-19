@@ -1,38 +1,39 @@
-# 0007 — Staleness is a deadline on the overdue release
+# 0007 — Veraltung ist eine Frist ab der überfälligen Veröffentlichung
 
-:::note[Noch nicht übersetzt]
+Status: angenommen (2026.9.0)
 
-Diese Seite ist noch nicht ins Deutsche übersetzt; bis dahin steht hier die englische Fassung.
+## Kontext {#context}
 
-:::
+Solange der DWD nicht veröffentlicht, muss ein zwischengespeicherter Wert
+irgendwann nicht mehr gemeldet werden. Die erste Regel maß diese Toleranz ab
+der *zwischengespeicherten* Veröffentlichung. Damit musste sie in
+Veröffentlichungsintervallen ausgedrückt werden, und sie lief genau dann ab,
+wenn ein späterer Abruf fällig war: Der Wert wurde genau in dem Moment
+abgeschrieben, in dem der Versuch lief, der ihn hätte wiederherstellen können,
+und was zuerst geschah, hing von der Latenz der Event-Loop ab. Deshalb machte
+eine routinemäßig verspätete Datei die Sensoren leer und schrieb jedes
+einzelne Mal einen ERROR ins Protokoll.
 
-Status: accepted (2026.9.0)
+Unabhängig davon wurde `sf_2350` (23:50 Ortszeit) mit
+`async_track_utc_time_change` registriert, obwohl sein Terminraster auf der
+Ortszeit liegt. Es wurde jeden Tag um so viele Stunden zu spät abgerufen, wie
+die Zeitverschiebung beträgt — im Sommer 1,5 h, nachdem seine eigene
+Veraltungsfrist schon abgelaufen war.
 
-## Context
+## Entscheidung {#decision}
 
-A cached value has to stop being reported at some point while DWD fails to
-publish. The first rule measured that tolerance from the *cached* release,
-which forces it to be expressed in release intervals, so it expires exactly
-when some later fetch is due: the value was written off at the very instant of
-the attempt that might have restored it, and which happened first came down to
-event-loop latency. That is what made a routinely late file blank the sensors
-and log an ERROR every single time.
-
-Separately, `sf_2350` (23:50 local time) was registered with
-`async_track_utc_time_change` although its grid is on the local clock. It was
-fetched an offset's worth of hours late every day — in summer 1.5 h after its
-own staleness deadline had passed.
-
-## Decision
-
-- The deadline starts when the release *after* the cached one should have
-  been on OpenData, and runs for the product's `OVERDUE_GRACE`. It answers
-  "how long do we go on trying for a release that is already due".
-- It only collides with the fetch grid if `OVERDUE_GRACE` is a whole multiple
-  of `RELEASE_INTERVAL`; a test enforces that it is not, per product.
-- `OVERDUE_GRACE` does not scale with the interval: the hourly and daily
-  products give up on a missed release as promptly as the 5-minute ones,
-  because the question is how long DWD is given to publish.
-- A product registers its own release schedule (`async_track_releases()`), so
-  the grid and the clock it is read in are one decision: the entry point had
-  only half of it.
+- Die Frist beginnt, wenn die Veröffentlichung *nach* der
+  zwischengespeicherten auf OpenData hätte sein sollen, und läuft für das
+  `OVERDUE_GRACE` des Produkts. Sie beantwortet die Frage „wie lange versuchen
+  wir es weiter mit einer Veröffentlichung, die bereits fällig ist“.
+- Sie kollidiert nur dann mit dem Abrufraster, wenn `OVERDUE_GRACE` ein
+  ganzzahliges Vielfaches von `RELEASE_INTERVAL` ist; ein Test stellt pro
+  Produkt sicher, dass es das nicht ist.
+- `OVERDUE_GRACE` skaliert nicht mit dem Intervall: Die stündlichen und
+  täglichen Produkte geben eine verpasste Veröffentlichung genauso schnell auf
+  wie die 5-Minuten-Produkte, denn die Frage ist, wie viel Zeit der DWD zum
+  Veröffentlichen bekommt.
+- Ein Produkt registriert seinen eigenen Veröffentlichungsplan
+  (`async_track_releases()`), sodass das Terminraster und die Uhr, in der es
+  gelesen wird, eine einzige Entscheidung sind: Der Einstiegspunkt hatte nur
+  die Hälfte davon.

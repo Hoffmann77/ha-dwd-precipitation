@@ -1,38 +1,37 @@
-# 0005 — Running totals are keyed on the release, and RW backs the main one
+# 0005 — Laufende Summen zählen je Veröffentlichung, und RW speist die Hauptsumme
 
-:::note[Noch nicht übersetzt]
+Status: angenommen (2026.11.0)
 
-Diese Seite ist noch nicht ins Deutsche übersetzt; bis dahin steht hier die englische Fassung.
+## Kontext {#context}
 
-:::
+2026.10.0 lieferte zwei `TOTAL_INCREASING`-Sensoren aus, `Precipitation total
+(hourly)` aus RW und `Precipitation total (daily)` aus `sf_2350`. Die
+Statistiken von HA sehen jede Stunde eine Stunde zu spät (11:00–12:00 wird um
+~12:28 addiert). Bei der Summe aus RW rutscht deshalb nur die letzte Stunde
+eines Tages in den nächsten, während bei der täglichen Summe der Regen jedes
+Tages in den Statistiken des *nächsten* Tages landet.
 
-Status: accepted (2026.11.0)
+## Entscheidung {#decision}
 
-## Context
+- Eine Summe richtet sich nach dem Zeitstempel der Veröffentlichung, nie danach,
+  ob sich der Wert ändert: Zwei gleich nasse Stunden sind zwei
+  Veröffentlichungen, und eine doppelt gesehene Veröffentlichung wird einmal
+  gezählt.
+- RW speist `Precipitation total`, die Summe, die man verwenden sollte
+  (umbenannt von `(hourly)`, sodass neue Installationen `precipitation_total`
+  bekommen; siehe [0001](0001-entity-names-state-their-window.md)).
+- `Precipitation total daily` behält seine ID, ist aber standardmäßig
+  deaktiviert (`entity_registry_enabled_default=False`). Ihn zu entfernen würde
+  die Entitäten der Nutzer verwaisen lassen. Die Vorgabe gilt nur, wenn HA eine
+  Entität zum ersten Mal registriert; Installationen, die ihn hatten, behalten
+  ihn also aktiviert. Das Aktivieren lädt den Eintrag neu, und er beginnt bei 0,
+  wie jede neue Summe.
+- Verpasste Veröffentlichungen kommen auf eine `pending`-Liste, die mit der
+  Summe gespeichert wird, und werden erst entfernt, wenn sie addiert sind; so
+  verliert weder ein Neustart noch ein fehlgeschlagener Abruf eine davon.
 
-2026.10.0 shipped two `TOTAL_INCREASING` sensors, `Precipitation total
-(hourly)` from RW and `Precipitation total (daily)` from `sf_2350`. HA's
-statistics see each hour one hour late (11:00-12:00 is added at ~12:28), so
-RW's total only lets the last hour of a day spill into the next, while every
-day's rain in the daily one lands in the *next* day's statistics.
+## Verworfene Alternativen {#alternatives-turned-down}
 
-## Decision
-
-- A total is keyed on the release timestamp, never on the value changing: two
-  equally wet hours are two releases, and a release seen twice is counted once.
-- RW backs `Precipitation total`, the one to use (renamed from `(hourly)`, so
-  new installs get `precipitation_total`; see
-  [0001](0001-entity-names-state-their-window.md)).
-- `Precipitation total daily` keeps its id but is disabled by default
-  (`entity_registry_enabled_default=False`). Removing it would orphan users'
-  entities. The default only applies when HA first registers an entity, so
-  installs that had it keep it enabled; enabling it reloads the entry and it
-  starts from 0, like any new total.
-- Missed releases go on a `pending` list stored with the total and are
-  removed only once added, so neither a restart nor a failed fetch loses one.
-
-## Alternatives turned down
-
-- **One total with a source option.** Switching the source would make a
-  `TOTAL_INCREASING` sensor jump.
-- **Removing the daily total.** See above; it costs users their entity.
+- **Eine Summe mit einer Option für die Quelle.** Ein Wechsel der Quelle ließe
+  einen `TOTAL_INCREASING`-Sensor springen.
+- **Die tägliche Summe entfernen.** Siehe oben; es kostet Nutzer ihre Entität.

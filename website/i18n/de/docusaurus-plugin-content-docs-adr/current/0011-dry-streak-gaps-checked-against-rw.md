@@ -1,58 +1,63 @@
-# 0011 — Gaps in the dry-streak source are checked against RW's hours
+# 0011 — Lücken in der Quelle des Trockenzählers werden gegen die Stunden von RW geprüft
 
-:::note[Noch nicht übersetzt]
+Status: angenommen (2026.11.0)
 
-Diese Seite ist noch nicht ins Deutsche übersetzt; bis dahin steht hier die englische Fassung.
+## Kontext {#context}
 
-:::
+`Timespan without precipitation` wird nur bei einem Messwert ab dem
+Schwellwert zurückgesetzt; ein Messwert ohne Daten zählt daher als trocken. Am
+13. Okt. 2026 fehlte das Radar Proetzel von 11:40 bis 17:40 UTC in der
+RS-Analyse, und Berlin hatte während eines großen Regenereignisses sechs
+Stunden lang keine RS-Daten (#109, #114). Regen in einer solchen Lücke setzte
+die Trockenphase nie zurück. Regen, während HA *nicht lief*, wurde beim Start
+schon über die aktuelle RW-Stunde und die 24 Stunden von SF erfasst, aber
+nichts prüfte eine Lücke, während HA lief.
 
-Status: accepted (2026.11.0)
+Das Archiv des DWD (CDC `RW-hdf5-261013`, `SF-hdf5-261013`) zeigt für diesen
+Tag:
 
-## Context
+- RW und SF hatten während der ganzen Lücke Daten für Berlin Mitte, und jede
+  Stunde lag bei 0,0 mm; dieser Ausfall verbarg dort also kein Zurücksetzen.
+- Auch RADOLAN verlor Proetzel, aber nur in einigen Läufen: Die RW-Läufe zu
+  :00 und :30 von 11:30 bis 16:30 haben ein Loch von 3731 Zellen bis etwa
+  90 km um das Radar, das bis auf 28 km an Berlin Mitte heranreicht; einige
+  Läufe zu :10 ein kleineres; die Läufe zu :20, :40 und :50 sowie SF sind
+  vollständig. RW kann eine RS-Lücke daher dort füllen, wo seine eigenen Läufe
+  die Zelle haben, und dort nicht, wo sie sie nicht haben.
 
-`Timespan without precipitation` resets only on a reading at or above the
-threshold, so a reading without data counts as dry. On 2026-10-13 the Proetzel
-radar was missing from the RS analysis from 11:40 to 17:40 UTC, and Berlin had
-no RS data for six hours during a large rain event (#109, #114). Rain in such a
-gap never reset the streak. Rain while HA was *down* was already caught at
-startup from the current RW hour and SF's 24 hours, but nothing checked a gap
-while HA was running.
+## Entscheidung {#decision}
 
-DWD's archive (CDC `RW-hdf5-261013`, `SF-hdf5-261013`) for that day shows:
+- Der Sensor hält `watched_until` fest, das Ende der neuesten Stunde, die die
+  Quelle gemeldet hat. Beginnt die Stunde eines neuen Messwerts danach, blieb
+  Zeit unbeobachtet: Die vollen RW-Stunden, die diese Strecke überlappen
+  (`unwatched_hours`), werden im Hintergrund von OpenData abgerufen, und eine
+  davon, die den Schwellwert erreicht, verschiebt `dry_since` auf ihr Ende.
+  Eine Lücke, die kürzer ist als die Stunde der Quelle, braucht nichts, da der
+  neue Messwert sie abdeckt.
+- `watched_until` und die noch abzurufenden Stunden werden mit dem Anker
+  gespeichert. Eine Zeit, in der Home Assistant nicht lief, ist daher eine
+  Lücke wie jede andere, und ein Neustart setzt die Prüfung fort. Die
+  Korrektur beim Start aus RW/SF bleibt, wie sie war.
+- Nur RW, so weit zurück, wie OpenData es vorhält (die neueste Stunde und die
+  47 davor, dasselbe Fenster wie beim Nachholen der RW-Summe). Neueste zuerst;
+  eine Stunde verlässt die Liste, sobald sie abgerufen ist; der erste Fehler
+  beendet die Runde, und nur ein neuer Messwert löst einen erneuten Versuch
+  aus.
 
-- RW and SF had data for Berlin Mitte throughout the gap, and every hour was
-  0.0 mm, so that outage did not hide a reset there.
-- RADOLAN lost Proetzel too, but only in some runs: the :00 and :30 RW runs
-  from 11:30 to 16:30 have a hole of 3731 cells up to ~90 km around the radar,
-  reaching to 28 km from Berlin Mitte; some :10 runs a smaller one; the :20,
-  :40 and :50 runs and SF are complete. RW can therefore fill an RS gap where
-  its own runs have the cell, and has none where they do not.
+## Verworfene Alternativen {#alternatives-turned-down}
 
-## Decision
-
-- The sensor keeps `watched_until`, the end of the newest hour the source
-  reported. A new reading whose hour starts after it left time unwatched: the
-  RW clock hours overlapping that stretch (`unwatched_hours`) are fetched from
-  OpenData in the background, and one at or above the threshold moves
-  `dry_since` to its end. A gap shorter than the source's hour needs nothing,
-  since the new reading covers it.
-- `watched_until` and the hours still to fetch are stored with the anchor, so
-  a downtime is a gap like any other, and a restart resumes the check. The
-  startup correction from RW/SF stays as it was.
-- Only RW, as far back as OpenData keeps it (the latest hour and the 47
-  before it, the same window as the RW total's backfill). Newest first; an
-  hour leaves the list once fetched; the first failure ends the round, and
-  only a new reading retries.
-
-## Alternatives turned down
-
-- **RW and SF on recovery only** (the issue's proposal: run the startup
-  correction when the source returns). The current RW hour covers only the
-  last hour of a longer gap, and SF can only place rain to within a day:
-  a six-hour gap with rain in it would move `dry_since` to about 24 hours back.
-  It also mixes in a 24-hour total compared against an hourly threshold.
-- **Listening to RW's releases during the gap.** Accurate to the hour too, but
-  it needs the sensor subscribed to a second coordinator, misses the hours RW
-  itself failed to fetch, and does nothing for a downtime. Fetching the hours
-  afterwards covers all three with the mechanism the totals already use.
-- **Treating unknown as wet.** Any outage would reset a long dry streak.
+- **RW und SF nur bei Rückkehr der Quelle** (der Vorschlag im Issue: die
+  Korrektur beim Start ausführen, wenn die Quelle zurückkommt). Die aktuelle
+  RW-Stunde deckt nur die letzte Stunde einer längeren Lücke ab, und SF kann
+  Regen nur auf einen Tag genau einordnen: Eine sechsstündige Lücke mit Regen
+  darin würde `dry_since` auf etwa 24 Stunden zurück verschieben. Außerdem
+  mischt es eine 24-Stunden-Summe hinein, die mit einem stündlichen
+  Schwellwert verglichen wird.
+- **Während der Lücke auf die Veröffentlichungen von RW hören.** Ebenfalls
+  stundengenau, aber dafür müsste der Sensor einen zweiten Coordinator
+  abonnieren, er verpasst die Stunden, die RW selbst nicht abrufen konnte, und
+  hilft nicht bei einer Zeit, in der Home Assistant nicht lief. Die Stunden
+  nachträglich abzurufen deckt alle drei Fälle mit dem Mechanismus ab, den die
+  Summen schon nutzen.
+- **Unbekannt als nass behandeln.** Jeder Ausfall würde eine lange
+  Trockenphase zurücksetzen.

@@ -1,20 +1,14 @@
-# 0001 — Entity names state their window; a released id is never reused
+# 0001 — Entitätsnamen nennen ihr Zeitfenster; eine ausgelieferte ID wird nie wiederverwendet
 
-:::note[Noch nicht übersetzt]
+Status: angenommen (2026.11.0)
 
-Diese Seite ist noch nicht ins Deutsche übersetzt; bis dahin steht hier die englische Fassung.
+## Kontext {#context}
 
-:::
+HA bildet eine Entitäts-ID aus dem Slug des englischen Namens, ein Name ist
+also zugleich eine ID. Bis 2026.10.1 lauteten die Namen:
 
-Status: accepted (2026.11.0)
-
-## Context
-
-HA derives an entity id by slugifying the English name, so a name is also an
-id. Up to 2026.10.1 the names were:
-
-| key | 2026.10.1 name | id |
-|-----|----------------|----|
+| Schlüssel | Name in 2026.10.1 | ID |
+|-----------|-------------------|----|
 | `radvor_rs_000` | Precipitation now | `precipitation_now` |
 | `radvor_rs_060` | Precipitation next 1h | `precipitation_next_1h` |
 | `radvor_rs_120` | Precipitation next 1–2h | `precipitation_next_1_2h` |
@@ -26,49 +20,59 @@ id. Up to 2026.10.1 the names were:
 | `radolan_rw_total` | Precipitation total (hourly) | `precipitation_total_hourly` |
 | `radolan_sf_yesterday_total` | Precipitation total (daily) | `precipitation_total_daily` |
 
-`tests/entity_ids.py` is the complete record by key, including what kept its
-id and what is new since.
+`tests/entity_ids.py` ist die vollständige Aufstellung nach Schlüssel,
+einschließlich dessen, was seine ID behalten hat, und dessen, was seitdem neu
+ist.
 
-Three things were wrong with them:
+Drei Dinge waren an ihnen falsch:
 
-- `Precipitation now` was RS `_000`, mm over the *past hour*, named for its
-  role; it read like a rate.
-- `next 1–2h` needed a note that it is the second hour, not the coming two.
-- RS `_000` and RW both covered "the last hour" under unrelated names, and
-  nothing in either said which hour.
+- `Precipitation now` war RS `_000`, mm über die *vergangene Stunde*, benannt
+  nach seiner Rolle; es klang wie eine Intensität.
+- `next 1–2h` brauchte einen Hinweis, dass es die zweite Stunde ist, nicht die
+  kommenden zwei.
+- RS `_000` und RW deckten beide „die letzte Stunde“ unter Namen ab, die nichts
+  miteinander zu tun hatten, und keiner von beiden sagte, welche Stunde.
 
-## Decision
+## Entscheidung {#decision}
 
-A name states a window only when the window is part of the value, in three
-forms: `last <N>` (a measured window ending at the latest release), `next <N>`
-(a forecast window) and the calendar periods `previous hour` / `yesterday`.
-The RADVOR nowcast states windows in minutes, matching its 5-minute steps and
-the `minutes_until` attributes (`next 60–120 min`); RADOLAN keeps hours and
-days (`last 24h` keeps its released spelling, since a space would change its
-slug for nothing). `now` means the latest 5-minute analysis. Everything else
-carries no window.
+Ein Name nennt ein Zeitfenster nur, wenn das Fenster Teil des Werts ist, und
+zwar in drei Formen: `last <N>` (ein gemessenes Fenster, das mit der neuesten
+Veröffentlichung endet), `next <N>` (ein Vorhersagefenster) und die
+Kalenderzeiträume `previous hour` / `yesterday`. Der RADVOR-Nowcast
+(Kurzfristvorhersage) nennt Fenster in Minuten, passend zu seinen
+5-Minuten-Schritten und den Attributen `minutes_until` (`next 60–120 min`);
+RADOLAN bleibt bei Stunden und Tagen (`last 24h` behält seine ausgelieferte
+Schreibweise, da ein Leerzeichen seinen Slug grundlos ändern würde). `now`
+bedeutet die neueste 5-Minuten-Analyse. Alles andere trägt kein Fenster.
 
-So RS `_000` is `Precipitation last 60 min`, RW (a clock hour, see
-[0002](0002-rw-reads-the-clock-hour.md)) is `Precipitation previous hour`, and
-no two names share a window, so none needs a source qualifier.
+Damit ist RS `_000` `Precipitation last 60 min`, RW (eine volle Stunde, siehe
+[0002](0002-rw-reads-the-clock-hour.md)) ist `Precipitation previous hour`, und
+keine zwei Namen teilen sich ein Fenster, sodass keiner einen Hinweis auf die
+Quelle braucht.
 
-Keys did not change: existing installs keep their ids and only see new names;
-new installs get the new ids. No new id is one a released version gave another
-entity, so an id means one thing on every install, and HA's "recreate entity
-ids" on an old install cannot collide.
+Die Schlüssel haben sich nicht geändert: Bestehende Installationen behalten
+ihre IDs und sehen nur die neuen Namen; neue Installationen bekommen die neuen
+IDs. Keine neue ID ist eine, die eine ausgelieferte Version einer anderen
+Entität gegeben hat. So bedeutet eine ID auf jeder Installation dasselbe, und
+„Entitäts-IDs neu erstellen“ in HA kann auf einer alten Installation nicht
+kollidieren.
 
-## Alternatives turned down
+## Verworfene Alternativen {#alternatives-turned-down}
 
-- **RS as `precipitation_last_1h`.** On an old install RW still holds that id,
-  so recreating ids would put RS on `precipitation_last_1h_2`.
-- **Source suffixes**, `(radar)` / `(gauge-adjusted)`. Carried briefly on the
-  release branch after 2026.10.0, never shipped: once no two names share a
-  window, the source is something the README explains, not a name.
-- **Renaming keys** to match. A key is the unique-id suffix; changing it
-  orphans the user's entity and its history.
+- **RS als `precipitation_last_1h`.** Auf einer alten Installation hält RW
+  diese ID noch, das Neuerstellen der IDs würde RS also auf
+  `precipitation_last_1h_2` legen.
+- **Quellen-Zusätze**, `(radar)` / `(gauge-adjusted)`. Kurz auf dem
+  Release-Branch nach 2026.10.0 vorhanden, nie ausgeliefert: Sobald keine zwei
+  Namen ein Fenster teilen, ist die Quelle etwas, das die README erklärt, kein
+  Name.
+- **Schlüssel passend umbenennen.** Ein Schlüssel ist das Suffix der Unique ID;
+  ihn zu ändern lässt die Entität des Nutzers samt ihrem Verlauf verwaist
+  zurück.
 
-## Consequences
+## Folgen {#consequences}
 
-The README lists the old ids for installs from before 2026.11.0; a test checks
-it names every renamed one (`tests/parser/test_docs.py`). The setup test
-checks a new install's ids, and that none is an old id of another key.
+Die README listet die alten IDs für Installationen von vor 2026.11.0; ein Test
+prüft, dass sie jede umbenannte nennt (`tests/parser/test_docs.py`). Der
+Setup-Test prüft die IDs einer neuen Installation und dass keine davon eine
+alte ID eines anderen Schlüssels ist.

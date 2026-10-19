@@ -1,43 +1,41 @@
-# 0002 — RW reads the run ending on the hour, not HH:50
+# 0002 — RW liest den Lauf, der zur vollen Stunde endet, nicht HH:50
 
-:::note[Noch nicht übersetzt]
+Status: angenommen (2026.11.0)
 
-Diese Seite ist noch nicht ins Deutsche übersetzt; bis dahin steht hier die englische Fassung.
+## Kontext {#context}
 
-:::
+Der DWD rechnet RW alle 10 Minuten, jeder Lauf die Stunde, die zu dieser :x0
+endet. Bis 2026.10.1 las die Integration den Lauf um HH:50. Warum, war nirgends
+festgehalten; es ist die traditionelle Stunde von RADOLAN, und SF wird weiterhin
+nur um :50 veröffentlicht (OpenData hat keine andere SF-Minute).
 
-Status: accepted (2026.11.0)
+Nur eine volle Stunde kann „previous hour“ heißen (siehe
+[0001](0001-entity-names-state-their-window.md)) und zu den stündlichen
+Statistiken von HA passen. Die Frage war, ob der Lauf um :00 so gut ist wie
+der um :50.
 
-## Context
+`scripts/compare_rw_runs.py` vergleicht jeden RW-Lauf auf OpenData (48 h)
+Zelle für Zelle mit dem reinen Radarwert RS `_000` für dieselbe Stunde. Würden
+die Läufe innerhalb der Stunde weniger Niederschlagsmesser verwenden, lägen sie
+näher an RS. Das tun sie nicht: Über 285 nasse Läufe (2026-10-10..12) weicht
+jede Laufminute gleich stark von RS ab (mittleres |RW-RS| 0,53–0,58 mm,
+58–62 % relativ, 76–78 % der nassen Zellen angeeicht). Jede Laufminute wird
+nach ~25,7 min veröffentlicht (288 Läufe, 2026-10-13).
 
-DWD runs RW every 10 minutes, each run the hour ending at that :x0. Up to
-2026.10.1 the integration read the HH:50 run. Nothing recorded why; it is
-RADOLAN's traditional hour, and SF is still only published at :50 (OpenData
-has no other SF minute).
+## Entscheidung {#decision}
 
-Only a clock hour can be called "previous hour" (see
-[0001](0001-entity-names-state-their-window.md)) and line up with HA's hourly
-statistics. The question was whether the :00 run is as good as the :50 one.
+`rw` liest den Lauf, der zur vollen Stunde endet. SF bleibt bei :50, die
+Fenster von `rw` und `sf` liegen also jetzt 10 Minuten auseinander.
 
-`scripts/compare_rw_runs.py` compares every RW run on OpenData (48 h) with
-radar-only RS `_000` for the same hour, cell for cell. If the sub-hourly runs
-used fewer gauges, they would sit closer to RS. They do not: over 285 wet runs
-(2026-10-10..12) every run minute departs from RS alike (mean |RW-RS|
-0.53-0.58 mm, 58-62 % relative, 76-78 % of wet cells adjusted). Every run
-minute is published at ~25.7 min (288 runs, 2026-10-13).
+Eine vor 2026.11.0 gespeicherte Summe hat ein `last_release` um :50, außerhalb
+des neuen Terminrasters. Beim Wiederherstellen bildet `counted_on_grid()` es
+einmalig auf die :00-Veröffentlichung vor dem ersten Fenster ab, das danach
+beginnt, sodass das Zählen dort weitergeht: Die 10 Minuten dazwischen fallen
+einmal weg, statt dass 50 doppelt gezählt werden (`counted_until` liegt bis zur
+nächsten Veröffentlichung 10 Minuten voraus).
 
-## Decision
+## Folgen {#consequences}
 
-`rw` reads the run ending on the hour. SF stays at :50, so `rw` and `sf`
-windows are now 10 minutes apart.
-
-A total stored before 2026.11.0 has a `last_release` at :50, off the new grid.
-Restoring it maps it once with `counted_on_grid()` onto the :00 release before
-the first window that starts after it, so counting resumes there: the 10
-minutes in between are left out once, rather than 50 counted twice
-(`counted_until` reads 10 minutes ahead until the next release).
-
-## Consequences
-
-Rerun `scripts/compare_rw_runs.py` before relying on the quality comparison
-for anything new; DWD may change how the runs are adjusted.
+Führe `scripts/compare_rw_runs.py` erneut aus, bevor du dich für etwas Neues
+auf den Qualitätsvergleich verlässt; der DWD kann ändern, wie die Läufe
+angeeicht werden.

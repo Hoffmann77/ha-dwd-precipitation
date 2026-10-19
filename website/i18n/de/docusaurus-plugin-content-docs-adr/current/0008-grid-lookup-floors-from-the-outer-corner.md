@@ -1,31 +1,29 @@
-# 0008 — The grid lookup floors from the outer corner
+# 0008 — Die Zellsuche im Gitter rundet ab der äußeren Ecke ab
 
-:::note[Noch nicht übersetzt]
+Status: angenommen (2026.10.0)
 
-Diese Seite ist noch nicht ins Deutsche übersetzt; bis dahin steht hier die englische Fassung.
+## Kontext {#context}
 
-:::
+Die ODIM-Attribute `LL_*`/`UL_*`/`UR_*`/`LR_*` sind die äußeren Ecken der
+Randpixel, keine Pixelmitten. Beide Zellsuchen, die die Integration hatte (die
+für DE1200 bei RADVOR, die nationale für die RADOLAN-Binärausgabe),
+behandelten sie als Mitten. Das verschiebt die Suche um eine halbe Zelle und
+wählt für etwa 3 von 4 Standorten eine Nachbarzelle. Beide waren bis 2026.10.0
+auf diese Weise falsch.
 
-Status: accepted (2026.10.0)
+## Entscheidung {#decision}
 
-## Context
+Den Standort projizieren, dann seinen Abstand von der äußeren unteren linken
+Ecke des Gitters abrunden (floor). Nie zur nächsten ganzen Zahl runden, und
+nie die nächstgelegene Gitterkoordinate nehmen.
 
-ODIM's `LL_*`/`UL_*`/`UR_*`/`LR_*` attributes are the outer corners of the
-edge pixels, not pixel centres. Both lookups the integration had (the DE1200
-one for RADVOR, the national one for the RADOLAN binary edition) treated them
-as centres, which shifts the lookup by half a cell and picks a neighbouring
-cell for ~3 locations in 4. Both were wrong that way until 2026.10.0.
+Die Referenz-Teststufe prüft das Ergebnis gegen wradlibs eigenes Gitter
+(`mode="edge"`) statt gegen eine Nachimplementierung unserer Arithmetik, die
+denselben Fehler wiederholen könnte, und legt wradlibs Gitter auf die
+Eckattribute der Fixture-Datei fest.
 
-## Decision
+## Folgen {#consequences}
 
-Project the location, then floor its offset from the grid's outer lower-left
-corner. Never round, and never take the nearest grid coordinate.
-
-The reference tier checks the result against wradlib's own grid (`mode="edge"`)
-rather than a reimplementation of our arithmetic, which could repeat the same
-mistake, and pins wradlib's grid to the fixture file's corner attributes.
-
-## Consequences
-
-Since RW and SF moved to the HDF5 edition
-([0004](0004-radolan-hdf5-edition.md)) there is only the DE1200 lookup.
+Seit RW und SF auf die HDF5-Ausgabe umgestiegen sind
+([0004](0004-radolan-hdf5-edition.md)), gibt es nur noch die Zellsuche für
+DE1200.

@@ -1,41 +1,40 @@
-# 0003 — RW's 10-minute runs feed the dry streak, nothing else
+# 0003 — Die 10-Minuten-Läufe von RW speisen den Trockenzähler, sonst nichts
 
-:::note[Noch nicht übersetzt]
+Status: angenommen (2026.11.0)
 
-Diese Seite ist noch nicht ins Deutsche übersetzt; bis dahin steht hier die englische Fassung.
+## Kontext {#context}
 
-:::
+Die Läufe von RW innerhalb der Stunde (siehe
+[0002](0002-rw-reads-the-clock-hour.md)) sind genauso stark mit Bodenmessungen
+angeeicht wie der stündliche, und alle 10 Minuten erscheint ein neuer.
+`Timespan without precipitation` wird zurückgesetzt, wenn eine Summe über die
+vergangene Stunde einen Schwellwert erreicht; nach dem stündlichen Lauf von RW
+gezählt, kann das Zurücksetzen bis zu einer Stunde zu spät erscheinen.
 
-Status: accepted (2026.11.0)
+## Entscheidung {#decision}
 
-## Context
+- `RadolanRW10` (`rw_10min`) liest jeden Lauf, und der Trockenzähler zählt ihn,
+  wenn seine Quelle `rw` ist. Er wird nur dann erzeugt (`is_needed(options)`),
+  sodass ein Eintrag, der ihn nicht nutzt, keine zusätzlichen Anfragen stellt.
+- Die Standardquelle des Trockenzählers ist `rw`, bestehende Installationen
+  behalten aber `rs`: Der Konfigurationseintrag ging auf Version 1.2, und
+  `async_migrate_entry` schreibt `dry_streak_source: "rs"` in jeden Eintrag der
+  Version 1.1, dem es fehlt.
+- Wenn er erzeugt wird, ist der :00-Lauf von `rw_10min` dieselbe Datei, die
+  auch `rw` abruft; beide laufen über den `DownloadCache` des Eintrags, sie
+  wird also nur einmal heruntergeladen.
 
-RW's sub-hourly runs (see [0002](0002-rw-reads-the-clock-hour.md)) are as
-strongly gauge-adjusted as the hourly one, and a new one appears every 10
-minutes. `Timespan without precipitation` resets when a past-hour total
-reaches a threshold; counted from RW's hourly run, the reset can show up to an
-hour late.
+## Verworfene Alternativen {#alternatives-turned-down}
 
-## Decision
-
-- `RadolanRW10` (`rw_10min`) reads every run, and the dry streak counts it
-  when its source is `rw`. It is built only then (`is_needed(options)`), so an
-  entry that does not use it makes no extra requests.
-- The dry streak's default source is `rw`, but existing installs keep `rs`:
-  the config entry went to version 1.2, and `async_migrate_entry` writes
-  `dry_streak_source: "rs"` into every 1.1 entry that lacks it.
-- When built, `rw_10min`'s :00 run is the file `rw` fetches too; both go
-  through the entry's `DownloadCache`, so it is downloaded once.
-
-## Alternatives turned down
-
-- **A sensor for the sliding RW hour.** As a "last 60 min" it would be 28-38
-  min behind, where RS is 4-9 min, and gauge accuracy is what `Precipitation
-  previous hour` is for. A pre-release had a `rw_last_hour_mode` option for
-  it; it never shipped, and a stored value is ignored.
-- **Totals from the 10-minute runs.** Consecutive runs overlap by 50 minutes,
-  so summing them counts each hour six times. The totals and their
-  missed-release walk stay on `rw`'s hourly grid, as does the dry streak's
-  startup downtime correction.
-- **Falling back to the other source** when the selected one fails: the
-  entity follows its coordinator's availability instead.
+- **Ein Sensor für die gleitende RW-Stunde.** Als „last 60 min“ läge er 28–38
+  min zurück, wo RS 4–9 min zurückliegt, und für die Genauigkeit der
+  Niederschlagsmesser gibt es `Precipitation previous hour`. Eine Vorabversion
+  hatte dafür eine Option `rw_last_hour_mode`; sie wurde nie ausgeliefert, und
+  ein gespeicherter Wert wird ignoriert.
+- **Summen aus den 10-Minuten-Läufen.** Aufeinanderfolgende Läufe überlappen
+  sich um 50 Minuten, ihre Summe zählt also jede Stunde sechsmal. Die Summen
+  und ihr Durchgang über verpasste Veröffentlichungen bleiben auf dem
+  stündlichen Terminraster von `rw`, ebenso die Korrektur des Trockenzählers
+  beim Start für die Zeit, in der Home Assistant nicht lief.
+- **Rückfall auf die andere Quelle**, wenn die gewählte ausfällt: Die Entität
+  folgt stattdessen der Verfügbarkeit ihres Coordinators.
