@@ -43,6 +43,8 @@ from .dry_streak import (
     downtime_correction,
     fresh_anchor,
     amount_reading,
+    release_reading,
+    unwatched_hours,
 )
 from .entity import DwdCoordinatorEntity, DwdEntityDescriptionMixin, unique_id_for
 from .radar.isotime import iso
@@ -119,6 +121,11 @@ class PrecipitationTotalEntityDescription(SensorEntityDescription):
     max_backfill: int
 
 
+# How many RW releases OpenData keeps, i.e. how far back a missed one can still
+# be fetched: two days of clock hours.
+RW_KEPT = 48
+
+
 # Two totals over the same rain: RW counts each hour as soon as it is analysed,
 # sf_2350 counts each day once, the morning after. They are separate entities
 # rather than one with a source option so that switching never makes a
@@ -129,7 +136,7 @@ TOTAL_SENSORS = (
         translation_key="precipitation_total",
         **_MM_TOTAL,
         product_key="rw",
-        max_backfill=48,
+        max_backfill=RW_KEPT,
     ),
     PrecipitationTotalEntityDescription(
         key="radolan_sf_yesterday_total",
@@ -798,6 +805,13 @@ class TimespanWithoutPrecipitationSensor(
     corrected on startup against the RW/SF accumulation products to catch rain
     during downtime.
 
+    A reading without data cannot reset the streak, so time the source did not
+    watch for more than its hour (no data for the location, DWD failing, Home
+    Assistant down) is checked against RW instead: once the source reports
+    again, the RW clock hours of the gap are fetched from OpenData in the
+    background, and one that reached the threshold resets the streak to its
+    end (see unwatched_hours).
+
     """
 
     def __init__(
@@ -812,7 +826,7 @@ class TimespanWithoutPrecipitationSensor(
         ``coordinator`` is the product the streak counts (RS, or RW's 10-minute
         runs), ``sub_key`` where it keeps its past-hour total. ``hourly`` and
         ``daily`` (RW and SF) correct the anchor at startup for rain during
-        downtime.
+        downtime; ``hourly`` also fills the hours the source did not watch.
 
         """
         super().__init__(coordinator, DRY_STREAK_SENSOR)
@@ -823,6 +837,11 @@ class TimespanWithoutPrecipitationSensor(
         # RW's last clock hour and SF's last 24 h, whatever the source.
         self._hourly = hourly
         self._daily = daily
+        # The end of the newest hour the source reported, and the RW hours
+        # still to fetch for the time before it that it did not watch.
+        self._watched_until: datetime | None = None
+        self._gap_hours: list[datetime] = []
+        self._filling = False
 
     @property
     def _threshold(self) -> float:
@@ -860,6 +879,12 @@ class TimespanWithoutPrecipitationSensor(
 
         return None if value != value else value  # drop NaN
 
+    def _reading_end(self) -> datetime | None:
+        """Return the end of the source's hour (its release time), or None."""
+        _, meta = self._reading()
+
+        return getattr(meta, "source_timestamp", None)  # UTC-aware
+
     def _measurement_time(self) -> datetime:
         """Return the end of the source's hour, falling back to utcnow().
 
@@ -868,24 +893,135 @@ class TimespanWithoutPrecipitationSensor(
         later.
 
         """
-        _, meta = self._reading()
-        if (ts := getattr(meta, "source_timestamp", None)) is not None:
-            return ts  # UTC-aware
-
-        return dt_util.utcnow()
+        return self._reading_end() or dt_util.utcnow()
 
     def _process(self) -> None:
         """Reset the dry-since anchor if the latest hour reached the threshold.
 
         Called on every coordinator update. The first reading also sets the
-        anchor when there is none yet.
+        anchor when there is none yet. A new reading that leaves time unwatched
+        before its hour queues the RW hours of that gap and starts fetching
+        them; a reading without data counts as not watched.
 
         """
         precip = self._precip_now()
+        if precip is not None and self._watch(self._reading_end()):
+            self._start_gap_fill()
+
         if precip is not None and precip >= self._threshold:
             self._dry_since = self._measurement_time()  # it rained -> reset
         elif self._dry_since is None:
             self._dry_since = self._measurement_time()  # first observation
+
+    def _watch(self, end: datetime | None) -> bool:
+        """Record that the source watched the hour ending at ``end``.
+
+        Queues the RW hours of any stretch before that hour the streak did not
+        watch (see unwatched_hours). True if the reading is newer than any
+        before it, which is also when a failed gap fetch is retried: the
+        coordinator's own retries bring nothing new and retry nothing here.
+
+        """
+        if end is None or (
+            self._watched_until is not None and end <= self._watched_until
+        ):
+            return False
+
+        if self._watched_until is not None and self._hourly is not None:
+            gap = unwatched_hours(self._hourly.grid, self._watched_until, end)
+            self._gap_hours = sorted(set(self._gap_hours) | set(gap))
+        self._watched_until = end
+
+        return True
+
+    def _start_gap_fill(self) -> None:
+        """Give up on gap hours too old to fetch, and fetch those released.
+
+        RW hours OpenData no longer keeps are dropped and logged once; hours
+        not released yet wait for a later reading. The rest are fetched in a
+        background task, one round at a time.
+
+        """
+        rw = self._hourly
+        if rw is None or not self._gap_hours or self._filling:
+            return
+
+        latest = rw.grid.at_or_before(dt_util.utcnow() - rw.release_delay)
+        self._gap_hours, gone = split_fetchable(
+            rw.grid, self._gap_hours, latest, RW_KEPT
+        )
+        if gone:
+            _LOGGER.info(
+                "%s: the DWD RW hours from %s to %s, which the dry-streak "
+                "source did not cover, could not be checked for rain while DWD "
+                "still served them, so rain in them does not reset the streak",
+                self.entity_id,
+                gone[0].isoformat(),
+                gone[-1].isoformat(),
+            )
+
+        if not any(hour <= latest for hour in self._gap_hours):
+            return
+
+        self._filling = True
+        rw.config_entry.async_create_background_task(
+            self.hass,
+            self._async_fill_gap(rw, latest),
+            f"{self.entity_id} gap check",
+        )
+
+    async def _async_fill_gap(
+        self, rw: BaseProductUpdateCoordinator, latest: datetime
+    ) -> None:
+        """Fetch the released gap hours, oldest first, and reset on rain.
+
+        An hour leaves the list once fetched, whether it reached the threshold,
+        stayed below it or held no data for the location. The first failed
+        fetch ends the round, so an RW outage costs one request per new
+        reading; the next new reading retries. The state is written once per
+        round, and only if the anchor moved.
+
+        """
+        moved = False
+        try:
+            while todo := [hour for hour in self._gap_hours if hour <= latest]:
+                hour = todo[0]
+                try:
+                    fetched = await rw.async_fetch_release(hour)
+                except Exception as err:  # noqa: BLE001 - retried next reading
+                    _LOGGER.debug(
+                        "%s: could not fetch RW %s to check a gap: %s",
+                        self.entity_id,
+                        hour.isoformat(),
+                        err,
+                    )
+                    break
+
+                if hour not in self._gap_hours:
+                    continue  # given up on while it was being fetched
+                self._gap_hours.remove(hour)
+                reading = release_reading(fetched)
+                # No data for the cell (None or NaN) cannot reset, like dry.
+                if reading.value is None or not reading.value >= self._threshold:
+                    continue
+
+                rain_end = reading.end or hour
+                if self._dry_since is None or rain_end > self._dry_since:
+                    _LOGGER.info(
+                        "%s: the dry-streak source did not cover the hour "
+                        "ending %s (no data for the location, or Home Assistant "
+                        "was down), and DWD's RW analysis shows %.1f mm in it; "
+                        "the streak now counts from then",
+                        self.entity_id,
+                        rain_end.isoformat(),
+                        reading.value,
+                    )
+                    self._dry_since = rain_end
+                    moved = True
+        finally:
+            self._filling = False
+            if moved:
+                self.async_write_ha_state()
 
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -909,9 +1045,10 @@ class TimespanWithoutPrecipitationSensor(
         await super().async_added_to_hass()
 
         if (restored := await self.async_get_last_extra_data()) is not None:
-            self._dry_since = DryStreakExtraData.from_dict(
-                restored.as_dict()
-            ).dry_since
+            data = DryStreakExtraData.from_dict(restored.as_dict())
+            self._dry_since = data.dry_since
+            self._watched_until = data.watched_until
+            self._gap_hours = data.gap_hours
 
         now = dt_util.utcnow()
         rw = amount_reading(self._hourly)
@@ -926,8 +1063,11 @@ class TimespanWithoutPrecipitationSensor(
             # Fresh install: establish the oldest provable dry time.
             self._dry_since = fresh_anchor(self._threshold, rw, sf, now)
 
-        # coordinator.data is already populated by the first refresh; catch up once.
+        # coordinator.data is already populated by the first refresh; catch up
+        # once. Time since the restored watched_until is a gap like any other.
         self._process()
+        # Resume a gap check a restart interrupted, even with no new reading.
+        self._start_gap_fill()
 
     @property
     def extra_restore_state_data(self) -> DryStreakExtraData:
@@ -936,7 +1076,11 @@ class TimespanWithoutPrecipitationSensor(
         Home Assistant stores it and hands it back at the next start.
 
         """
-        return DryStreakExtraData(dry_since=self._dry_since)
+        return DryStreakExtraData(
+            dry_since=self._dry_since,
+            watched_until=self._watched_until,
+            gap_hours=list(self._gap_hours),
+        )
 
     @property
     def native_value(self) -> float | None:

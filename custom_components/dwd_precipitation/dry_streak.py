@@ -8,14 +8,19 @@ logic is easy to read and unit-test in isolation.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from typing import Any, NamedTuple
 
 from homeassistant.helpers.restore_state import ExtraStoredData
 
 from .const import KEY_AMOUNT
+from .release_grid import ReleaseGrid
 from .radar.isotime import iso, parse_utc
+
+# Every dry-streak source reports a rolling hour: a reading covers the hour
+# before its timestamp.
+SOURCE_WINDOW = timedelta(hours=1)
 
 
 class Reading(NamedTuple):
@@ -31,32 +36,53 @@ NO_READING = Reading(None, None, None)
 
 @dataclass
 class DryStreakExtraData(ExtraStoredData):
-    """Persisted anchor for the days-without-rain sensor."""
+    """Persisted anchor for the days-without-rain sensor, how far the streak
+    has watched, and the RW hours still to check for a gap.
+
+    """
 
     dry_since: datetime | None
+    watched_until: datetime | None = None
+    gap_hours: list[datetime] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
         """Serialize the anchor for restore_state.
 
         The anchor (``dry_since``) is the time the dry streak counts from,
         normally the end of the last hour that reached the reset threshold.
-        Home Assistant stores this dict with the entity's last state and hands
-        it back after a restart (see from_dict), so the streak survives
-        restarts.
+        ``watched_until`` is the end of the newest hour the streak has seen,
+        ``gap_hours`` the RW releases still to be fetched for time it has not
+        (see unwatched_hours). Home Assistant stores this dict with the
+        entity's last state and hands it back after a restart (see from_dict),
+        so the streak survives restarts, and a downtime counts as a gap.
 
         """
-        return {"dry_since": iso(self.dry_since)}
+        return {
+            "dry_since": iso(self.dry_since),
+            "watched_until": iso(self.watched_until),
+            "gap_hours": [iso(release) for release in self.gap_hours],
+        }
 
     @classmethod
     def from_dict(cls, restored: dict[str, Any]) -> "DryStreakExtraData":
         """Rebuild the anchor from a restored dict.
 
         The counterpart of as_dict. A missing or unreadable timestamp restores
-        as None, which the sensor treats like a fresh install, and one without
-        a time zone is taken as UTC.
+        as None (or is dropped from ``gap_hours``); a None anchor is treated
+        like a fresh install, and a None ``watched_until`` (stored before
+        2026.11.0) starts watching at the next reading. A timestamp without a
+        time zone is taken as UTC.
 
         """
-        return cls(dry_since=parse_utc(restored.get("dry_since")))
+        return cls(
+            dry_since=parse_utc(restored.get("dry_since")),
+            watched_until=parse_utc(restored.get("watched_until")),
+            gap_hours=sorted(
+                ts
+                for raw in restored.get("gap_hours") or ()
+                if (ts := parse_utc(raw)) is not None
+            ),
+        )
 
 
 def amount_reading(coordinator: Any) -> Reading:
@@ -68,7 +94,17 @@ def amount_reading(coordinator: Any) -> Reading:
     its data or the amount is missing, so callers need only check the fields.
 
     """
-    cdata = getattr(coordinator, "data", None) if coordinator else None
+    return release_reading(getattr(coordinator, "data", None) if coordinator else None)
+
+
+def release_reading(cdata: Any) -> Reading:
+    """Return the amount and window of one RADOLAN release's CoordinatorData.
+
+    What amount_reading reads from a coordinator's current release, for a
+    release fetched on its own (an RW hour fetched for a gap, see
+    unwatched_hours). NO_READING when ``cdata`` or its amount is missing.
+
+    """
     if cdata is None or (value := cdata.data.get(KEY_AMOUNT)) is None:
         return NO_READING
 
@@ -122,3 +158,26 @@ def fresh_anchor(threshold: float, rw: Reading, sf: Reading, now: datetime) -> d
         return rw.start  # dry for at least the last hour
 
     return now
+
+
+def unwatched_hours(
+    grid: ReleaseGrid, watched_until: datetime, reading_end: datetime
+) -> list[datetime]:
+    """Return the RW clock hours that overlap time the streak did not watch.
+
+    ``watched_until`` is the end of the newest hour the streak has seen;
+    ``reading_end`` the end of the source's new reading, which covers the hour
+    before it. When that hour starts after ``watched_until``, the stretch
+    between was not watched: the source had no data for the location, DWD
+    failed, or Home Assistant was down. A shorter gap needs nothing, since the
+    new reading's hour covers it. ``grid`` is RW's: the result are its
+    releases (each the end of its clock hour) whose hour overlaps the stretch,
+    oldest first, for the sensor to fetch and compare against the threshold.
+
+    """
+    if reading_end - SOURCE_WINDOW <= watched_until:
+        return []
+
+    first = grid.next_after(grid.at_or_before(watched_until))
+
+    return grid.walk(first, reading_end)

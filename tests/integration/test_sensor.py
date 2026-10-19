@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import PropertyMock, patch
+from unittest.mock import AsyncMock, PropertyMock, patch
 
 import pytest
 
@@ -25,7 +25,12 @@ from custom_components.dwd_precipitation.const import (
     START_END_MODE_TIMESTAMP,
 )
 from custom_components.dwd_precipitation.coordinator import BaseProductUpdateCoordinator
-from custom_components.dwd_precipitation.products import RadolanRW10, RadvorRS, RadvorRV
+from custom_components.dwd_precipitation.products import (
+    RadolanRW,
+    RadolanRW10,
+    RadvorRS,
+    RadvorRV,
+)
 from custom_components.dwd_precipitation.coordinator import (
     CoordinatorData,
     ProductMetadata,
@@ -37,7 +42,10 @@ from custom_components.dwd_precipitation.dry_streak import (
     NO_READING,
     Reading,
     amount_reading,
+    release_reading,
+    unwatched_hours,
 )
+from custom_components.dwd_precipitation.release_grid import ReleaseGrid
 from homeassistant.components.sensor import SensorDeviceClass
 from custom_components.dwd_precipitation.sensor import (
     RADVOR_RV_SENSORS,
@@ -317,9 +325,267 @@ def test_fresh_anchor_falls_back_to_now_when_recently_wet():
 
 def test_dry_streak_extra_data_roundtrip():
     anchor = datetime(2026, 7, 1, 8, 30, tzinfo=UTC)
-    restored = DryStreakExtraData.from_dict(DryStreakExtraData(anchor).as_dict())
-    assert restored.dry_since == anchor
+    watched = datetime(2026, 7, 3, 11, 35, tzinfo=UTC)
+    hours = [datetime(2026, 7, 3, h, tzinfo=UTC) for h in (12, 13)]
+    restored = DryStreakExtraData.from_dict(
+        DryStreakExtraData(anchor, watched, hours).as_dict()
+    )
+    assert restored == DryStreakExtraData(anchor, watched, hours)
     assert DryStreakExtraData.from_dict({"dry_since": None}).dry_since is None
+
+
+def test_dry_streak_extra_data_from_before_the_gap_check():
+    """Stored before 2026.11.0: only the anchor, so nothing is watched yet."""
+    restored = DryStreakExtraData.from_dict({"dry_since": "2026-07-01T08:30:00+00:00"})
+    assert restored.watched_until is None
+    assert restored.gap_hours == []
+
+
+# --- gaps in the source ------------------------------------------------------
+
+RW_GRID = ReleaseGrid(RadolanRW.RELEASE_INTERVAL, RadolanRW.RELEASE_OFFSET)
+# The 2026-10-13 Proetzel outage (#109): RS had no data for Berlin after 11:35.
+LAST_SEEN = datetime(2026, 10, 13, 11, 35, tzinfo=UTC)
+BACK = datetime(2026, 10, 13, 17, 40, tzinfo=UTC)
+GAP_HOURS = [datetime(2026, 10, 13, h, tzinfo=UTC) for h in range(12, 18)]
+
+
+def _rw_release(value, hour):
+    """An RW release as async_fetch_release returns it: the clock hour to ``hour``."""
+    meta = ProductMetadata(
+        "RW", hour, data_start=hour - timedelta(hours=1), data_end=hour
+    )
+    return CoordinatorData({KEY_AMOUNT: value}, {KEY_AMOUNT: meta})
+
+
+@pytest.mark.parametrize(
+    ("watched_until", "reading_end", "hours"),
+    [
+        # The new reading's hour reaches back to what was watched: no gap.
+        (LAST_SEEN, LAST_SEEN + timedelta(minutes=5), []),
+        (LAST_SEEN, LAST_SEEN + timedelta(hours=1), []),
+        # Every clock hour overlapping 11:35-16:40, the stretch nobody watched.
+        (LAST_SEEN, BACK, GAP_HOURS),
+        # A gap from an hour's end starts with the next hour.
+        (
+            datetime(2026, 10, 13, 12, tzinfo=UTC),
+            datetime(2026, 10, 13, 14, 30, tzinfo=UTC),
+            [datetime(2026, 10, 13, h, tzinfo=UTC) for h in (13, 14)],
+        ),
+    ],
+    ids=["5_min", "one_hour", "proetzel", "from_the_hour"],
+)
+def test_unwatched_hours(watched_until, reading_end, hours):
+    assert unwatched_hours(RW_GRID, watched_until, reading_end) == hours
+
+
+def test_release_reading_returns_the_amount_and_its_window():
+    hour = datetime(2026, 10, 13, 13, tzinfo=UTC)
+    assert release_reading(_rw_release(2.5, hour)) == Reading(
+        2.5, hour - timedelta(hours=1), hour
+    )
+    assert release_reading(CoordinatorData({KEY_AMOUNT: None}, {})) == NO_READING
+
+
+@pytest.fixture
+def make_gap_sensor(make_coordinator, freezer):
+    """Return a factory: the RS dry streak with an RW coordinator for its gaps.
+
+    The source last reported at LAST_SEEN; ``rw`` maps each RW hour to the
+    amount its fetch returns (an exception to raise instead). The factory
+    returns the sensor and the background tasks it starts, as coroutines a
+    test awaits or closes. The clock stands where RW's 17:00 is out.
+    """
+    freezer.move_to(datetime(2026, 10, 13, 17, 45, tzinfo=UTC))
+
+    def _make(*, rw=None, dry_since=datetime(2026, 10, 1, tzinfo=UTC), threshold=1.0):
+        rs = make_coordinator(
+            RadvorRS, {CONF_PRECIPITATION_RESET_THRESHOLD: threshold}
+        )
+        hourly = make_coordinator(RadolanRW, entry=rs.config_entry)
+        rw = rw or {}
+
+        async def _fetch(hour):
+            value = rw.get(hour, 0.0)
+            if isinstance(value, Exception):
+                raise value
+            return _rw_release(value, hour)
+
+        hourly.async_fetch_release = AsyncMock(side_effect=_fetch)
+        tasks: list = []
+        rs.config_entry.async_create_background_task = (
+            lambda _hass, coro, _name: tasks.append(coro)
+        )
+        sensor = TimespanWithoutPrecipitationSensor(rs, KEY_LAST_60, hourly=hourly)
+        sensor.entity_id = "sensor.home_timespan_without_precipitation"
+        sensor.async_write_ha_state = lambda: None
+        sensor._dry_since = dry_since
+        report(sensor, 0.0, LAST_SEEN)
+        return sensor, tasks
+
+    return _make
+
+
+def report(sensor, value, release):
+    """Hand the sensor an RS update: ``value`` mm in the hour to ``release``."""
+    meta = ProductMetadata("RS", release, lead_time_minutes=0)
+    sensor.coordinator.data = CoordinatorData(
+        {KEY_LAST_60: value}, {KEY_LAST_60: meta}
+    )
+    sensor._process()
+
+
+def _fetched(sensor) -> list[datetime]:
+    return [c.args[0] for c in sensor._hourly.async_fetch_release.call_args_list]
+
+
+def _close(tasks: list) -> None:
+    """Close coroutines a test inspected but did not run."""
+    for coro in tasks:
+        coro.close()
+
+
+async def test_continuous_readings_never_fetch_rw(make_gap_sensor):
+    sensor, tasks = make_gap_sensor()
+    for minutes in range(5, 125, 5):
+        report(sensor, 0.0, LAST_SEEN + timedelta(minutes=minutes))
+
+    assert tasks == []
+    assert sensor._gap_hours == []
+    assert _anchor(sensor) == datetime(2026, 10, 1, tzinfo=UTC)
+
+
+async def test_gap_shorter_than_the_hour_needs_no_rw(make_gap_sensor):
+    sensor, tasks = make_gap_sensor()
+    report(sensor, None, LAST_SEEN + timedelta(minutes=5))
+    report(sensor, float("nan"), LAST_SEEN + timedelta(minutes=10))
+    report(sensor, 0.0, LAST_SEEN + timedelta(minutes=60))
+
+    assert tasks == []
+
+
+@pytest.mark.asyncio
+async def test_rain_in_a_gap_resets_to_the_end_of_its_rw_hour(make_gap_sensor):
+    """The issue's case: RS lost the cell for six hours while RW saw rain."""
+    rain = datetime(2026, 10, 13, 14, tzinfo=UTC)
+    sensor, tasks = make_gap_sensor(rw={rain: 3.4, rain + timedelta(hours=1): 0.4})
+    for minutes in range(5, 365, 5):  # no data from 11:40 to 17:35
+        report(sensor, None, LAST_SEEN + timedelta(minutes=minutes))
+    assert tasks == []
+
+    report(sensor, 0.0, BACK)
+    assert len(tasks) == 1
+    await tasks[0]
+
+    assert _fetched(sensor) == GAP_HOURS
+    assert _anchor(sensor) == rain
+    assert sensor._gap_hours == []
+    assert sensor._filling is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value", [0.9, None, float("nan")])
+async def test_dry_or_missing_rw_leaves_the_anchor(make_gap_sensor, value):
+    sensor, tasks = make_gap_sensor(rw=dict.fromkeys(GAP_HOURS, value))
+    report(sensor, 0.0, BACK)
+    await tasks[0]
+
+    assert _anchor(sensor) == datetime(2026, 10, 1, tzinfo=UTC)
+    # Done either way: an hour without data for the cell is not refetched.
+    assert sensor._gap_hours == []
+
+
+@pytest.mark.asyncio
+async def test_rw_never_moves_the_anchor_back(make_gap_sensor):
+    sensor, tasks = make_gap_sensor(rw={GAP_HOURS[0]: 5.0})
+    report(sensor, 2.0, BACK)  # the reading itself resets to 17:40
+    await tasks[0]
+
+    assert _anchor(sensor) == BACK
+
+
+@pytest.mark.asyncio
+async def test_failed_fetch_ends_the_round_and_waits_for_a_new_reading(make_gap_sensor):
+    sensor, tasks = make_gap_sensor(rw={GAP_HOURS[1]: OSError("DWD down")})
+    report(sensor, 0.0, BACK)
+    await tasks[0]
+
+    # One failure ends the round: the rest are kept, nothing more is asked.
+    assert _fetched(sensor) == GAP_HOURS[:2]
+    assert sensor._gap_hours == GAP_HOURS[1:]
+    assert sensor.extra_restore_state_data.gap_hours == GAP_HOURS[1:]
+
+    # A coordinator update without a new reading retries nothing...
+    report(sensor, 0.0, BACK)
+    assert len(tasks) == 1
+
+    # ...the next reading does.
+    sensor._hourly.async_fetch_release.side_effect = None
+    sensor._hourly.async_fetch_release.return_value = _rw_release(0.0, BACK)
+    report(sensor, 0.0, BACK + timedelta(minutes=5))
+    assert len(tasks) == 2
+    await tasks[1]
+    assert sensor._gap_hours == []
+
+
+@pytest.mark.asyncio
+async def test_unreleased_rw_hour_waits_for_a_later_reading(make_gap_sensor, freezer):
+    # 17:20: RW's 17:00 is not out until about 17:28.
+    freezer.move_to(datetime(2026, 10, 13, 17, 20, tzinfo=UTC))
+    sensor, tasks = make_gap_sensor()
+    report(sensor, 0.0, datetime(2026, 10, 13, 17, 15, tzinfo=UTC))
+    await tasks[0]
+
+    assert _fetched(sensor) == GAP_HOURS[:-1]
+    assert sensor._gap_hours == GAP_HOURS[-1:]
+
+    freezer.move_to(datetime(2026, 10, 13, 17, 35, tzinfo=UTC))
+    report(sensor, 0.0, datetime(2026, 10, 13, 17, 30, tzinfo=UTC))
+    await tasks[1]
+    assert _fetched(sensor)[-1] == GAP_HOURS[-1]
+    assert sensor._gap_hours == []
+
+
+async def test_only_one_gap_check_runs_at_a_time(make_gap_sensor):
+    sensor, tasks = make_gap_sensor()
+    report(sensor, 0.0, BACK)
+    report(sensor, None, BACK + timedelta(minutes=5))
+    report(sensor, 0.0, BACK + timedelta(hours=2))
+
+    # The second gap joins the list the running round works through.
+    assert len(tasks) == 1
+    assert sensor._gap_hours == GAP_HOURS + [
+        datetime(2026, 10, 13, h, tzinfo=UTC) for h in (18, 19)
+    ]
+    _close(tasks)
+
+
+async def test_gap_older_than_rw_on_opendata_is_given_up(make_gap_sensor, caplog):
+    sensor, tasks = make_gap_sensor()
+    sensor._watched_until = LAST_SEEN - timedelta(days=3)
+    report(sensor, 0.0, BACK)
+
+    # The latest RW hour and the 48 before it are fetched, as for the total;
+    # the older ones are logged once.
+    assert sensor._gap_hours[0] == datetime(2026, 10, 11, 17, tzinfo=UTC)
+    assert sensor._gap_hours[-1] == datetime(2026, 10, 13, 17, tzinfo=UTC)
+    assert len(sensor._gap_hours) == 49
+    assert "while DWD still served them" in caplog.text
+    _close(tasks)
+
+
+async def test_without_rw_a_gap_is_only_recorded(make_days_sensor):
+    """No RW coordinator to fill from: the reading is still processed."""
+    sensor = make_days_sensor(
+        dry_since=datetime(2026, 10, 1, tzinfo=UTC),
+        value=0.0,
+        meta=ProductMetadata("RS", BACK),
+    )
+    sensor._watched_until = LAST_SEEN
+    sensor._process()
+
+    assert sensor._watched_until == BACK
+    assert sensor._gap_hours == []
 
 
 # --- merged start/end sensors ------------------------------------------

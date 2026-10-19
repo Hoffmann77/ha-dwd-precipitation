@@ -29,8 +29,9 @@ binary_sensor.py      "Precipitation expected" (RV), on the same descriptions;
                       its forecast_5min series is always exposed, unlike the
                       sensors' diagnostics (blueprints read it).
 dry_streak.py         Pure "days without rain" logic: the persisted anchor
-                      payload + threshold/downtime-correction helpers used by
-                      the TimespanWithoutPrecipitationSensor in sensor.py.
+                      payload + threshold/downtime-correction helpers and the
+                      unwatched RW hours of a gap, used by the
+                      TimespanWithoutPrecipitationSensor in sensor.py.
 precipitation_total.py
                       Pure running-total logic: the persisted total payload
                       (with its pending backfill), the reading filter, and the
@@ -552,6 +553,21 @@ Both are 60-minute totals in mm, so the threshold means the same either way.
 The unique id does not depend on the source, so the entity and its `dry_since`
 survive a switch. There is deliberately no fallback to the other product when
 the selected one fails: the entity follows its coordinator's availability.
+
+**Gaps** (ADR 0011). A reading without data cannot reset the streak, so the
+sensor keeps `watched_until`, the end of the newest hour the source reported.
+A new reading whose hour starts after it left time unwatched (no data for the
+cell, DWD failing, HA down: `watched_until` is restored with `dry_since`), and
+`unwatched_hours` lists the RW clock hours overlapping that stretch. They go
+on `gap_hours`, stored with the anchor, and are fetched in the background with
+`rw.async_fetch_release`, oldest first, within `RW_KEPT` (48, shared with the
+RW total); an hour at or above the threshold moves `dry_since` to its end,
+never back. An hour leaves the list once fetched (dry, wet or without data);
+the first failure ends the round, and only a *new* reading retries, so a
+coordinator's own retries never refetch. Hours not released yet wait for a
+later reading. RW for both sources: for `rw` it is the same family the source
+reads (the :00 run of `rw_10min`). SF is not used for gaps: a 24 h total
+against an hourly threshold can only place rain to within a day.
 
 The default is `rw`, but **existing installs keep `rs`**. The config entry is at
 version 1.2: `async_migrate_entry` writes `dry_streak_source: "rs"` into every

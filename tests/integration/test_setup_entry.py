@@ -599,3 +599,55 @@ async def test_restored_dry_streak_is_corrected_for_rain_during_downtime(
 
     anchor = _dry_streak_sensor(hass)._dry_since
     assert anchor == (now if moved else restored)
+
+
+@pytest.mark.asyncio
+async def test_restart_checks_the_rw_hours_the_dry_streak_did_not_watch(
+    make_entry, hass: HomeAssistant, freezer
+) -> None:
+    """A downtime is a gap: the RW hours between the restored watched_until
+    and RS's first reading are fetched in the background after setup."""
+    from homeassistant.core import State
+    from pytest_homeassistant_custom_component.common import (
+        mock_restore_cache_with_extra_data,
+    )
+
+    from custom_components.dwd_precipitation.dry_streak import DryStreakExtraData
+
+    freezer.move_to(datetime(2025, 6, 1, 12, 35, tzinfo=timezone.utc))
+    restored = DryStreakExtraData(
+        dry_since=datetime(2025, 5, 28, 8, 0, tzinfo=timezone.utc),
+        watched_until=datetime(2025, 6, 1, 8, 30, tzinfo=timezone.utc),
+    )
+    mock_restore_cache_with_extra_data(
+        hass,
+        [
+            (
+                State("sensor.home_timespan_without_precipitation", "4.2"),
+                restored.as_dict(),
+            )
+        ],
+    )
+    # Above RW's 3.2 mm and SF's 12.5: nothing moves, only the fetches show.
+    entry = make_entry(
+        {CONF_DRY_STREAK_SOURCE: "rs", "precipitation_reset_threshold": 30.0},
+        version=1,
+        minor_version=2,
+    )
+    with _patched_products():
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        fetched = RadolanRW._fetch_and_parse.call_args_list
+
+    # RW's live 12:00, then the hours overlapping 08:30-11:00, which RS's
+    # 12:00 reading (11:00-12:00) does not cover.
+    assert [c.args[0] for c in fetched] == [
+        datetime(2025, 6, 1, h, 0, tzinfo=timezone.utc) for h in (12, 9, 10, 11)
+    ]
+    sensor = _dry_streak_sensor(hass)
+    assert sensor._dry_since == restored.dry_since
+    assert sensor._watched_until == TS
+    assert sensor._gap_hours == []
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
