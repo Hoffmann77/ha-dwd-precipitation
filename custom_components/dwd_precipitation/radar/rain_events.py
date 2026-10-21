@@ -5,7 +5,8 @@ stable from the first forecast that shows it until it has fallen, so that
 blueprints can warn about a burst of rain and follow it as forecast turns into
 measurement. Everything here is a measurement that needs no threshold except
 the one that decides where rain is (``rain_event_threshold``); levels,
-warnings and messages are the blueprint's.
+warnings and messages are the blueprint's, or a rain warning's
+(rain_warning.py), which filters the published view.
 
 Steps are 5 minutes, named by their end time. The *measured* step ending at T
 is the RV analysis (lead 0) of release T; each release holds exactly one, so

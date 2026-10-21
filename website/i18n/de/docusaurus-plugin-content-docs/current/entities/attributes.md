@@ -17,6 +17,7 @@ description: Die Attribute der Entitäten von DWD Precipitation, und die Option 
 | `dry_since` | `Zeitraum ohne Niederschlag` | Der Zeitpunkt, ab dem der Zähler zählt: das Ende der Stunde, die ihn zuletzt zurückgesetzt hat, oder bei einer neuen Installation der Beginn der Trockenphase, die die Daten des DWD zeigen |
 | `counted_until` | `Niederschlag gesamt`, `Niederschlag gesamt täglich` | Ende des neuesten DWD-Fensters, das in der Summe enthalten ist; `null`, bis die erste Datei eintrifft. Verpasste Dateien, die später geholt werden, werden nachträglich addiert, ohne es zurückzusetzen |
 | `schema`, `events`, `steps`, … | `Regenereignisse` | Der Regen rund um deinen Standort, in Ereignisse aufgeteilt, siehe [Regenereignisse](rain-events.md#attributes) |
+| `event_id`, `start`, `mm`, `peak_1h`, `peak_10min`, `type` | `Regenwarnung Status` | Das Regenereignis, um das es der Warnung geht; alle `null`, solange es trocken ist, siehe [Regenwarnungen](rain-warnings.md#attributes) |
 
 Zeiten sind ISO-8601 in UTC, zum Beispiel `2026-10-12T14:30:00+00:00`;
 Templates wandeln sie mit `as_local(as_datetime(...))` in Ortszeit um.
@@ -26,7 +27,7 @@ Templates wandeln sie mit `as_local(as_datetime(...))` in Ortszeit um.
 Einige Attribute sind groß und ändern sich alle 5 Minuten, deshalb lässt der
 Recorder von Home Assistant sie aus der Verlaufsdatenbank heraus:
 `forecast_5min`, `forecast_rolling_1h`, `window_start` / `window_end` und
-jedes Attribut von `Regenereignisse`. Am aktuellen Zustand sind sie immer
+jedes Attribut von `Regenereignisse` und `Regenwarnung Status`. Am aktuellen Zustand sind sie immer
 verfügbar, sodass Templates, Automationen und Blueprints sie lesen können; nur
 der Verlaufsgraph speichert sie nicht.
 
@@ -35,7 +36,8 @@ der Verlaufsgraph speichert sie nicht.
 Mit eingeschalteter Option
 [*Metadaten als Sensorattribute anzeigen*](../getting-started/configuration.md#technical-details)
 hat jeder DWD-Sensor außer `Niederschlag erwartet`, den beiden laufenden
-Summen, `Zeitraum ohne Niederschlag` und `Regenereignisse` zusätzlich:
+Summen, `Zeitraum ohne Niederschlag`, `Regenereignisse` und den
+Regenwarnungen zusätzlich:
 
 | Attribut | Beschreibung |
 |----------|--------------|

@@ -5,7 +5,8 @@ description: Install DWD Precipitation with HACS or by hand, then add it to Home
 
 ## Requirements
 
-- A Home Assistant installation that can reach `opendata.dwd.de` over HTTPS.
+- Home Assistant 2025.4 or newer, which can reach `opendata.dwd.de` over
+  HTTPS.
 - A location in Germany, or close to its border. See
   [Grid cell lookup](../how-it-works/grid-lookup.md) for what is covered.
 

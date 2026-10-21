@@ -9,11 +9,13 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
     BinarySensorEntityDescription,
 )
+from homeassistant.helpers.entity import EntityDescription
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .entity import DwdCoordinatorEntity, DwdEntityDescriptionMixin
+from .entity import DwdCoordinatorEntity, DwdEntityDescriptionMixin, RainWarningEntity
+from .options import rain_warning_subentries
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -40,18 +42,27 @@ BINARY_SENSORS = (
     ),
 )
 
+# A rain warning's on/off entity, one per rain-warning subentry: on while it
+# rains or is about to, by that warning's rules. Its unique-id suffix is
+# "<subentry_id>_rain_warning".
+RAIN_WARNING_BINARY_SENSOR = EntityDescription(
+    key="rain_warning",
+    translation_key="rain_warning",
+    icon="mdi:umbrella",
+)
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up the binary sensor platform for one config entry.
 
     Home Assistant calls this once per entry after the integration's own setup.
-    It creates the one binary sensor, "Precipitation expected", on the entry's
-    RV coordinator (the 5-minute RADVOR forecast), which setup has already
-    refreshed once.
+    It creates "Precipitation expected" on the entry's RV coordinator (the
+    5-minute RADVOR forecast), which setup has already refreshed once, and the
+    on/off entity of every rain warning, added to its subentry.
 
     """
     coordinators = entry.runtime_data.coordinators
@@ -63,6 +74,18 @@ async def async_setup_entry(
         )
         for description in BINARY_SENSORS
     )
+    for subentry in rain_warning_subentries(entry):
+        async_add_entities(
+            [
+                RainWarningBinarySensor(
+                    coordinators["rv"],
+                    RAIN_WARNING_BINARY_SENSOR,
+                    subentry,
+                    entry.runtime_data.rain_warnings[subentry.subentry_id],
+                )
+            ],
+            config_subentry_id=subentry.subentry_id,
+        )
 
 
 class DwdBinarySensorEntity(DwdCoordinatorEntity, BinarySensorEntity):
@@ -98,3 +121,18 @@ class DwdBinarySensorEntity(DwdCoordinatorEntity, BinarySensorEntity):
 
         """
         return self._described_attributes()
+
+
+class RainWarningBinarySensor(RainWarningEntity, BinarySensorEntity):
+    """Rain warning: on while it rains or is about to (rain or soon)."""
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return True while the warning is rain or soon, False while dry.
+
+        None (unknown) while there is no rain-events view to judge. The details
+        (which event, when, how much) are on the warning's status sensor.
+
+        """
+        verdict = self._verdict()
+        return None if verdict is None else verdict.is_on

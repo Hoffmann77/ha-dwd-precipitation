@@ -4,15 +4,18 @@ description: The Rain events sensor follows each burst of rain from forecast to 
 ---
 
 The **Rain events** sensor (`sensor.<name>_rain_events`) is meant for
-blueprints that warn about or report short bursts of rain. It follows each
+blueprints that warn about or report short bursts of rain. For a plain
+warning ("Laundry, 60 minutes ahead") you need neither the sensor nor a
+blueprint: add a [rain warning](rain-warnings.md), which works on the same
+events. It follows each
 event from the first forecast that shows it until it has fallen, under one id,
 and reports what was forecast against what was measured.
 
 It is off by default. Turn it on with the advanced option
 [*Track rain events*](../getting-started/configuration.md#track-rain-events).
 With it on, the integration also fetches radar analyses it missed and keeps a
-small record of recent rain on disk; turning it off removes the sensor and
-that record.
+small record of recent rain on disk; turning it off removes the sensor, and
+the record too unless a rain warning still uses it.
 
 ## State
 
@@ -31,7 +34,8 @@ attributes. If the tracker fails, the attributes are left out and the state is
 The sensor applies one threshold, the advanced option
 [*Rain event threshold*](../getting-started/configuration.md#rain-event-threshold)
 (default 0.1 mm/h): a 5-minute step is wet if its amount is above a twelfth of
-it. Warning levels are up to the blueprint.
+it. Warning levels are up to the blueprint, or to a
+[rain warning](rain-warnings.md)'s minimums.
 
 Changing the threshold starts the events over with new ids; the measured
 steps and `last_ended` are kept.

@@ -17,13 +17,13 @@ dahinter.
 | `coordinator.py` | `BaseProductUpdateCoordinator`, der `DataUpdateCoordinator` pro Produkt: Veröffentlichungszeitpunkte, der Ablauf aus Abruf, Veralten und erneutem Versuch, die schrittweise längeren Abstände |
 | `products.py` | Eine Coordinator-Unterklasse pro DWD-Produkt: URL, Abruf, Parsen, Gitterzellen-Suche |
 | `entity.py` | `DwdCoordinatorEntity`, die Basis jeder Entität: Unique ID, Gerät, Verfügbarkeit, der Beschreibungsmechanismus |
-| `sensor.py`, `binary_sensor.py` | Die Entitätsbeschreibungen und die besonderen Sensoren (Summen, Trockenzähler, Regenereignisse) |
+| `sensor.py`, `binary_sensor.py` | Die Entitätsbeschreibungen und die besonderen Sensoren (Summen, Trockenzähler, Regenereignisse, Regenwarnungen) |
 | `dry_streak.py`, `precipitation_total.py` | Reine Logik des Trockenzählers und der laufenden Summen |
 | `rain_events_tracker.py` | Die Regenereignisse eines Konfigurationseintrags in Home Assistant: Speicher, Nachfüllen im Hintergrund, Speicherstrategie |
 | `release_grid.py` | `ReleaseGrid`: die Veröffentlichungstermine eines Produkts auf seiner eigenen Uhr |
-| `config_flow.py`, `options.py` | Einrichtungs- und Optionsformular; `DwdOptions`, die Optionen als ein typisierter Schnappschuss |
+| `config_flow.py`, `options.py` | Einrichtungs- und Optionsformular und der Ablauf der Regenwarnungen als Untereinträge; `DwdOptions`, die Optionen als ein typisierter Schnappschuss, und `rain_warning_rule()` für die Daten einer Warnung |
 | `utils.py` | Der HTTP-Helfer, ein Download-Cache pro Konfigurationseintrag, ein Fehler-Latch |
-| `radar/` | Der Kern ohne Home Assistant: ODIM_H5-Leser, das Gitter, Range-Anfragen auf Tar-Archive, Nowcast- und Regenereignis-Logik |
+| `radar/` | Der Kern ohne Home Assistant: ODIM_H5-Leser, das Gitter, Range-Anfragen auf Tar-Archive, Nowcast-, Regenereignis- und Regenwarnungs-Logik |
 
 `radar/` und `release_grid.py` importieren nichts aus Home Assistant, sodass
 die Teststufen parser und reference sie ohne Home Assistant testen können.
@@ -145,6 +145,11 @@ solcher Rückfälle.
 - **Regenereignisse** werden bei jeder Veröffentlichung aus den gespeicherten
   gemessenen Schritten neu berechnet, statt aufaddiert zu werden
   ([ADR 0006](/development/adr/0006-rain-events-opt-in-entity)).
+- **Regenwarnungen** sind Konfigurations-Untereinträge, jede ein Gerät mit
+  zwei Entitäten, die die Sicht der Regenereignisse einmal pro
+  Veröffentlichung filtern
+  ([ADR 0012](/development/adr/0012-rain-warnings-as-subentries)). Die
+  Ereignisverfolgung läuft für die Option oder für eine beliebige Warnung.
 
 ## Benennung der Entitäten {#entity-naming}
 

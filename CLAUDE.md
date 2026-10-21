@@ -22,7 +22,8 @@ products.py           One BaseProductUpdateCoordinator subclass per DWD
 entity.py             DwdCoordinatorEntity, the base of every entity: unique
                       id, device, availability (data_is_reportable), and the
                       description mechanism (DwdEntityDescriptionMixin:
-                      product_key, sub_key, attrs_fn, metadata_attrs_fn).
+                      product_key, sub_key, attrs_fn, metadata_attrs_fn);
+                      RainWarningEntity, the base of a rain warning's two.
 sensor.py             HA SensorEntity descriptors; sub_key picks each value
                       from coordinators[product_key].data.
 binary_sensor.py      "Precipitation expected" (RV), on the same descriptions;
@@ -38,11 +39,14 @@ precipitation_total.py
                       missed-release walk used by the PrecipitationTotalSensor
                       in sensor.py.
 config_flow.py        UI config flow: collects name + lat/lon; options form
-                      with a collapsed Advanced section, stored flat.
+                      with a collapsed Advanced section, stored flat; the
+                      rain-warning subentry flow (user + reconfigure).
 options.py            DwdOptions: the entry's options as one typed snapshot,
                       with every option's default in DEFAULT_OPTIONS. Read as
                       coordinator.options / entry.runtime_data.options; never
-                      entry.options.get() elsewhere.
+                      entry.options.get() elsewhere. Likewise a rain warning's
+                      subentry data: DEFAULT_RAIN_WARNING, rain_warning_rule();
+                      and tracks_rain_events() (option or any warning).
 const.py              Option keys and defaults, payload sub-keys (KEY_*),
                       HymecNG's class labels, and other HA constants.
 utils.py              async_get() HTTP helper (headers, status, separate 206
@@ -75,6 +79,8 @@ radar/                The HA-free core: parsers and pure domain logic (no
                       detection, peak intensities, rolling-hour sums.
   rain_events.py      Rain-event logic behind the Rain events sensor
                       (see "Rain events").
+  rain_warning.py     The rain-warning filter over that view: WarningRule,
+                      judge(), RainWarning (see "Rain warnings").
   isotime.py          iso()/parse_utc() for attributes and stored payloads.
 ```
 
@@ -696,12 +702,14 @@ save policy, warnings); `RadvorRV` only hands it each adopted release in
 `_async_on_new_release` and lends it an analysis fetch and a publish
 callback; `RainEventsSensor` in sensor.py is the entity.
 
-- **Opt-in.** The `rain_events` option (Advanced, default off) gates all of it:
-  `RadvorRV.__init__` builds a tracker only when `options.rain_events` is on, and
-  without one there is nothing to track, so an entry that does not use it makes no fill
-  requests and writes nothing. Turning it off removes the entity from the
-  registry (rather than leaving "no longer provided") and deletes the store,
-  so turning it on again starts clean.
+- **Built when needed.** `RadvorRV.__init__` builds a tracker only when
+  `tracks_rain_events(entry, options)`: the `rain_events` option (Advanced,
+  default off) or any rain-warning subentry (ADR 0012; ADR 0006 had the
+  option gate all of it). Without one there is nothing to track, so an entry
+  that uses neither makes no fill requests and writes nothing. The option
+  only controls the entity: turning it off removes the entity from the
+  registry (rather than leaving "no longer provided"), and setup deletes the
+  store once neither needs it, so using it again starts clean.
 - **Own entity** (ADR 0006: not an attribute of `Precipitation expected`, as
   in pre-releases). The state is
   `overall_status()`: `ongoing` if any event is, else `upcoming`, else `none`
@@ -759,6 +767,49 @@ callback; `RainEventsSensor` in sensor.py is the entity.
 - **Threshold.** `rain_event_threshold` is independent of
   `precipitation_threshold` (no `max()`); changing it drops the events (new
   ids) but keeps the measured steps and `last_ended`.
+
+## Rain warnings
+
+User-defined warnings ("Laundry, 60 min"), each a config subentry of type
+`rain_warning` (ADR 0012), on the Rain events tracker and nothing else:
+
+- **A filter, not an event model.** `radar/rain_warning.py` judges the
+  tracker's view (`data["rain_events"]` on `rv`): `rain` if an ongoing event
+  passes the filter, `soon` if an upcoming one that passes it starts within
+  `lead_time` minutes of now, else `dry`; no view (`None`) is unknown, never
+  dry. The filter compares the event's `total` block (`mm`,
+  `peak_1h.mm`, `peak_10min.mm`) with the optional minimums, `combine` "any"
+  or "all"; no minimum passes every event. The measured type is reserved as
+  the `type` attribute, always `None` until the view carries one; never an
+  estimate.
+- **Per release.** A verdict is judged once per view object
+  (`RainWarning.evaluate` keys on identity), at the `now` of the first entity
+  asking, so both entities agree and the memory moves once per release. No
+  tick: the state changes with RV updates only, `start` is a timestamp.
+- **Memory, in memory only.** A pass is kept per event id until the event
+  leaves the view, and inherited through `absorbed`; an upcoming event that
+  was `soon` stays `soon` for one `unseen` release, and a held one is not
+  held again. A restart judges afresh.
+- **Subentry data** is typed like the options: `DEFAULT_RAIN_WARNING` and
+  `rain_warning_rule()` (`lead_time` int 5-120 step 5, minimums float or
+  absent, `combine`). The flow stores only the minimums that were set, and
+  rejects an empty name or one another warning of the entry has, compared by
+  `slugify`.
+- **Own device per warning.** HA keeps a device in one subentry; adding a
+  subentry's entities to the location's device moves it (reported now, an
+  error from 2027.8). So `RainWarningEntity` puts both on a device
+  `(DOMAIN, f"{entry_id}_{subentry_id}")` named `f"{entry.title}
+  {subentry.title}"`: `binary_sensor.<location>_<warning>_rain_warning`
+  (on for rain/soon) and `sensor.<location>_<warning>_rain_warning_status`
+  (enum, the unrecorded `rain_warning.ATTRIBUTES`). Unique ids
+  `<entry_id>_<subentry_id>_rain_warning` / `..._rain_warning_status`.
+  Entities are added per subentry with `config_subentry_id`.
+- **Lifecycle.** Adding, reconfiguring or deleting a subentry runs the
+  update listener, which reloads the entry; HA removes a deleted subentry's
+  device and entities. `entry.runtime_data.rain_warnings` holds one
+  `RainWarning` per subentry id, built at setup.
+- **Minimum HA 2025.4** (`hacs.json`): the subentry flow uses `_get_entry`
+  and `_get_reconfigure_subentry`.
 
 ## Options form
 

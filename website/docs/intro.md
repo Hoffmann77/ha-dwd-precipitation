@@ -30,6 +30,9 @@ beyond its borders. The DWD radar composites do not cover other countries.
   days-without-rain counter.
 - **Long-term totals:** running rain totals for Home Assistant's statistics,
   so daily, weekly, monthly and yearly sums work out of the box.
+- **Rain warnings:** your own warnings, such as "Laundry, 60 minutes
+  ahead", each an on/off entity for automations, optionally only for rain
+  above a minimum.
 - **Rain events for blueprints** (optional): each burst of rain followed
   under one id from forecast to measurement, with forecast and measured
   amounts side by side.

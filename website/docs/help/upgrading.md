@@ -47,6 +47,9 @@ version gave another entity, so nothing clashes.
   hours. See [RADVOR RV](../entities/radvor-rv.md#peak-intensities).
 - **Rain events**, opt-in with the advanced option *Track rain events*. See
   [Rain events](../entities/rain-events.md).
+- **Rain warnings**: your own warnings, such as "Laundry, 60 minutes ahead",
+  added with **Add rain warning** on the location's entry. They need Home
+  Assistant 2025.4 or newer. See [Rain warnings](../entities/rain-warnings.md).
 
 ### Precipitation previous hour is a clock hour
 

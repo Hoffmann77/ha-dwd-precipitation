@@ -7,13 +7,17 @@ Der Sensor **Regenereignisse** (`sensor.<name>_rain_events`) ist für
 Blueprints gedacht, die vor kurzen Regenschauern warnen oder über sie
 berichten. Er verfolgt jedes Ereignis unter einer ID, von der ersten
 Vorhersage, die es zeigt, bis es gefallen ist, und meldet, was vorhergesagt
-und was gemessen wurde.
+und was gemessen wurde. Für eine einfache Warnung („Wäsche, 60 Minuten
+vorher“) brauchst du weder den Sensor noch einen Blueprint: Füge eine
+[Regenwarnung](rain-warnings.md) hinzu, die mit denselben Ereignissen
+arbeitet.
 
 Er ist standardmäßig aus. Schalte ihn mit der erweiterten Option
 [*Regenereignisse verfolgen*](../getting-started/configuration.md#track-rain-events)
 ein. Ist sie an, ruft die Integration außerdem Radaranalysen ab, die sie
 verpasst hat, und speichert eine kleine Aufzeichnung des jüngsten Regens auf
-der Festplatte; Ausschalten entfernt den Sensor und diese Aufzeichnung.
+der Festplatte; Ausschalten entfernt den Sensor und auch die Aufzeichnung,
+sofern keine Regenwarnung sie noch nutzt.
 
 ## Zustand {#state}
 
@@ -32,7 +36,8 @@ Zustand ist `unknown` („Unbekannt“) statt einer Vermutung.
 Der Sensor wendet einen einzigen Schwellwert an, die erweiterte Option
 [*Schwelle für Regenereignisse*](../getting-started/configuration.md#rain-event-threshold)
 (Standard 0,1 mm/h): ein 5-Minuten-Schritt ist nass, wenn seine Menge über
-einem Zwölftel davon liegt. Warnstufen sind Sache des Blueprints.
+einem Zwölftel davon liegt. Warnstufen sind Sache des Blueprints
+oder der Mindestwerte einer [Regenwarnung](rain-warnings.md).
 
 Eine Änderung des Schwellwerts beginnt die Ereignisse mit neuen IDs von vorn;
 die gemessenen Schritte und `last_ended` bleiben erhalten.

@@ -22,3 +22,4 @@ Versionsnummer bezeichnet (`2026.11.0`).
 | [0009](0009-full-rolling-series-from-rv.md) | Die vollständige Reihe gleitender Stunden wird aus RV gebildet, nicht aus RS | 2026.11.0 |
 | [0010](0010-cells-on-the-grid-each-file-describes.md) | Jedes Produkt liest seine Zelle auf dem Gitter, das seine Datei beschreibt | 2026.11.0 |
 | [0011](0011-dry-streak-gaps-checked-against-rw.md) | Lücken in der Quelle des Trockenzählers werden an den Stunden von RW geprüft | 2026.11.0 |
+| [0012](0012-rain-warnings-as-subentries.md) | Regenwarnungen sind Untereinträge, die die Sicht der Regenereignisse filtern | 2026.11.0 |

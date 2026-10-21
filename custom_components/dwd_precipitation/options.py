@@ -5,6 +5,10 @@ typed snapshot every consumer reads, with one field per key, named like it.
 A snapshot is enough: changing an option reloads the entry, so a
 coordinator or entity never outlives the options it was built with.
 
+Rain warnings are config subentries, read the same way: DEFAULT_RAIN_WARNING
+holds every field's default and rain_warning_rule() the typed rule. Adding,
+changing or removing one reloads the entry too.
+
 """
 
 from __future__ import annotations
@@ -12,6 +16,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
+
+from homeassistant.config_entries import ConfigEntry, ConfigSubentry
 
 from .const import (
     CONF_DRY_STREAK_SOURCE,
@@ -37,7 +43,14 @@ from .const import (
     DRY_STREAK_SOURCE_RW,
     DRY_STREAK_SOURCES,
     RW_SLIDING_KEY,
+    CONF_COMBINE,
+    CONF_LEAD_TIME,
+    CONF_MIN_MM,
+    CONF_MIN_PEAK_10MIN,
+    CONF_MIN_PEAK_1H,
+    SUBENTRY_RAIN_WARNING,
 )
+from .radar.rain_warning import COMBINE_ANY, COMBINES, WarningRule
 
 # Every option the form offers, with the value an entry without it gets.
 DEFAULT_OPTIONS: dict[str, Any] = {
@@ -103,4 +116,54 @@ class DwdOptions:
         if self.dry_streak_source == DRY_STREAK_SOURCE_RW:
             return RW_SLIDING_KEY
         return self.dry_streak_source
+
+
+# Every field of a rain-warning subentry, with the value one without it gets.
+# The minimums are optional: None (or absent) means not asked for.
+DEFAULT_RAIN_WARNING: dict[str, Any] = {
+    CONF_LEAD_TIME: 30,
+    CONF_MIN_MM: None,
+    CONF_MIN_PEAK_1H: None,
+    CONF_MIN_PEAK_10MIN: None,
+    CONF_COMBINE: COMBINE_ANY,
+}
+
+
+def rain_warning_rule(data: Mapping[str, Any]) -> WarningRule:
+    """Read a rain-warning subentry's data, with the defaults for the rest.
+
+    ``data`` is the subentry's ``data`` mapping as the subentry flow saved it.
+    Every key of DEFAULT_RAIN_WARNING becomes a field of the rule. A combine
+    value no version wrote counts as the default.
+
+    """
+    values = {key: data.get(key, default) for key, default in DEFAULT_RAIN_WARNING.items()}
+    values[CONF_LEAD_TIME] = int(values[CONF_LEAD_TIME])
+    for key in (CONF_MIN_MM, CONF_MIN_PEAK_1H, CONF_MIN_PEAK_10MIN):
+        if values[key] is not None:
+            values[key] = float(values[key])
+    if values[CONF_COMBINE] not in COMBINES:
+        values[CONF_COMBINE] = DEFAULT_RAIN_WARNING[CONF_COMBINE]
+    return WarningRule(**values)
+
+
+def rain_warning_subentries(entry: ConfigEntry) -> list[ConfigSubentry]:
+    """Return the entry's rain-warning subentries, in the order they were added."""
+    return [
+        subentry
+        for subentry in entry.subentries.values()
+        if subentry.subentry_type == SUBENTRY_RAIN_WARNING
+    ]
+
+
+def tracks_rain_events(entry: ConfigEntry, options: DwdOptions) -> bool:
+    """Return whether the entry runs the rain-events tracker.
+
+    For the Rain events sensor (the option) or for any rain warning, which
+    filters its view. Without either there is no tracker, no fill requests
+    and no store. Adding or removing a warning reloads the entry, like an
+    option change, so asking once at setup is enough.
+
+    """
+    return options.rain_events or bool(rain_warning_subentries(entry))
 

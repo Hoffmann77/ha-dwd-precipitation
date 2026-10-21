@@ -1,6 +1,8 @@
 # 0006 — Regenereignisse sind eine eigene Opt-in-Entität, bei jeder Veröffentlichung neu berechnet
 
-Status: angenommen (2026.11.0)
+Status: angenommen (2026.11.0); der Teil zum Opt-in ersetzt durch
+[0012](0012-rain-warnings-as-subentries.md), das die Ereignisverfolgung auch
+für Regenwarnungen laufen lässt
 
 ## Kontext {#context}
 

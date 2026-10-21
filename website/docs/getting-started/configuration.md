@@ -29,6 +29,14 @@ so each needs a different name.
 
 To move an existing entry to another location, delete it and add it again.
 
+### Rain warnings
+
+A location can have rain warnings of its own, such as "Laundry, 60 minutes
+ahead". Add one with **Add rain warning** on the location's entry in
+**Settings > Devices & services > DWD Precipitation**. Each warning is a
+device with an on/off and a status entity; see
+[Rain warnings](../entities/rain-warnings.md).
+
 ## Options
 
 Open **Settings > Devices & services > DWD Precipitation > Configure**.
@@ -108,7 +116,7 @@ installations never need it.
 | Option | Default | Affects |
 |--------|---------|---------|
 | [Track rain events](#track-rain-events) | off | adds the Rain events sensor |
-| [Rain event threshold](#rain-event-threshold) | 0.1 mm/h | Rain events |
+| [Rain event threshold](#rain-event-threshold) | 0.1 mm/h | Rain events, rain warnings |
 | [When "Precipitation end" counts rain as over](#end-algorithm) | first dry gap | Precipitation end |
 | [Include the past hour in the hourly forecast series](#past-hour-in-the-series) | off | an attribute of Peak hourly precipitation next 120 min |
 | [Show sensors as unavailable when the data is out of date](#unavailable-when-out-of-date) | on | availability of the sensors |
@@ -119,19 +127,21 @@ installations never need it.
 sensor, which follows each burst of rain from the first forecast that shows
 it until it has fallen, for blueprints that warn about or report rain.
 
-With it on, the integration also fetches the radar analyses it missed (a
-small part of each file) and keeps a small record of recent rain on disk.
-Turning it off removes the sensor and deletes that record, so turning it on
-again starts clean.
+With it on, or while the location has a
+[rain warning](../entities/rain-warnings.md), the integration also fetches
+the radar analyses it missed (a small part of each file) and keeps a small
+record of recent rain on disk. Turning it off removes the sensor; the record
+is deleted once no rain warning needs it either, so turning it on again then
+starts clean. Rain warnings work with this option off.
 
 ### Rain event threshold
 
 **Rain event threshold (mm per hour)** sets how much rain a 5-minute step
-needs to count towards an event of the `Rain events` sensor. `0` means any
-trace forms an event. It is independent of the
+needs to count towards a rain event, for the `Rain events` sensor and the
+[rain warnings](../entities/rain-warnings.md). `0` means any trace forms an
+event. It is independent of the
 [rain detection threshold](#rain-detection-threshold), so the events and
-`Precipitation start` can disagree when the two differ. Only used with
-*Track rain events* on.
+`Precipitation start` can disagree when the two differ.
 
 ### End algorithm
 

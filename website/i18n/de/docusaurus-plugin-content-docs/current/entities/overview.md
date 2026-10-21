@@ -4,7 +4,8 @@ description: Alle Entitäten von DWD Precipitation auf einen Blick, und wie ihre
 ---
 
 Alle Entitäten gehören zu einem **DWD Precipitation**-Gerät pro eingerichtetem
-Standort. Ihre IDs beginnen mit dem Namen, den du dem Standort gegeben hast:
+Standort, außer den [Regenwarnungen](rain-warnings.md), die je ein eigenes
+Gerät sind. Ihre IDs beginnen mit dem Namen, den du dem Standort gegeben hast:
 mit dem Namen `Home` ist `Niederschlag letzte 60 min`
 `sensor.home_precipitation_last_60_min`.
 
@@ -65,10 +66,13 @@ erscheint, ist dieses Fenster schon etwa 3 bis 10 Minuten vorbei. Siehe
 | Niederschlag gesamt täglich¹ | `sensor.<name>_precipitation_total_daily` | mm | täglich | [Laufende Summen](totals.md) |
 | Zeitraum ohne Niederschlag | `sensor.<name>_timespan_without_precipitation` | d | 5 oder 10 min | [Zeitraum ohne Niederschlag](dry-streak.md) |
 | Regenereignisse² | `sensor.<name>_rain_events` | Zustand | 5 min | [Regenereignisse](rain-events.md) |
+| Regenwarnung³ | `binary_sensor.<name>_<warnung>_rain_warning` | an/aus | 5 min | [Regenwarnungen](rain-warnings.md) |
+| Regenwarnung Status³ | `sensor.<name>_<warnung>_rain_warning_status` | Zustand | 5 min | [Regenwarnungen](rain-warnings.md) |
 
 ¹ Bei Installationen, die ab 2026.11.0 eingerichtet wurden, standardmäßig
 deaktiviert.
 ² Nur mit eingeschalteter Option *Regenereignisse verfolgen*.
+³ Ein Paar pro Regenwarnung, die du hinzufügst, auf einem eigenen Gerät.
 
 ## Nur Radar oder angeeicht {#radar-only-or-gauge-adjusted}
 

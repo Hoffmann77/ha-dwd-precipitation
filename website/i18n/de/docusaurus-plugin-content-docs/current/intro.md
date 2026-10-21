@@ -33,6 +33,9 @@ andere Länder nicht ab.
 - **Langfristige Summen:** laufende Regensummen für die Statistiken von Home
   Assistant, sodass Tages-, Wochen-, Monats- und Jahressummen sofort
   funktionieren.
+- **Regenwarnungen:** deine eigenen Warnungen, etwa „Wäsche, 60 Minuten
+  vorher“, jede eine An/Aus-Entität für Automationen, auf Wunsch nur für
+  Regen über einem Mindestwert.
 - **Regenereignisse für Blueprints** (optional): Jeder Regenschauer wird unter
   einer ID von der Vorhersage bis zur Messung verfolgt, mit vorhergesagter und
   gemessener Menge nebeneinander.
