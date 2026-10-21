@@ -513,7 +513,11 @@ async def test_rain_events_sensor_with_the_option(make_entry, hass: HomeAssistan
     assert state.attributes["schema"] == 1
     assert state.attributes["events"] == RAIN_VIEW["events"]
     assert state.attributes["options"] == ["none", "upcoming", "ongoing"]
-    assert entry.runtime_data.coordinators["rv"]._rain_tracker is not None
+    coordinators = entry.runtime_data.coordinators
+    assert coordinators["rv"]._rain_tracker is not None
+    # HymecNG gives every measured step its type.
+    assert coordinators["hymecng"]._rain_tracker is coordinators["rv"]._rain_tracker
+    assert coordinators["rv"]._rain_tracker._fetch_type is not None
 
     flag = _state_for(hass, entry, "radvor_rv_precipitation_expected_120", "binary_sensor")
     assert "rain_events" not in flag.attributes
@@ -538,6 +542,7 @@ async def test_rain_events_off_runs_no_tracker_and_leaves_nothing(
         await hass.async_block_till_done()
 
     assert entry.runtime_data.coordinators["rv"]._rain_tracker is None
+    assert entry.runtime_data.coordinators["hymecng"]._rain_tracker is None
     assert er.async_get(hass).async_get_entity_id("sensor", DOMAIN, unique_id) is None
     assert key not in hass_storage
 

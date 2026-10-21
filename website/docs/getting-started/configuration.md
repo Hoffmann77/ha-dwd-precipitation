@@ -119,8 +119,8 @@ installations never need it.
 sensor, which follows each burst of rain from the first forecast that shows
 it until it has fallen, for blueprints that warn about or report rain.
 
-With it on, the integration also fetches the radar analyses it missed (a
-small part of each file) and keeps a small record of recent rain on disk.
+With it on, the integration also fetches the radar analyses (a small part of
+each file) and the precipitation types it missed, and keeps a small record of recent rain on disk.
 Turning it off removes the sensor and deletes that record, so turning it on
 again starts clean.
 

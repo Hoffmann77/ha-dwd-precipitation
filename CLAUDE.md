@@ -98,7 +98,7 @@ poll loop.
    coordinator. What adopting a release should also do goes in
    `_async_on_new_release(release, data, metadata)`, called once per adopted
    release before it is published, never raising: RV feeds the rain-events
-   tracker there.
+   tracker there, and HymecNG hands it each release's type.
 4. The coordinator wraps those in a `CoordinatorData`. Every product has the
    same shape: `data` and `metadata` are dicts keyed by the same sub-keys
    (`KEY_*` in `const.py`, except RV's own), `metadata` holding each value's `ProductMetadata`
@@ -694,7 +694,8 @@ docs page `website/docs/entities/rain-events.md`. `radar/rain_events.py` holds t
 `RainEventsTracker` (`rain_events_tracker.py`) its life in HA (store, fill,
 save policy, warnings); `RadvorRV` only hands it each adopted release in
 `_async_on_new_release` and lends it an analysis fetch and a publish
-callback; `RainEventsSensor` in sensor.py is the entity.
+callback, `HymecNG` (attached at setup) each adopted release's type and a
+type fetch; `RainEventsSensor` in sensor.py is the entity.
 
 - **Opt-in.** The `rain_events` option (Advanced, default off) gates all of it:
   `RadvorRV.__init__` builds a tracker only when `options.rain_events` is on, and
@@ -756,6 +757,18 @@ callback; `RainEventsSensor` in sensor.py is the entity.
   answers the same release after a restart without processing it twice.
 - **Isolation.** A tracker failure is logged once and leaves the attribute
   out; it never fails the RV update the other sensors depend on.
+- **Precipitation type** (ADR 0012). Each measured step can carry the
+  HymecNG label of the moment it ends (`RainEventsState.types`, by step end;
+  `type_nodata` for a file without one, not refetched). HymecNG records it
+  through `async_record_type`, usually before RV adopts the same release;
+  recording by step time leaves nothing to race, and a late type counts from
+  the next release. The fill round fetches missed types after the analyses,
+  wet steps in the published hour only (`types_to_fill`). Published as
+  `observed.types` (wet measured steps per label) and `type` (the latest
+  wet measured step's). **Measured only:** an upcoming event's `type` is
+  `null`, and nothing is estimated (no neighbouring cell, regional summary or
+  temperature rule); a label is published as DWD gives it, even
+  `no_precipitation` on a wet step. Old stores and views read as no type known.
 - **Threshold.** `rain_event_threshold` is independent of
   `precipitation_threshold` (no `max()`); changing it drops the events (new
   ids) but keeps the measured steps and `last_ended`.

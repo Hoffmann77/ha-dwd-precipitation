@@ -17,6 +17,11 @@ The state keeps every measured step from the start of the oldest ongoing event
 own steps on every release rather than accumulated: a step filled late is
 simply there next time, and nothing can be counted twice.
 
+Each measured step can also carry the HymecNG precipitation type of the same
+release, which is the moment the step ends. Only measured steps have one: DWD
+forecasts no type, and nothing here estimates one. A type recorded late is
+counted from the next release on, like a filled step.
+
 Pure and HA-free, like everything in radar/: the coordinator owns fetching,
 filling and persistence.
 
@@ -71,6 +76,12 @@ class Block(TypedDict):
     peak_10min: Peak | None
 
 
+class ObservedBlock(Block):
+    """The measured part of an event, with its wet steps per HymecNG type."""
+
+    types: dict[str, int]
+
+
 class OnsetView(TypedDict):
     """The forecast users were warned with, and how it compares so far."""
 
@@ -97,9 +108,10 @@ class EventView(TypedDict):
     last_wet_observed: str | None
     missing_steps: int
     observed_complete: bool
-    observed: Block
+    observed: ObservedBlock
     forecast: Block
     total: Block
+    type: str | None
     forecast_at_onset: OnsetView | None
     absorbed: list[str]
 
@@ -115,7 +127,8 @@ class EndedRecord(TypedDict):
     end_clipped: bool
     missing_steps: int
     observed_complete: bool
-    observed: Block
+    observed: ObservedBlock
+    type: str | None
     forecast_at_onset: OnsetView | None
     absorbed: list[str]
 
@@ -190,6 +203,11 @@ class RainEventsState:
     measured: dict[datetime, float | None] = field(default_factory=dict)
     # Steps fetched and found without data for the cell: not worth refetching.
     nodata: set[datetime] = field(default_factory=set)
+    # HymecNG type label of a measured step, by its end; absent = unknown.
+    # May run ahead of ``base``: HymecNG is usually adopted before RV.
+    types: dict[datetime, str] = field(default_factory=dict)
+    # Steps whose HymecNG file had no type for the cell: not refetched.
+    type_nodata: set[datetime] = field(default_factory=set)
     # Upcoming, ongoing and unseen events (internal records).
     events: list[dict[str, Any]] = field(default_factory=list)
     last_ended: EndedRecord | None = None
@@ -220,6 +238,8 @@ class RainEventsState:
             "measured_start": iso(start),
             "measured": steps,
             "nodata": sorted(iso(t) for t in self.nodata),
+            "types": {iso(t): label for t, label in sorted(self.types.items())},
+            "type_nodata": sorted(iso(t) for t in self.type_nodata),
             "events": [_event_to_json(e) for e in self.events],
             "last_ended": self.last_ended,
             "ended_spans": [[iso(a), iso(b)] for a, b in self.ended_spans],
@@ -233,7 +253,8 @@ class RainEventsState:
         Raises ValueError (or TypeError) for anything update() could not work
         with: a missing field, a value of the wrong type, an unreadable
         timestamp. So a damaged or foreign store is discarded as a whole when
-        it is loaded, rather than failing every release after it.
+        it is loaded, rather than failing every release after it. A store from
+        before the precipitation types has none, which is read as no type known.
 
         """
         measured: dict[datetime, float | None] = {}
@@ -245,8 +266,10 @@ class RainEventsState:
             wet_milli=_optional(raw.get("wet_milli"), int, "wet_milli"),
             measured=measured,
             nodata={_required_time(t) for t in raw.get("nodata") or []},
+            types=_types(raw.get("types")),
+            type_nodata={_required_time(t) for t in raw.get("type_nodata") or []},
             events=[_event_from_json(e) for e in raw.get("events") or []],
-            last_ended=_optional(raw.get("last_ended"), dict, "last_ended"),
+            last_ended=_with_type(_optional(raw.get("last_ended"), dict, "last_ended")),
             ended_spans=[
                 (_required_time(a), _required_time(b))
                 for a, b in raw.get("ended_spans") or []
@@ -287,6 +310,38 @@ def _optional(value: Any, kind: type, name: str) -> Any:
     if value is not None and not isinstance(value, kind):
         raise ValueError(f"{name} is {type(value).__name__}, not {kind.__name__}")
     return value
+
+
+def _types(raw: Any) -> dict[datetime, str]:
+    """Return the stored type labels by step end; raise on a malformed one.
+
+    Missing (a store from before the types) gives none.
+
+    """
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"types is {type(raw).__name__}, not dict")
+    out: dict[datetime, str] = {}
+    for t, label in raw.items():
+        if not isinstance(label, str):
+            raise ValueError(f"type label {label!r}")
+        out[_required_time(t)] = label
+    return out
+
+
+def _with_type(record: Any) -> Any:
+    """Give a stored ended record from before the types its type fields.
+
+    It ended before any type was recorded, so no type is known: ``type`` None
+    and no steps per type.
+
+    """
+    if record is not None:
+        record.setdefault("type", None)
+        if isinstance(record.get("observed"), dict):
+            record["observed"].setdefault("types", {})
+    return record
 
 
 def _amount(value: Any) -> float | None:
@@ -419,6 +474,45 @@ def record_measured(
     else:
         state.measured[step_end] = round_mm(value)
         state.nodata.discard(step_end)
+
+
+def record_type(state: RainEventsState, step_end: datetime, label: str | None) -> None:
+    """Store the HymecNG type of the measured step ending at ``step_end``.
+
+    ``label`` is HymecNG's label for the cell at that moment, as the
+    Precipitation type now sensor shows it; None means the file had no type
+    for the cell, which is remembered so the step is not fetched again.
+
+    """
+    if label is None:
+        state.types.pop(step_end, None)
+        state.type_nodata.add(step_end)
+    else:
+        state.types[step_end] = label
+        state.type_nodata.discard(step_end)
+
+
+def types_to_fill(state: RainEventsState, base: datetime, wet_milli: int) -> list[datetime]:
+    """Return the wet measured steps without a type worth fetching, newest first.
+
+    Only a wet step's type is ever published, so only those are fetched, and
+    only within the published window like the measured steps themselves. The
+    step ending at ``base`` is left out: the HymecNG coordinator is fetching
+    that release anyway. A step whose file had no type for the cell is not
+    refetched.
+
+    """
+    t = base - STEP
+    out = []
+    while t >= window_start(base):
+        if (
+            is_wet(state.measured.get(t), wet_milli)
+            and t not in state.types
+            and t not in state.type_nodata
+        ):
+            out.append(t)
+        t -= STEP
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -682,6 +776,42 @@ def _onset_view(
     }
 
 
+def _wet_measured(timeline: _Timeline, first: int, last: int) -> list[int]:
+    """Return the wet measured steps in [first, last], oldest first."""
+    return [
+        step
+        for step in range(first, min(last, timeline.last_measured) + 1)
+        if timeline.kinds[step] == WET
+    ]
+
+
+def _observed_block(
+    timeline: _Timeline, state: RainEventsState, first: int, last: int
+) -> tuple[ObservedBlock, str | None]:
+    """Return the measured part of [first, last] and its latest type.
+
+    The amount and peaks of _block, plus how many wet measured steps had each
+    HymecNG type. A wet step without a known type is not counted. The type is
+    that of the latest wet step that has one, None if none has (and always
+    while the event is upcoming: no type is forecast).
+
+    """
+    block = _block(timeline, first, last)
+    types: dict[str, int] = {}
+    latest: str | None = None
+    for step in _wet_measured(timeline, first, last):
+        if (label := state.types.get(timeline.end(step))) is not None:
+            types[label] = types.get(label, 0) + 1
+            latest = label
+    observed = ObservedBlock(
+        mm=block["mm"],
+        peak_1h=block["peak_1h"],
+        peak_10min=block["peak_10min"],
+        types=types,
+    )
+    return observed, latest
+
+
 def _start_clipped(timeline: _Timeline, first: int) -> bool:
     """Return whether rain may have started before ``first``.
 
@@ -813,8 +943,8 @@ def _ended_record(
 ) -> EndedRecord:
     """Return the final record of an event whose rain ended at ``last_wet``.
 
-    Its measured amount and peaks, how complete they are, and its forecast at
-    onset. It is clipped at the end when an unknown step counted as dry to end
+    Its measured amount, peaks and types, how complete they are, and its
+    forecast at onset. It is clipped at the end when an unknown step counted as dry to end
     it, since that step might have been rain.
 
     """
@@ -822,6 +952,7 @@ def _ended_record(
     start_clipped = _start_clipped(timeline, first)
     # An unknown step that counted as dry to end it might have been rain.
     end_clipped = any(timeline.final_unknown(step) for step in (last_wet + 1, last_wet + 2))
+    observed, latest_type = _observed_block(timeline, state, first, last_wet)
     return {
         "id": event["id"],
         "first_seen": iso(event["first_seen"]),
@@ -831,7 +962,8 @@ def _ended_record(
         "end_clipped": end_clipped,
         "missing_steps": missing,
         "observed_complete": missing == 0 and not start_clipped and not end_clipped,
-        "observed": _block(timeline, first, last_wet),
+        "observed": observed,
+        "type": latest_type,
         "forecast_at_onset": _onset_view(event["onset"], state, base),
         "absorbed": list(event["absorbed"]),
     }
@@ -918,6 +1050,9 @@ def _prune(state: RainEventsState, base: datetime) -> None:
     keep = _keep_from(state, base)
     state.measured = {t: v for t, v in state.measured.items() if keep <= t <= base}
     state.nodata = {t for t in state.nodata if t >= window_start(base)}
+    # Types may be ahead of base (HymecNG is usually adopted first).
+    state.types = {t: v for t, v in state.types.items() if t >= keep}
+    state.type_nodata = {t for t in state.type_nodata if t >= window_start(base)}
 
 
 def _live_runs(state: RainEventsState, timeline: _Timeline) -> list[tuple[int, int]]:
@@ -1011,13 +1146,8 @@ def _classify(
     the event's view is updated).
 
     """
-    last_measured = timeline.last_measured
-    wet_measured = [
-        step
-        for step in range(first, min(last, last_measured) + 1)
-        if timeline.kinds[step] == WET
-    ]
-    forecast_block = _block(timeline, max(first, last_measured + 1), last)
+    wet_measured = _wet_measured(timeline, first, last)
+    forecast_block = _block(timeline, max(first, timeline.last_measured + 1), last)
     event["start"] = timeline.start(first)
     event["end"] = timeline.end(last)
 
@@ -1081,6 +1211,9 @@ def _publish(
     for event in sorted(state.events, key=lambda e: e["start"]):
         view = EventView(**event["view"])
         view["status"] = event["status"]
+        # A view stored before the types (an unseen event keeps its last one).
+        view.setdefault("type", None)
+        view["observed"] = {"types": {}, **view["observed"]}
         events_view.append(view)
 
     steps = timeline.values[timeline.series_start:]
@@ -1105,6 +1238,7 @@ def _orphan_record(event: dict[str, Any]) -> EndedRecord:
 
     """
     view = event["view"] or {}
+    observed = view.get("observed") or {}
     return {
         "id": event["id"],
         "first_seen": iso(event["first_seen"]),
@@ -1114,7 +1248,13 @@ def _orphan_record(event: dict[str, Any]) -> EndedRecord:
         "end_clipped": True,
         "missing_steps": view.get("missing_steps", 0),
         "observed_complete": False,
-        "observed": view.get("observed", {"mm": 0.0, "peak_1h": None, "peak_10min": None}),
+        "observed": ObservedBlock(
+            mm=observed.get("mm", 0.0),
+            peak_1h=observed.get("peak_1h"),
+            peak_10min=observed.get("peak_10min"),
+            types=observed.get("types", {}),
+        ),
+        "type": view.get("type"),
         "forecast_at_onset": view.get("forecast_at_onset"),
         "absorbed": list(event["absorbed"]),
     }
@@ -1131,13 +1271,14 @@ def _event_view(
 ) -> EventView:
     """Return the published view of an event that goes on.
 
-    Its measured part, its forecast part and their total, each with amount and
-    peaks, how complete the measured part is, whether it runs past the forecast
-    horizon, and its forecast at onset once it is ongoing.
+    Its measured part (with its HymecNG types), its forecast part and their
+    total, each with amount and peaks, how complete the measured part is,
+    whether it runs past the forecast horizon, the latest measured type, and
+    its forecast at onset once it is ongoing.
 
     """
     last_observed = min(last, timeline.last_measured)
-    observed = _block(timeline, first, last_observed)
+    observed, latest_type = _observed_block(timeline, state, first, last_observed)
     missing = _missing(timeline, first, last_observed)
     start_clipped = _start_clipped(timeline, first)
     first_published = max(first, timeline.series_start)
@@ -1159,6 +1300,7 @@ def _event_view(
             "peak_1h": _total_peak_1h(timeline, first, last),
             "peak_10min": _peak(timeline, first_published, last, PAIR_STEPS),
         },
+        "type": latest_type,
         "forecast_at_onset": (
             _onset_view(event["onset"], state, base)
             if event["status"] == ONGOING

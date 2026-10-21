@@ -367,3 +367,127 @@ async def test_rv_threshold_option_sets_the_wet_step(rv_tracked) -> None:
     coord = rv_tracked({"rain_event_threshold": 0.6})
     data, _ = await _rv_release(coord, _RVWorld(lambda _t: 0.0), "14:00")
     assert data["rain_events"]["wet_step_mm"] == 0.05
+
+
+# ---------------------------------------------------------------------------
+# Precipitation types (HymecNG)
+# ---------------------------------------------------------------------------
+
+
+class _Types:
+    """Serves the HymecNG type of past releases, as the tracker fetches them."""
+
+    def __init__(self, label="rain", missing=()) -> None:
+        self.label = label
+        self.missing = set(missing)
+        self.requests: list[datetime] = []
+
+    async def fetch(self, release):
+        self.requests.append(release)
+        if release in self.missing:
+            import aiohttp
+
+            raise aiohttp.ClientError("404")
+        return self.label
+
+
+@pytest.mark.asyncio
+async def test_rv_fill_also_fetches_the_type_of_each_wet_step(rv_tracked) -> None:
+    world = _RVWorld(_rain_between("13:30", "14:10"))
+    types = _Types("snow")
+    coord = rv_tracked()
+    coord._rain_tracker.attach_types(types.fetch)
+
+    data, _ = await _rv_release(coord, world, "14:00")
+
+    # The wet steps before the release, newest first; not the dry ones, and
+    # not 14:00, which HymecNG fetches itself.
+    assert types.requests == [DAY_RV.replace(hour=13, minute=m) for m in (55, 50, 45, 40, 35)]
+    event = data["rain_events"]["events"][0]
+    assert event["observed"]["types"] == {"snow": 5}
+    assert event["type"] == "snow"
+
+    # HymecNG did not hand over 14:00 here, so the next release fetches it.
+    types.requests.clear()
+    await _rv_release(coord, world, "14:05")
+    assert types.requests == [DAY_RV.replace(hour=14)]
+    # Once HymecNG hands over its releases, nothing is left to fetch.
+    types.requests.clear()
+    for minute in (5, 10):
+        await coord._rain_tracker.async_record_type(DAY_RV.replace(hour=14, minute=minute), "snow")
+    await _rv_release(coord, world, "14:10")
+    assert types.requests == []
+
+
+@pytest.mark.asyncio
+async def test_rv_type_recorded_by_hymecng_needs_no_fetch(rv_tracked) -> None:
+    world = _RVWorld(_rain_between("13:30", "14:10"))
+    types = _Types()
+    coord = rv_tracked()
+    tracker = coord._rain_tracker
+    tracker.attach_types(types.fetch)
+    await _rv_release(coord, world, "14:00")
+    types.requests.clear()
+
+    # HymecNG adopted 14:00 and adopts 14:05 before RV does.
+    await tracker.async_record_type(DAY_RV.replace(hour=14), "rain")
+    await tracker.async_record_type(DAY_RV.replace(hour=14, minute=5), "graupel")
+    data, _ = await _rv_release(coord, world, "14:05")
+
+    assert types.requests == []
+    assert data["rain_events"]["events"][0]["type"] == "graupel"
+
+
+@pytest.mark.asyncio
+async def test_rv_failed_type_fill_warns_once_and_keeps_the_amounts(rv_tracked, caplog) -> None:
+    world = _RVWorld(_rain_between("13:30", "14:10"))
+    types = _Types(missing={DAY_RV.replace(hour=13, minute=50)})
+    coord = rv_tracked()
+    coord._rain_tracker.attach_types(types.fetch)
+
+    data, _ = await _rv_release(coord, world, "14:00")
+    await _rv_release(coord, world, "14:05")
+
+    event = data["rain_events"]["events"][0]
+    assert event["observed"]["mm"] == 6.0  # every analysis was filled
+    assert event["observed"]["types"] == {"rain": 1}  # 13:55, then 13:50 failed
+    warnings = [r for r in caplog.records if "DWD HymecNG release" in r.message]
+    assert len(warnings) == 1
+    assert "precipitation type stays unknown" in warnings[0].message
+    assert not coord._rain_tracker.fill_latch.failing
+
+
+@pytest.mark.asyncio
+async def test_rv_without_hymecng_fetches_no_types(rv_tracked) -> None:
+    world = _RVWorld(_rain_between("13:30", "14:10"))
+    coord = rv_tracked()
+
+    data, _ = await _rv_release(coord, world, "14:00")
+    second, _ = await _rv_release(coord, world, "14:05")
+
+    assert second["rain_events"]["events"][0]["type"] is None
+    assert coord._rain_tracker.fill_task.done()
+
+
+@pytest.mark.asyncio
+async def test_rv_type_before_the_first_release_loads_the_store_once(
+    rv_tracked, make_entry, hass_storage
+) -> None:
+    """HymecNG and RV both reach the state at setup; neither may lose the other."""
+    world = _RVWorld(_rain_between("13:30", "15:00"))
+    entry = make_entry({"rain_events": True})
+    before = rv_tracked(entry=entry)
+    first, _ = await _rv_release(before, world, "14:00")
+    await before._rain_tracker.async_save()
+
+    restarted = rv_tracked(entry=entry)
+    tracker = restarted._rain_tracker
+    at = DAY_RV.replace(hour=14, minute=5)
+    await asyncio.gather(
+        tracker.async_record_type(at, "hail"),
+        _rv_release(restarted, world, "14:05"),
+    )
+
+    assert tracker.state.types == {at: "hail"}
+    view = restarted.data.data["rain_events"]
+    assert view["events"][0]["id"] == first["rain_events"]["events"][0]["id"]

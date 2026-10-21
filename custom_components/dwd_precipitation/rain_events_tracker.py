@@ -3,8 +3,10 @@
 radar/rain_events.py is the pure logic; this is its life in Home Assistant.
 The RV coordinator hands it every release it adopts and lends it two things:
 a way to fetch one missed analysis, and a way to publish a view that is ready
-after the RV update (a background fill). Everything else, from the Store to
-the save policy and the once-per-run warnings, lives here.
+after the RV update (a background fill). The HymecNG coordinator hands it the
+precipitation type of every release it adopts, and lends it a way to fetch a
+missed one. Everything else, from the Store to the save policy and the
+once-per-run warnings, lives here.
 
 """
 
@@ -27,7 +29,9 @@ from .radar.rain_events import (
     RainEventsView,
     at_stake,
     record_measured,
+    record_type,
     steps_to_fill,
+    types_to_fill,
     update as update_rain_events,
     wet_step_milli,
 )
@@ -66,17 +70,22 @@ def rain_events_store(hass: HomeAssistant, entry_id: str) -> Store:
     return Store(hass, RAIN_EVENTS_STORE_VERSION, rain_events_store_key(entry_id))
 
 
-def _describe_fill_failure(err: Exception, step_end: datetime) -> str:
-    """Return the warning for a missed RV analysis that could not be filled.
+def _describe_fill_failure(
+    err: Exception, step_end: datetime, product: str = "RV", lost: str = "step"
+) -> str:
+    """Return the warning for a missed release that could not be filled.
 
-    ``step_end`` is the step that stays unknown. Only a failed download is
-    DWD's doing; a file that arrived but could not be read is worth a report.
-    Plain ASCII, like _describe_fetch_error.
+    ``step_end`` is the step that stays unknown, ``product`` the DWD product
+    that was fetched for it (RV for the amount, HymecNG for the type) and
+    ``lost`` what of it stays unknown. Only a failed download is DWD's doing; a
+    file that arrived but could not be read is worth a report. Plain ASCII,
+    like _describe_fetch_error.
 
     """
     what = (
-        f"the missed DWD RV release {step_end.strftime('%Y-%m-%d %H:%M UTC')} "
-        f"to fill the rain_events history ({err or type(err).__name__})"
+        f"the missed DWD {product} release "
+        f"{step_end.strftime('%Y-%m-%d %H:%M UTC')} to fill the rain_events "
+        f"history ({err or type(err).__name__})"
     )
     if isinstance(err, (aiohttp.ClientError, TimeoutError)):
         cause = (
@@ -88,7 +97,9 @@ def _describe_fill_failure(err: Exception, step_end: datetime) -> str:
             f"Could not read {what}. This is likely a change on DWD's side or "
             "a bug in the integration; please report it if it keeps happening."
         )
-    return f"{cause} The step stays unknown and is retried with the next releases"
+    return (
+        f"{cause} The {lost} stays unknown and is retried with the next releases"
+    )
 
 
 class RainEventsTracker:
@@ -119,17 +130,53 @@ class RainEventsTracker:
         # reloads the entry, and the tracker starts new events for it.
         self._milli = wet_step_milli(threshold_mmh)
         self._fetch_analysis = fetch_analysis
+        # Lent by the HymecNG coordinator (attach_types); None without one.
+        self._fetch_type: Callable[[datetime], Awaitable[str | None]] | None = None
         self._publish = publish
         self.store = store if store is not None else rain_events_store(hass, entry.entry_id)
         self.state: RainEventsState | None = None
+        # RV and HymecNG both reach the state; it is loaded only once.
+        self._load_lock = asyncio.Lock()
         self._saved_ended: str | None = None
         # The background fill-and-track round, if one was started; and the
         # last view this run published, shown while a round is still running.
         self.fill_task: asyncio.Task | None = None
         self._view: RainEventsView | None = None
         self.fill_latch = FailureLatch()
+        self.type_fill_latch = FailureLatch()
         self._track_latch = FailureLatch()
         entry.async_on_unload(self.async_save)
+
+    def attach_types(
+        self, fetch_type: Callable[[datetime], Awaitable[str | None]]
+    ) -> None:
+        """Let the tracker fill missed precipitation types with ``fetch_type``.
+
+        Called at setup with the HymecNG coordinator's fetch of one past
+        release's type for the location (None when the file has none).
+
+        """
+        self._fetch_type = fetch_type
+
+    async def async_record_type(self, release: datetime, label: str | None) -> None:
+        """Record the HymecNG type of ``release``, the moment its step ends.
+
+        Called by the HymecNG coordinator for every release it adopts, usually
+        before RV adopts the same release; the type is published with the next
+        view the tracker computes. Never raises: a failure is logged once, like
+        any tracker failure, and costs only the type.
+
+        """
+        try:
+            record_type(await self._async_state(), release, label)
+        except Exception:
+            self._failed()
+
+    def _types_to_fill(self, state: RainEventsState, base: datetime) -> list[datetime]:
+        """Return the types worth fetching now; none without a HymecNG fetch."""
+        if self._fetch_type is None:
+            return []
+        return types_to_fill(state, base, self._milli)
 
     @staticmethod
     async def async_remove(hass: HomeAssistant, entry_id: str) -> None:
@@ -163,7 +210,7 @@ class RainEventsTracker:
             return None
         milli = self._milli
         running = self.fill_task is not None and not self.fill_task.done()
-        if running or steps_to_fill(state, base):
+        if running or steps_to_fill(state, base) or self._types_to_fill(state, base):
             self.fill_task = self._entry.async_create_background_task(
                 self._hass,
                 self._async_fill_and_track(
@@ -246,60 +293,106 @@ class RainEventsTracker:
         every release. Without a store the state starts empty.
 
         """
-        if self.state is None:
-            try:
-                raw = await self.store.async_load()
-                self.state = RainEventsState.from_dict(raw) if raw else RainEventsState()
-            except Exception as err:  # noqa: BLE001 - any unreadable store
-                # Also a store written by another version: discarding it costs
-                # the event ids and up to an hour of measured history, where
-                # keeping it would fail every release until the option is off.
-                _LOGGER.warning(
-                    "Discarding the saved rain_events state, which could not be "
-                    "read (%s). Event ids start over; nothing else is affected",
-                    err or type(err).__name__,
-                )
-                self.state = RainEventsState()
-            self._saved_ended = (self.state.last_ended or {}).get("id")
+        async with self._load_lock:
+            if self.state is None:
+                self.state = await self._async_load()
+                self._saved_ended = (self.state.last_ended or {}).get("id")
         return self.state
 
-    async def _async_fill_missed(self, state: RainEventsState, base: datetime) -> None:
-        """Fetch the analysis of each missed release still in the window.
+    async def _async_load(self) -> RainEventsState:
+        """Read the state from the store; a fresh one if it cannot be read."""
+        try:
+            raw = await self.store.async_load()
+            return RainEventsState.from_dict(raw) if raw else RainEventsState()
+        except Exception as err:  # noqa: BLE001 - any unreadable store
+            # Also a store written by another version: discarding it costs
+            # the event ids and up to an hour of measured history, where
+            # keeping it would fail every release until the option is off.
+            _LOGGER.warning(
+                "Discarding the saved rain_events state, which could not be "
+                "read (%s). Event ids start over; nothing else is affected",
+                err or type(err).__name__,
+            )
+            return RainEventsState()
 
-        Sequential, newest first, within RAIN_FILL_BUDGET (30 s); the first
-        failure ends the round and the rest wait for the next release. Each
-        fill reads only the analysis member, about 4-7 % of the archive, and
-        records it in ``state``.
+    async def _async_fill_missed(self, state: RainEventsState, base: datetime) -> None:
+        """Fetch what the tracker missed of the releases still in the window.
+
+        First the analysis of each missed release, then the type of each wet
+        measured step without one (only now are the filled steps known to be
+        wet). Both share one RAIN_FILL_BUDGET (30 s) and run sequentially,
+        newest first; the first failure ends that part of the round and the
+        rest wait for the next release, so a failed analysis also postpones
+        the types. Each analysis reads only its member, about 4-7 % of the
+        archive; each type is one small HymecNG file.
 
         """
-        missing = steps_to_fill(state, base)
-        if not missing:
-            return
         loop = asyncio.get_running_loop()
         deadline = loop.time() + RAIN_FILL_BUDGET.total_seconds()
+        done = await self._async_fill(
+            steps_to_fill(state, base),
+            self._fetch_analysis,
+            lambda step_end, value: record_measured(state, step_end, value),
+            self.fill_latch,
+            "RV analysis",
+            lambda err, step_end: _describe_fill_failure(err, step_end),
+            deadline,
+        )
+        if done and self._fetch_type is not None:
+            await self._async_fill(
+                self._types_to_fill(state, base),
+                self._fetch_type,
+                lambda step_end, label: record_type(state, step_end, label),
+                self.type_fill_latch,
+                "HymecNG type",
+                lambda err, step_end: _describe_fill_failure(
+                    err, step_end, "HymecNG", "step's precipitation type"
+                ),
+                deadline,
+            )
+
+    async def _async_fill(
+        self,
+        missing: list[datetime],
+        fetch: Callable[[datetime], Awaitable[Any]],
+        record: Callable[[datetime, Any], None],
+        latch: FailureLatch,
+        what: str,
+        describe: Callable[[Exception, datetime], str],
+        deadline: float,
+    ) -> bool:
+        """Fetch and record each of ``missing`` in turn until ``deadline``.
+
+        Returns whether every one was recorded. Running out of time is not a
+        failure; the first failed fetch ends the run, warned about once per
+        run of failures through ``latch``.
+
+        """
+        if not missing:
+            return True
+        loop = asyncio.get_running_loop()
         for step_end in missing:
             remaining = deadline - loop.time()
             if remaining <= 0:
-                return
+                return False
             budget = asyncio.timeout(remaining)
             try:
                 async with budget:
-                    value = await self._fetch_analysis(step_end)
+                    value = await fetch(step_end)
             except Exception as err:  # noqa: BLE001 - every failure is retried later
                 if budget.expired():
                     # Our own limit, not a failure: the rest waits for the
                     # next release.
-                    _LOGGER.debug(
-                        "Fill budget used up at the RV analysis of %s", step_end
-                    )
-                    return
-                _LOGGER.debug("Could not fill the RV analysis of %s: %s", step_end, err)
-                if self.fill_latch.fail():
-                    _LOGGER.warning(_describe_fill_failure(err, step_end))
-                return
-            _LOGGER.debug("Filled the RV analysis of %s: %s", step_end, value)
-            record_measured(state, step_end, value)
-        self.fill_latch.ok()
+                    _LOGGER.debug("Fill budget used up at the %s of %s", what, step_end)
+                    return False
+                _LOGGER.debug("Could not fill the %s of %s: %s", what, step_end, err)
+                if latch.fail():
+                    _LOGGER.warning(describe(err, step_end))
+                return False
+            _LOGGER.debug("Filled the %s of %s: %s", what, step_end, value)
+            record(step_end, value)
+        latch.ok()
+        return True
 
     def _schedule_save(self, state: RainEventsState) -> None:
         """Persist the tracker: soon while it matters, else at shutdown.

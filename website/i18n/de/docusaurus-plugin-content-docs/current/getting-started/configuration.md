@@ -125,8 +125,8 @@ meisten Installationen brauchen ihn nie.
 Regenschauer von der ersten Vorhersage, die ihn zeigt, bis er gefallen ist,
 für Blueprints, die vor Regen warnen oder über Regen berichten.
 
-Ist die Option an, ruft die Integration auch die verpassten Radaranalysen ab
-(einen kleinen Teil jeder Datei) und speichert eine kleine Aufzeichnung des
+Ist die Option an, ruft die Integration auch die verpassten Radaranalysen
+(einen kleinen Teil jeder Datei) und Niederschlagsarten ab und speichert eine kleine Aufzeichnung des
 jüngsten Regens auf der Festplatte. Ausschalten entfernt den Sensor und löscht
 diese Aufzeichnung, sodass ein erneutes Einschalten sauber von vorn beginnt.
 

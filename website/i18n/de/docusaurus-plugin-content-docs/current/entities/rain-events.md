@@ -7,12 +7,12 @@ Der Sensor **Regenereignisse** (`sensor.<name>_rain_events`) ist für
 Blueprints gedacht, die vor kurzen Regenschauern warnen oder über sie
 berichten. Er verfolgt jedes Ereignis unter einer ID, von der ersten
 Vorhersage, die es zeigt, bis es gefallen ist, und meldet, was vorhergesagt
-und was gemessen wurde.
+und was gemessen wurde, und welche Niederschlagsart gemessen wurde.
 
 Er ist standardmäßig aus. Schalte ihn mit der erweiterten Option
 [*Regenereignisse verfolgen*](../getting-started/configuration.md#track-rain-events)
-ein. Ist sie an, ruft die Integration außerdem Radaranalysen ab, die sie
-verpasst hat, und speichert eine kleine Aufzeichnung des jüngsten Regens auf
+ein. Ist sie an, ruft die Integration außerdem Radaranalysen und
+Niederschlagsarten ab, die sie verpasst hat, und speichert eine kleine Aufzeichnung des jüngsten Regens auf
 der Festplatte; Ausschalten entfernt den Sensor und diese Aufzeichnung.
 
 ## Zustand {#state}
@@ -62,14 +62,16 @@ events:                                # upcoming | ongoing | unseen, nach Begin
     last_wet_observed: "…"             # null, solange bevorstehend
     missing_steps: 0                   # gemessene Schritte ohne Daten innerhalb des Ereignisses
     observed_complete: true            # false: gemessene Mengen können zu niedrig sein
-    observed: {mm, peak_1h: {mm, start, end}, peak_10min: {mm, start, end}}
+    observed: {mm, peak_1h: {mm, start, end}, peak_10min: {mm, start, end},
+               types: {rain: 9, snow: 3}}  # gemessene nasse Schritte je Art
     forecast: {mm, peak_1h, peak_10min}
     total:    {mm, peak_1h, peak_10min}
+    type: snow                         # des letzten nassen gemessenen Schritts; null, solange bevorstehend
     forecast_at_onset: {base, start, end, mm, peak_1h, peak_10min,
                         expected_so_far_mm, observed_so_far_mm}   # oder null
     absorbed: []                       # IDs, die in diesem Ereignis aufgegangen sind
 last_ended: {id, first_seen, start, start_clipped, end, end_clipped, missing_steps,
-             observed_complete, observed, forecast_at_onset, absorbed}   # oder null
+             observed_complete, observed, type, forecast_at_onset, absorbed}   # oder null
 ```
 
 ### Schritte {#steps}
@@ -109,6 +111,30 @@ Veröffentlichung keine Lücke hinterlässt.
   überlappt, *einschließlich* Regen knapp außerhalb davon, weil das
   Starkregenkriterium des DWD einfach die Menge innerhalb einer Stunde ist.
 
+### Niederschlagsart {#precipitation-type}
+
+- `observed.types` zählt die nassen gemessenen Schritte des Ereignisses nach
+  der Art, die die [HymecNG](hymecng.md)-Klassifikation des DWD am Ende jedes
+  Schritts für deinen Standort angab, mit den Zuständen von
+  [Niederschlagsart aktuell](hymecng.md#precipitation-type-now):
+  `{rain: 9, snow: 3}` sind 45 Minuten Regen und 15 Minuten Schnee.
+- `type` ist die Art des letzten nassen gemessenen Schritts, der eine hat.
+- Nur gemessene Schritte haben eine Art. Die Kurzfristvorhersage des DWD sagt
+  Mengen vorher, keine Arten; ein bevorstehendes Ereignis hat daher
+  `type: null` und keine `types`, und seine Art erscheint mit dem ersten
+  gemessenen Regen. Die Integration schätzt keine.
+- Die Arten sind die des DWD, unverändert. HymecNG klassifiziert unabhängig
+  von den Mengen; ein nasser Schritt kann daher `no_precipitation` oder
+  `not_classified` haben und wird unter diesem Zustand gezählt.
+- Ein nasser Schritt ohne Art wird nicht gezählt; die Zählungen können daher
+  weniger ergeben als die nassen Schritte des Ereignisses. Das passiert, wenn
+  HymecNG für deinen Standort keine Daten hat oder seine Datei nicht abgerufen
+  werden konnte; eine verpasste Art wird wie eine verpasste Analyse später
+  abgerufen, solange der Schritt in der veröffentlichten Stunde liegt.
+- Meist bekommt ein Schritt seine Art von HymecNG, bevor die Radaranalyse
+  ankommt. Eine Art, die später ankommt, erscheint ab der nächsten
+  Veröffentlichung.
+
 ### Vorhersage bei Beginn {#forecast-at-onset}
 
 `forecast_at_onset` ist die letzte Vorhersage des Ereignisses, bevor sein Regen
@@ -133,10 +159,13 @@ Berichte muss es daher kopieren, wenn er zum ersten Mal eine neue ID sieht.
   solange der DWD eine Veröffentlichung nicht ausliefert, können die
   gemessenen Werte eines Ereignisses zu niedrig sein: prüfe
   `observed_complete` (und `missing_steps`, `start_clipped`, `end_clipped`).
-  Kurz gesagt: starte Home Assistant nicht während eines heftigen
+  Dasselbe gilt für die Arten, deren Zählungen dann diese Schritte nicht
+  enthalten. Kurz gesagt: starte Home Assistant nicht während eines heftigen
   Wolkenbruchs neu.
 - Die Aufzeichnung übersteht Neustarts und Optionsänderungen. Wenn du den
   Konfigurationseintrag der Integration löschst, wird sie mitgelöscht.
 - [ADR 0006](/development/adr/0006-rain-events-opt-in-entity) erklärt, warum
   die Ereignisse eine eigene, optional zuschaltbare Entität sind und bei jeder
-  Veröffentlichung neu berechnet werden.
+  Veröffentlichung neu berechnet werden,
+  [ADR 0012](/development/adr/0012-rain-event-types-are-measured-only), warum
+  sie erst eine Art haben, wenn sie gemessen ist.

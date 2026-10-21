@@ -688,6 +688,11 @@ class RadvorRV(RadvorProduct):
                 self._publish_rain_view,
             )
 
+    @property
+    def rain_tracker(self) -> RainEventsTracker | None:
+        """Return the entry's rain-events tracker; None with the option off."""
+        return self._rain_tracker
+
     async def _async_on_new_release(
         self, release: datetime, data: dict, metadata: dict
     ) -> None:
@@ -819,6 +824,8 @@ class HymecNG(WholeFileProduct):
     rather than an amount.
 
     data[``precipitation_type``] is the class label (None outside coverage).
+    With rain events on, every adopted release's label also goes to the
+    entry's rain-events tracker, as the type of the measured step ending then.
 
     """
 
@@ -840,6 +847,50 @@ class HymecNG(WholeFileProduct):
     # Precipitation type changes slowly enough that a value one release old
     # is still informative.
     OVERDUE_GRACE = DEFAULT_OVERDUE_GRACE
+
+    # The entry's rain-events tracker (RV's), set by attach_rain_tracker; None
+    # when the rain_events option is off.
+    _rain_tracker: RainEventsTracker | None = None
+
+    def attach_rain_tracker(self, tracker: RainEventsTracker) -> None:
+        """Feed ``tracker`` the type of every release, and lend it a fetch.
+
+        Called at setup, before the first refresh, when the entry tracks rain
+        events. The tracker can then fill the type of a wet step this
+        coordinator missed.
+
+        """
+        self._rain_tracker = tracker
+        tracker.attach_types(self._async_fetch_type)
+
+    async def _async_on_new_release(
+        self, release: datetime, data: dict, metadata: dict
+    ) -> None:
+        """Hand the release's type to the rain-events tracker, if there is one.
+
+        The type is that of the moment ``release``, so it belongs to the
+        measured step ending then. The tracker never raises.
+
+        """
+        if self._rain_tracker is not None:
+            await self._rain_tracker.async_record_type(
+                release, data[KEY_PRECIPITATION_TYPE]
+            )
+
+    async def _async_fetch_type(self, release: datetime) -> str | None:
+        """Return the type label of a past ``release`` (None without one).
+
+        For the rain-events tracker to fill a step's type it missed. Raises if
+        the file is for another moment, so a wrong file is never recorded as
+        that step's type.
+
+        """
+        fetched = await self.async_fetch_release(release)
+        meta = fetched.metadata[KEY_PRECIPITATION_TYPE]
+        moment = meta.source_timestamp if meta is not None else None
+        if moment != release:
+            raise ValueError(f"HymecNG file of {release} is for {moment}")
+        return fetched.data[KEY_PRECIPITATION_TYPE]
 
     def _parse(self, content: bytes, ts: datetime) -> Payload:
         """Return the cell's precipitation-type label (blocking).
