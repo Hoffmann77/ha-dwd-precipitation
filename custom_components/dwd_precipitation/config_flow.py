@@ -7,7 +7,7 @@ import logging
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.core import callback
-from homeassistant.data_entry_flow import FlowResult
+from homeassistant.data_entry_flow import section
 from homeassistant.helpers import selector
 from homeassistant.const import CONF_NAME
 
@@ -16,114 +16,141 @@ from .const import (
     CONF_COORDS,
     CONF_EXTRA_ATTRIBUTES,
     CONF_UNAVAILABLE_WHEN_STALE,
-    DEFAULT_UNAVAILABLE_WHEN_STALE,
     CONF_PRECIPITATION_THRESHOLD,
-    DEFAULT_PRECIPITATION_THRESHOLD,
     CONF_START_END_MODE,
-    DEFAULT_START_END_MODE,
     START_END_MODE_TIMESTAMP,
     START_END_MODE_DURATION,
     CONF_PRECIPITATION_END_ALGORITHM,
-    DEFAULT_PRECIPITATION_END_ALGORITHM,
     RAIN_END_ALGO_EPISODE,
     RAIN_END_ALGO_CLEARING,
     CONF_PRECIPITATION_RESET_THRESHOLD,
-    DEFAULT_PRECIPITATION_RESET_THRESHOLD,
+    CONF_DRY_STREAK_SOURCE,
+    DEFAULT_DRY_STREAK_SOURCE,
+    DRY_STREAK_SOURCES,
     CONF_FULL_ROLLING_SERIES,
-    DEFAULT_FULL_ROLLING_SERIES,
+    CONF_RAIN_EVENTS,
+    CONF_RAIN_EVENT_THRESHOLD,
 )
-from .radar import rs_grid_contains
+from .options import DwdOptions
+
+# Where DWD's radar can have data for a location: a latitude/longitude box
+# around its DE1200 grid (45.69-56.21 N, 1.47-18.73 E), rounded outwards. It
+# only turns away a location that is clearly elsewhere; the grid each file
+# describes is what decides (ADR 0010), and a location in the box but off it
+# is reported when a product is read.
+COVERAGE_LAT = (45.6, 56.3)
+COVERAGE_LON = (1.4, 18.8)
+
+# The collapsed part of the options form. Only the form is nested: its values
+# are stored flat with the others (see OptionsFlowHandler.async_step_init).
+SECTION_ADVANCED = "advanced_options"
 
 
 _LOGGER = logging.getLogger(__name__)
 
 
+def _number(unit: str) -> selector.NumberSelector:
+    """Return a non-negative number box in steps of 0.1 ``unit``.
+
+    A Home Assistant number selector shown as a text box, for the thresholds in
+    the options form; ``unit`` ("mm/h" or "mm") is shown next to it.
+
+    """
+    return selector.NumberSelector(
+        selector.NumberSelectorConfig(
+            min=0, step=0.1, unit_of_measurement=unit, mode=selector.NumberSelectorMode.BOX
+        )
+    )
+
+
+def _dropdown(options: list[str], translation_key: str) -> selector.SelectSelector:
+    """Return a dropdown of ``options``, labelled by ``translation_key``.
+
+    ``options`` are the values stored; the labels the user sees come from the
+    translations under ``translation_key`` (translations/en.json, de.json), so
+    the stored values never depend on the language.
+
+    """
+    return selector.SelectSelector(
+        selector.SelectSelectorConfig(
+            options=options,
+            translation_key=translation_key,
+            mode=selector.SelectSelectorMode.DROPDOWN,
+        )
+    )
+
+
 class OptionsFlowHandler(config_entries.OptionsFlow):
     """Handle options flow for DWD Precipitation."""
 
-    async def async_step_init(self, user_input=None) -> FlowResult:
-        """Manage the options."""
-        if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
+    async def async_step_init(self, user_input=None) -> config_entries.ConfigFlowResult:
+        """Show the options form, or save what the user entered.
 
-        schema = vol.Schema(
+        Home Assistant calls this twice: without input to show the form, and
+        with the submitted values. The rarely needed options sit in a collapsed
+        "Advanced" section of the form, but they are stored flat like the rest:
+        every option keeps its key, so nothing that reads ``entry.options``
+        notices the section and no migration is needed. Saving reloads the
+        entry (see update_listener).
+
+        """
+        if user_input is not None:
+            data = {k: v for k, v in user_input.items() if k != SECTION_ADVANCED}
+            data.update(user_input.get(SECTION_ADVANCED, {}))
+            return self.async_create_entry(title="", data=data)
+
+        options = DwdOptions.from_options(self.config_entry.options)
+
+        def current(key: str) -> vol.Optional:
+            """Return an optional field showing the stored value or the default.
+
+            Pre-fills each field from DwdOptions: the stored value, or the
+            default when nothing is stored. A stored value no version wrote
+            shows the default that replaces it, so saving the form unchanged
+            fixes it.
+
+            """
+            return vol.Optional(key, default=getattr(options, key))
+
+        advanced = vol.Schema(
             {
-                vol.Optional(
-                    CONF_EXTRA_ATTRIBUTES,
-                    default=self.config_entry.options.get(CONF_EXTRA_ATTRIBUTES, False),
-                ): selector.BooleanSelector(),
-                vol.Optional(
-                    CONF_UNAVAILABLE_WHEN_STALE,
-                    default=self.config_entry.options.get(
-                        CONF_UNAVAILABLE_WHEN_STALE,
-                        DEFAULT_UNAVAILABLE_WHEN_STALE,
-                    ),
-                ): selector.BooleanSelector(),
-                vol.Optional(
-                    CONF_PRECIPITATION_THRESHOLD,
-                    default=self.config_entry.options.get(
-                        CONF_PRECIPITATION_THRESHOLD, DEFAULT_PRECIPITATION_THRESHOLD
-                    ),
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=0,
-                        step=0.1,
-                        unit_of_measurement="mm/h",
-                        mode=selector.NumberSelectorMode.BOX,
-                    )
+                current(CONF_RAIN_EVENTS): selector.BooleanSelector(),
+                current(CONF_RAIN_EVENT_THRESHOLD): _number(
+                    "mm/h"
                 ),
-                vol.Optional(
-                    CONF_START_END_MODE,
-                    default=self.config_entry.options.get(
-                        CONF_START_END_MODE, DEFAULT_START_END_MODE
-                    ),
-                ): selector.SelectSelector(
-                    selector.SelectSelectorConfig(
-                        options=[
-                            START_END_MODE_TIMESTAMP,
-                            START_END_MODE_DURATION,
-                        ],
-                        translation_key=CONF_START_END_MODE,
-                        mode=selector.SelectSelectorMode.DROPDOWN,
-                    )
-                ),
-                vol.Optional(
+                current(CONF_PRECIPITATION_END_ALGORITHM): _dropdown(
+                    [RAIN_END_ALGO_EPISODE, RAIN_END_ALGO_CLEARING],
                     CONF_PRECIPITATION_END_ALGORITHM,
-                    default=self.config_entry.options.get(
-                        CONF_PRECIPITATION_END_ALGORITHM, DEFAULT_PRECIPITATION_END_ALGORITHM
-                    ),
-                ): selector.SelectSelector(
-                    selector.SelectSelectorConfig(
-                        options=[
-                            RAIN_END_ALGO_EPISODE,
-                            RAIN_END_ALGO_CLEARING,
-                        ],
-                        translation_key=CONF_PRECIPITATION_END_ALGORITHM,
-                        mode=selector.SelectSelectorMode.DROPDOWN,
-                    )
                 ),
-                vol.Optional(
-                    CONF_PRECIPITATION_RESET_THRESHOLD,
-                    default=self.config_entry.options.get(
-                        CONF_PRECIPITATION_RESET_THRESHOLD, DEFAULT_PRECIPITATION_RESET_THRESHOLD
-                    ),
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=0,
-                        step=0.1,
-                        unit_of_measurement="mm",
-                        mode=selector.NumberSelectorMode.BOX,
-                    )
-                ),
-                vol.Optional(
-                    CONF_FULL_ROLLING_SERIES,
-                    default=self.config_entry.options.get(
-                        CONF_FULL_ROLLING_SERIES, DEFAULT_FULL_ROLLING_SERIES
-                    ),
-                ): selector.BooleanSelector(),
+                current(CONF_FULL_ROLLING_SERIES): selector.BooleanSelector(),
+                current(CONF_UNAVAILABLE_WHEN_STALE): selector.BooleanSelector(),
             }
         )
-        return self.async_show_form(step_id="init", data_schema=schema)
+        schema = vol.Schema(
+            {
+                current(CONF_EXTRA_ATTRIBUTES): selector.BooleanSelector(),
+                current(CONF_PRECIPITATION_THRESHOLD): _number("mm/h"),
+                current(CONF_START_END_MODE): _dropdown(
+                    [START_END_MODE_TIMESTAMP, START_END_MODE_DURATION],
+                    CONF_START_END_MODE,
+                ),
+                current(CONF_PRECIPITATION_RESET_THRESHOLD): _number("mm"),
+                current(CONF_DRY_STREAK_SOURCE): _dropdown(
+                    list(DRY_STREAK_SOURCES), CONF_DRY_STREAK_SOURCE
+                ),
+                vol.Required(SECTION_ADVANCED): section(
+                    advanced,  # pyright: ignore[reportArgumentType]  (probatio, see below)
+                    {"collapsed": True},
+                ),
+            }
+        )
+        # HA's annotations name probatio.Schema, which HA installs as
+        # voluptuous at runtime: the same class there, two to pyright.
+        # Importing probatio here would break every HA from before the alias.
+        return self.async_show_form(
+            step_id="init",
+            data_schema=schema,  # pyright: ignore[reportArgumentType]
+        )
 
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -131,53 +158,84 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
-    MINOR_VERSION = 1
+    # 1.2: options carry CONF_DRY_STREAK_SOURCE (see async_migrate_entry).
+    MINOR_VERSION = 2
 
     @staticmethod
     @callback
     def async_get_options_flow(config_entry) -> OptionsFlowHandler:
-        """Return the options flow handler."""
+        """Return the options flow handler.
+
+        Home Assistant calls this when the user opens the integration's
+        options; the handler shows the form
+        (OptionsFlowHandler.async_step_init).
+
+        """
         return OptionsFlowHandler()
 
-    async def async_step_user(self, user_input=None) -> FlowResult:
-        """Handle the user step."""
+    async def async_step_user(self, user_input=None) -> config_entries.ConfigFlowResult:
+        """Ask for a name and a location, and create the entry.
+
+        Home Assistant calls this when the user adds the integration: first
+        without input to show the form, then with what was entered. It rejects
+        an empty or already used name, and a location outside the box DWD's
+        radar covers, by showing the form again with an error. A new entry
+        stores the default dry-streak source explicitly, so a later change of
+        the default never moves it.
+
+        """
         errors: dict[str, str] = {}
 
         if user_input is not None:
             data = user_input.copy()
 
-            if not data[CONF_NAME].lstrip(" "):
+            if not data[CONF_NAME].strip():
                 errors["base"] = "invalid_name"
 
             existing_names = {
-                entry.title
+                entry.title.strip()
                 for entry in self.hass.config_entries.async_entries(DOMAIN)
             }
-            if data[CONF_NAME] in existing_names:
+            if data[CONF_NAME].strip() in existing_names:
                 errors["base"] = "name_already_exists"
 
             coords = data.pop(CONF_COORDS)
             data["latitude"] = coords["latitude"]
             data["longitude"] = coords["longitude"]
 
-            if not rs_grid_contains(data["latitude"], data["longitude"]):
+            lat_min, lat_max = COVERAGE_LAT
+            lon_min, lon_max = COVERAGE_LON
+            if not (
+                lat_min <= data["latitude"] <= lat_max
+                and lon_min <= data["longitude"] <= lon_max
+            ):
                 errors["base"] = "coordinates_out_of_range"
 
             if not errors:
+                # Store the source explicitly rather than leaving it to the
+                # read-time default, so a later change of the default never
+                # moves an existing install.
                 return self.async_create_entry(
                     title=data[CONF_NAME],
                     data=data,
+                    options={CONF_DRY_STREAK_SOURCE: DEFAULT_DRY_STREAK_SOURCE},
                 )
 
         return self.async_show_form(
             step_id="user",
-            data_schema=self.get_shema_user_step(),
+            data_schema=self.get_schema_user_step(),  # pyright: ignore[reportArgumentType]  (probatio, see above)
             errors=errors,
         )
 
     @callback
-    def get_shema_user_step(self) -> vol.Schema:
-        """Return the schema for the user step."""
+    def get_schema_user_step(self) -> vol.Schema:
+        """Return the form of the first setup step.
+
+        A name, defaulting to Home Assistant's location name, and a place on
+        the map, defaulting to Home Assistant's home coordinates. The name
+        becomes the device's name and the prefix of every entity id.
+
+        """
         schema = {
             vol.Required(
                 CONF_NAME, default=self.hass.config.location_name

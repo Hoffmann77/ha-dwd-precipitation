@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -21,20 +20,19 @@ from homeassistant.const import (
     UnitOfVolumetricFlux,
 )
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from .const import (
-    CONF_EXTRA_ATTRIBUTES,
-    CONF_FULL_ROLLING_SERIES,
-    DEFAULT_FULL_ROLLING_SERIES,
-    CONF_PRECIPITATION_RESET_THRESHOLD,
-    DEFAULT_PRECIPITATION_RESET_THRESHOLD,
-    CONF_START_END_MODE,
-    DEFAULT_START_END_MODE,
+    KEY_AMOUNT,
+    KEY_LAST_60,
+    KEY_NEXT_60,
+    KEY_NEXT_60_120,
+    KEY_NEXT_120,
+    KEY_PRECIPITATION_TYPE,
+    RW_SLIDING_KEY,
     START_END_MODE_DURATION,
     PRECIP_TYPE_OPTIONS,
     DOMAIN,
@@ -44,62 +42,72 @@ from .dry_streak import (
     DryStreakExtraData,
     downtime_correction,
     fresh_anchor,
-    scalar_reading,
+    amount_reading,
+    release_reading,
+    unwatched_hours,
 )
-from .entity import DwdCoordinatorEntity
+from .entity import DwdCoordinatorEntity, DwdEntityDescriptionMixin, unique_id_for
+from .radar.isotime import iso
+from .radar.rain_events import NO_EVENT, ONGOING, UPCOMING, VIEW_KEYS, overall_status
 from .precipitation_total import (
     PrecipitationTotalExtraData,
+    counted_on_grid,
     countable,
     missed_releases,
+    split_fetchable,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, kw_only=True)
-class PrecipitationSensorEntityDescription(SensorEntityDescription):
+class PrecipitationSensorEntityDescription(
+    SensorEntityDescription, DwdEntityDescriptionMixin
+):
     """Provide a description for a precipitation sensor."""
 
-    product_key: str
-    access_fn: Callable[[Any], Any]
-    # Optional companion attributes, computed from the coordinator data payload.
-    # Always exposed (not gated behind the diagnostic-attributes option).
-    attrs_fn: Callable[[Any], dict[str, Any]] | None = None
-    # Like attrs_fn, but computed from this entity's ProductMetadata (as picked
-    # by access_fn). Also always exposed.
-    metadata_attrs_fn: Callable[[ProductMetadata], dict[str, Any]] | None = None
+
+# What every amount (mm) and every intensity (mm/h) sensor shares.
+# Spread into descriptions; each value goes to a differently typed field.
+_MM: dict[str, Any] = dict(
+    native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
+    device_class=SensorDeviceClass.PRECIPITATION,
+    suggested_display_precision=1,
+    state_class=SensorStateClass.MEASUREMENT,
+)
+_MM_TOTAL: dict[str, Any] = _MM | dict(state_class=SensorStateClass.TOTAL_INCREASING)
+_MMH: dict[str, Any] = dict(
+    native_unit_of_measurement=UnitOfVolumetricFlux.MILLIMETERS_PER_HOUR,
+    device_class=SensorDeviceClass.PRECIPITATION_INTENSITY,
+    suggested_display_precision=1,
+    state_class=SensorStateClass.MEASUREMENT,
+)
 
 
+# The gauge-adjusted analyses. RW's is a clock hour, so it is the "previous
+# hour" rather than a "last 60 min": that name belongs to RS's rolling hour,
+# a sliding window like every other "last"/"next" one.
 RADOLAN_SENSORS = (
     PrecipitationSensorEntityDescription(
         key="radolan_rw",
-        translation_key="precipitation_last_1h",
-        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
-        device_class=SensorDeviceClass.PRECIPITATION,
-        suggested_display_precision=1,
-        state_class=SensorStateClass.MEASUREMENT,
+        translation_key="precipitation_previous_hour",
+        **_MM,
         product_key="rw",
-        access_fn=lambda d: d,
+        sub_key=KEY_AMOUNT,
     ),
     PrecipitationSensorEntityDescription(
         key="radolan_sf",
         translation_key="precipitation_last_24h",
-        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
-        device_class=SensorDeviceClass.PRECIPITATION,
-        suggested_display_precision=1,
-        state_class=SensorStateClass.MEASUREMENT,
+        **_MM,
         product_key="sf",
-        access_fn=lambda d: d,
+        sub_key=KEY_AMOUNT,
     ),
     PrecipitationSensorEntityDescription(
         key="radolan_sf_yesterday",
         translation_key="precipitation_yesterday",
-        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
-        device_class=SensorDeviceClass.PRECIPITATION,
-        suggested_display_precision=1,
-        state_class=SensorStateClass.MEASUREMENT,
+        **_MM,
         product_key="sf_2350",
-        access_fn=lambda d: d,
+        sub_key=KEY_AMOUNT,
     ),
 )
 
@@ -109,8 +117,14 @@ class PrecipitationTotalEntityDescription(SensorEntityDescription):
     """Provide a description for a cumulative precipitation total."""
 
     product_key: str
-    # How many missed releases to fetch after a gap (see missed_releases).
+    # How many releases before the current one OpenData still keeps, i.e. how
+    # far back a missed one can be fetched (see missed_releases).
     max_backfill: int
+
+
+# How many RW releases before the current one OpenData keeps: 48 h of runs,
+# ten minutes apart, so the current :00 run and the 47 before it.
+RW_KEPT = 47
 
 
 # Two totals over the same rain: RW counts each hour as soon as it is analysed,
@@ -120,23 +134,23 @@ class PrecipitationTotalEntityDescription(SensorEntityDescription):
 TOTAL_SENSORS = (
     PrecipitationTotalEntityDescription(
         key="radolan_rw_total",
-        translation_key="precipitation_total_hourly",
-        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
-        device_class=SensorDeviceClass.PRECIPITATION,
-        suggested_display_precision=1,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        translation_key="precipitation_total",
+        **_MM_TOTAL,
         product_key="rw",
-        max_backfill=48,
+        max_backfill=RW_KEPT,
     ),
     PrecipitationTotalEntityDescription(
         key="radolan_sf_yesterday_total",
         translation_key="precipitation_total_daily",
-        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
-        device_class=SensorDeviceClass.PRECIPITATION,
-        suggested_display_precision=1,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        # Precipitation total is the one to use; this one puts every day's
+        # rain under the next day in HA's statistics. Only applies when the
+        # entity is first registered, so installs that have it keep it on.
+        entity_registry_enabled_default=False,
+        **_MM_TOTAL,
         product_key="sf_2350",
-        max_backfill=7,
+        # DWD keeps 48 SF files, one an hour: two of them are 23:50 runs, the
+        # current one and the one before it.
+        max_backfill=1,
     ),
 )
 
@@ -144,39 +158,44 @@ TOTAL_SENSORS = (
 RADVOR_SENSORS = (
     PrecipitationSensorEntityDescription(
         key="radvor_rs_000",
-        translation_key="precipitation_now",
-        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
-        device_class=SensorDeviceClass.PRECIPITATION,
-        suggested_display_precision=1,
-        state_class=SensorStateClass.MEASUREMENT,
+        translation_key="precipitation_last_60_min",
+        **_MM,
         product_key="rs",
-        access_fn=lambda _list: _list[0],
+        sub_key=KEY_LAST_60,
     ),
     PrecipitationSensorEntityDescription(
         key="radvor_rs_060",
-        translation_key="precipitation_next_1h",
-        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
-        device_class=SensorDeviceClass.PRECIPITATION,
-        suggested_display_precision=1,
-        state_class=SensorStateClass.MEASUREMENT,
+        translation_key="precipitation_next_60_min",
+        **_MM,
         product_key="rs",
-        access_fn=lambda _list: _list[1],
+        sub_key=KEY_NEXT_60,
     ),
     PrecipitationSensorEntityDescription(
         key="radvor_rs_120",
-        translation_key="precipitation_next_1_2h",
-        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
-        device_class=SensorDeviceClass.PRECIPITATION,
-        suggested_display_precision=1,
-        state_class=SensorStateClass.MEASUREMENT,
+        translation_key="precipitation_next_60_120_min",
+        **_MM,
         product_key="rs",
-        access_fn=lambda _list: _list[2],
+        sub_key=KEY_NEXT_60_120,
+    ),
+    PrecipitationSensorEntityDescription(
+        key="radvor_rs_000_120",
+        translation_key="precipitation_next_120_min",
+        **_MM,
+        product_key="rs",
+        sub_key=KEY_NEXT_120,
     ),
 )
 
 
 def _peak_hour_attrs(meta: ProductMetadata) -> dict[str, Any]:
-    """Return the peak window and the rolling-hour series behind it."""
+    """Return the peak window and the rolling-hour series behind it.
+
+    The attributes of "Peak hourly precipitation next 120 min", always shown:
+    ``window_start``/``window_end`` give the hour the peak covers (None on a
+    dry forecast), ``forecast_rolling_1h`` the hourly totals it was picked
+    from.
+
+    """
     return {
         "window_start": meta.data_start,
         "window_end": meta.data_end,
@@ -184,55 +203,54 @@ def _peak_hour_attrs(meta: ProductMetadata) -> dict[str, Any]:
     }
 
 
-def _peak_hour_sensor(full_rolling_series: bool) -> PrecipitationSensorEntityDescription:
-    """Return "Peak hourly precipitation next 2h", bound to the product feeding it.
-
-    The value is the same from either product (RS equals summed RV for every
-    window wholly in the future). RV is the default because it has already
-    decoded the steps; RS only when the option asks for the 12 windows RV
-    cannot reach. The key is product-neutral so toggling the option keeps the
-    entity, its id and its history.
-    """
-    common = dict(
-        key="radvor_peak_1h_120",
-        translation_key="peak_hourly_precipitation_next_2h",
-        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
-        device_class=SensorDeviceClass.PRECIPITATION,
-        suggested_display_precision=1,
-        state_class=SensorStateClass.MEASUREMENT,
-        metadata_attrs_fn=_peak_hour_attrs,
-    )
-    if full_rolling_series:
-        return PrecipitationSensorEntityDescription(
-            product_key="rs", access_fn=lambda _list: _list[3], **common
-        )
-    return PrecipitationSensorEntityDescription(
-        product_key="rv", access_fn=lambda d: d["peak_1h"], **common
-    )
-
-
-# RV sensors whose shape does not depend on the start/end display mode: the two
-# peak-intensity sensors.
+# RV sensors whose shape does not depend on the start/end display mode: the
+# current intensity, the three peak-intensity sensors and the peak hour.
 RADVOR_RV_SENSORS = (
     PrecipitationSensorEntityDescription(
-        key="radvor_rv_max_intensity_060",
-        translation_key="peak_intensity_next_1h",
-        native_unit_of_measurement=UnitOfVolumetricFlux.MILLIMETERS_PER_HOUR,
-        device_class=SensorDeviceClass.PRECIPITATION_INTENSITY,
-        suggested_display_precision=1,
-        state_class=SensorStateClass.MEASUREMENT,
+        key="radvor_rv_intensity_000",
+        translation_key="precipitation_intensity_now",
+        **_MMH,
         product_key="rv",
-        access_fn=lambda d: d["max_060"],
+        sub_key="intensity_000",
+        # "Now" is the latest analysis, the 5 minutes ending at the release
+        # time; the window and the unscaled amount say so.
+        attrs_fn=lambda d: {"amount_5min": d["amount_000"]},
+        metadata_attrs_fn=lambda meta: {
+            "window_start": meta.data_start,
+            "window_end": meta.data_end,
+        },
+    ),
+    PrecipitationSensorEntityDescription(
+        key="radvor_rv_max_intensity_060",
+        translation_key="peak_intensity_next_60_min",
+        **_MMH,
+        product_key="rv",
+        sub_key="max_060",
     ),
     PrecipitationSensorEntityDescription(
         key="radvor_rv_max_intensity_120",
-        translation_key="peak_intensity_next_1_2h",
-        native_unit_of_measurement=UnitOfVolumetricFlux.MILLIMETERS_PER_HOUR,
-        device_class=SensorDeviceClass.PRECIPITATION_INTENSITY,
-        suggested_display_precision=1,
-        state_class=SensorStateClass.MEASUREMENT,
+        translation_key="peak_intensity_next_60_120_min",
+        **_MMH,
         product_key="rv",
-        access_fn=lambda d: d["max_120"],
+        sub_key="max_120",
+    ),
+    PrecipitationSensorEntityDescription(
+        key="radvor_rv_max_intensity_000_120",
+        translation_key="peak_intensity_next_120_min",
+        **_MMH,
+        product_key="rv",
+        sub_key="max_000_120",
+    ),
+    # Summed from RV's 5-minute steps, which match RS's rolling hours. The
+    # key keeps its product-neutral name from when RS fed it with the full
+    # rolling series option on.
+    PrecipitationSensorEntityDescription(
+        key="radvor_peak_1h_120",
+        translation_key="peak_hourly_precipitation_next_120_min",
+        **_MM,
+        product_key="rv",
+        sub_key="peak_1h",
+        metadata_attrs_fn=_peak_hour_attrs,
     ),
 )
 
@@ -240,24 +258,37 @@ RADVOR_RV_SENSORS = (
 HYMECNG_SENSORS = (
     PrecipitationSensorEntityDescription(
         key="hymecng_precipitation_type",
-        translation_key="precipitation_type",
+        translation_key="precipitation_type_now",
         icon="mdi:weather-snowy-rainy",
         device_class=SensorDeviceClass.ENUM,
         options=PRECIP_TYPE_OPTIONS,
         product_key="hymecng",
-        access_fn=lambda d: d,
+        sub_key=KEY_PRECIPITATION_TYPE,
     ),
+)
+
+
+# The rain-event tracker's view, for blueprints. Its state is the status of
+# the nearest event; the view itself (schema 1) is the attributes.
+RAIN_EVENTS_SENSOR = SensorEntityDescription(
+    key="radvor_rv_rain_events",
+    translation_key="rain_events",
+    icon="mdi:weather-pouring",
+    device_class=SensorDeviceClass.ENUM,
+    options=[NO_EVENT, UPCOMING, ONGOING],
 )
 
 
 def _rv_timing_sensors(
     mode: str,
 ) -> tuple[PrecipitationSensorEntityDescription, ...]:
-    """Return the merged RV start/end sensors for the configured display mode.
+    """Return the start/end sensors for the configured display mode.
 
-    The entity keys are stable across modes so the entity id and unique id
-    survive an options change; only the state representation (and the companion
-    attribute) differs.
+    ``mode`` is the start_end_mode option: timestamps (the default), with the
+    minutes until as an attribute, or minutes from now, with the time as an
+    attribute. The keys are the same in both modes, so switching keeps the
+    entities and their ids.
+
     """
     if mode == START_END_MODE_DURATION:
         return (
@@ -268,7 +299,7 @@ def _rv_timing_sensors(
                 device_class=SensorDeviceClass.DURATION,
                 state_class=SensorStateClass.MEASUREMENT,
                 product_key="rv",
-                access_fn=lambda d: d["start_in"],
+                sub_key="start_in",
                 attrs_fn=lambda d: {"at": d["start_at"]},
             ),
             PrecipitationSensorEntityDescription(
@@ -278,7 +309,7 @@ def _rv_timing_sensors(
                 device_class=SensorDeviceClass.DURATION,
                 state_class=SensorStateClass.MEASUREMENT,
                 product_key="rv",
-                access_fn=lambda d: d["end_in"],
+                sub_key="end_in",
                 attrs_fn=lambda d: {"at": d["end_at"]},
             ),
         )
@@ -290,7 +321,7 @@ def _rv_timing_sensors(
             translation_key="precipitation_start",
             device_class=SensorDeviceClass.TIMESTAMP,
             product_key="rv",
-            access_fn=lambda d: d["start_at"],
+            sub_key="start_at",
             attrs_fn=lambda d: {"minutes_until": d["start_in"]},
         ),
         PrecipitationSensorEntityDescription(
@@ -298,21 +329,10 @@ def _rv_timing_sensors(
             translation_key="precipitation_end",
             device_class=SensorDeviceClass.TIMESTAMP,
             product_key="rv",
-            access_fn=lambda d: d["end_at"],
+            sub_key="end_at",
             attrs_fn=lambda d: {"minutes_until": d["end_in"]},
         ),
     )
-
-
-def _plain_value(value: Any) -> Any:
-    """Return values suitable for Home Assistant state attributes."""
-    if isinstance(value, datetime):
-        return value.isoformat()
-    if hasattr(value, "decode"):
-        return value.decode()
-    if hasattr(value, "item"):
-        return value.item()
-    return value
 
 
 async def async_setup_entry(
@@ -320,19 +340,22 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up the sensor platform."""
-    coordinators = entry.runtime_data.coordinators
+    """Create the entry's sensors from its coordinators and options.
 
-    mode = entry.options.get(CONF_START_END_MODE, DEFAULT_START_END_MODE)
-    full_rolling_series = entry.options.get(
-        CONF_FULL_ROLLING_SERIES, DEFAULT_FULL_ROLLING_SERIES
-    )
+    Home Assistant calls this once per entry after the integration's setup.
+    Most sensors are descriptions on one product's coordinator. The totals, the
+    rain events (only with that option; otherwise the entity is removed from
+    the registry) and the dry streak (bound to the product its option picks)
+    have their own classes.
+
+    """
+    coordinators = entry.runtime_data.coordinators
+    options = entry.runtime_data.options
 
     entity_descriptions = (
         RADVOR_SENSORS
-        + (_peak_hour_sensor(full_rolling_series),)
         + RADVOR_RV_SENSORS
-        + _rv_timing_sensors(mode)
+        + _rv_timing_sensors(options.start_end_mode)
         + HYMECNG_SENSORS
         + RADOLAN_SENSORS
     )
@@ -348,7 +371,37 @@ async def async_setup_entry(
         PrecipitationTotalSensor(coordinators[description.product_key], description)
         for description in TOTAL_SENSORS
     )
-    entities.append(TimespanWithoutPrecipitationSensor(coordinators["rs"]))
+    # Rain events are opt-in. With the option off there is no tracker, so the
+    # entity goes too, rather than lingering as "no longer provided".
+    if options.rain_events:
+        entities.append(RainEventsSensor(coordinators["rv"], RAIN_EVENTS_SENSOR))
+    else:
+        registry = er.async_get(hass)
+        if entity_id := registry.async_get_entity_id(
+            "sensor", DOMAIN, unique_id_for(entry.entry_id, RAIN_EVENTS_SENSOR.key)
+        ):
+            registry.async_remove(entity_id)
+
+    # Changing the source reloads the entry, so binding once at setup is enough.
+    # The unique id does not depend on it, so the entity and its persisted
+    # dry_since survive a switch. RW counts its 10-minute runs: as strongly
+    # gauge-adjusted as the hourly run, and a reset shows up to an hour sooner.
+    if options.unknown_dry_streak_source is not None:
+        _LOGGER.warning(
+            "Unknown dry streak source %r in the options of %s; counting %r "
+            "instead. Saving the options again fixes it",
+            options.unknown_dry_streak_source,
+            entry.title,
+            options.dry_streak_source,
+        )
+    entities.append(
+        TimespanWithoutPrecipitationSensor(
+            coordinators[options.dry_streak_coordinator_key],
+            _PAST_HOUR_KEY[options.dry_streak_coordinator_key],
+            hourly=coordinators.get("rw"),
+            daily=coordinators.get("sf"),
+        )
+    )
 
     async_add_entities(entities)
 
@@ -358,60 +411,44 @@ class PrecipitationSensorEntity(DwdCoordinatorEntity, SensorEntity):
 
     entity_description: PrecipitationSensorEntityDescription
 
-    # The per-lead forecast series would bloat the recorder history.
-    _unrecorded_attributes = frozenset({"forecast_5min", "forecast_rolling_1h"})
+    # The per-lead forecast series would bloat the recorder history, and the
+    # windows move with every release: each would be a new attribute row every
+    # 5 minutes, while what they say follows from the release time.
+    _unrecorded_attributes = frozenset(
+        {"forecast_5min", "forecast_rolling_1h", "window_start", "window_end"}
+    )
 
     @property
     def native_value(self) -> float | datetime | str | None:
-        """Return the state of the sensor."""
-        if self.coordinator.data is None:
-            return None
+        """Return the sensor's value from its product's latest release.
 
-        if (data := self.coordinator.data.data) is None:
-            return None
+        The sub-key in the description picks it from the coordinator's data;
+        None (shown as unknown) when the release had no value for the location.
 
-        return self.entity_description.access_fn(data)
+        """
+        return self._value()
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return companion values and, when enabled, diagnostic metadata."""
+        """Return companion values and, when enabled, diagnostic metadata.
+
+        Companion values (e.g. the start time as minutes) are always shown. The
+        source product, release time, lead time and data window only with the
+        "extra state attributes" option, which is off by default.
+
+        """
         if self.coordinator.data is None:
             return {}
 
-        attrs: dict[str, Any] = {}
-
-        # Companion attributes (e.g. the start/end representation not used as the
-        # state) are a feature, so they are always exposed.
-        attrs_fn = self.entity_description.attrs_fn
-        if attrs_fn is not None and self.coordinator.data.data is not None:
-            attrs.update(
-                {
-                    key: _plain_value(value)
-                    for key, value in attrs_fn(self.coordinator.data.data).items()
-                }
-            )
-
-        metadata: ProductMetadata | None = (
-            self.entity_description.access_fn(self.coordinator.data.metadata)
-            if self.coordinator.data.metadata
-            else None
-        )
-        metadata_attrs_fn = self.entity_description.metadata_attrs_fn
-        if metadata_attrs_fn is not None and metadata is not None:
-            attrs.update(
-                {
-                    key: _plain_value(value)
-                    for key, value in metadata_attrs_fn(metadata).items()
-                }
-            )
+        # Companion attributes (e.g. the start/end representation not used as
+        # the state) are a feature, so they are always exposed.
+        attrs = self._described_attributes()
 
         # Diagnostic metadata is opt-in via the integration options.
-        if not self.coordinator.config_entry.options.get(
-            CONF_EXTRA_ATTRIBUTES, False
-        ):
+        if not self.coordinator.options.extra_state_attributes:
             return attrs
 
-        if metadata is None:
+        if (metadata := self._metadata()) is None:
             return attrs
 
         attrs["source_product"] = metadata.source_product
@@ -431,15 +468,64 @@ class PrecipitationSensorEntity(DwdCoordinatorEntity, SensorEntity):
         return attrs
 
 
+class RainEventsSensor(DwdCoordinatorEntity, SensorEntity):
+    """The rain-event tracker's view: nearest status as state, view as attributes.
+
+    The attributes are the schema-1 contract with blueprints (README "Rain
+    events"), a few KB that change every release, so none is recorded.
+
+    """
+
+    _unrecorded_attributes = frozenset(VIEW_KEYS)
+
+    def _view(self) -> dict[str, Any] | None:
+        """Return the tracker's view of the latest release, if it has one.
+
+        The view is the dict the attributes show (schema 1). None until RV has
+        data, and when the tracker failed on this release.
+
+        """
+        if self.coordinator.data is None or self.coordinator.data.data is None:
+            return None
+
+        return self.coordinator.data.data.get("rain_events")
+
+    @property
+    def native_value(self) -> str | None:
+        """Return ongoing, upcoming or none; unknown if the tracker failed.
+
+        The nearest event's status, so a blueprint can trigger on the state:
+        ongoing when rain of an event has been measured, upcoming when one is
+        only forecast.
+
+        """
+        view = self._view()
+        return None if view is None else overall_status(view)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return the view: the events, their steps and the last ended one.
+
+        The schema-1 contract with blueprints, described in the README; empty
+        while there is no view. None of it is recorded.
+
+        """
+        return dict(self._view() or {})
+
+
 class PrecipitationTotalSensor(DwdCoordinatorEntity, RestoreEntity, SensorEntity):
     """Running total of a RADOLAN accumulation product, one release at a time.
 
     Counts every release once, keyed on its timestamp (see precipitation_total).
     The first release seen after setup only sets the starting point: its window
     predates the sensor, so the total starts at 0. After a gap -- Home Assistant
-    was down, or DWD failed for longer than a release -- the missed releases are
-    fetched in the background and added as they arrive. A restart during that
-    backfill drops whatever it had not fetched yet.
+    was down, or DWD failed for longer than a release -- the missed releases go
+    on a pending list that is stored with the total, and are fetched in the
+    background and added as they arrive. A release leaves the list only once it
+    is added, so neither a restart nor a failed fetch loses it: what is left is
+    tried again at startup and with every new release, until it is too old for
+    OpenData to still serve.
+
     """
 
     entity_description: PrecipitationTotalEntityDescription
@@ -449,10 +535,22 @@ class PrecipitationTotalSensor(DwdCoordinatorEntity, RestoreEntity, SensorEntity
         coordinator: BaseProductUpdateCoordinator,
         description: PrecipitationTotalEntityDescription,
     ) -> None:
-        """Initialize the sensor."""
+        """Start without a total; it is restored or set up when added.
+
+        ``coordinator`` is the product it counts (RW or sf_2350),
+        ``description`` names it and says how many missed releases OpenData
+        still keeps. The total starts at the first release seen, and missed
+        releases wait on the pending list.
+
+        """
         super().__init__(coordinator, description)
+        # A counted release always has a total: _last_release is set only
+        # together with _total (async_added_to_hass keeps that for a damaged
+        # restore payload too).
         self._total: float | None = None
         self._last_release: datetime | None = None
+        self._pending: list[datetime] = []
+        self._backfilling = False
 
     @property
     def available(self) -> bool:
@@ -461,51 +559,100 @@ class PrecipitationTotalSensor(DwdCoordinatorEntity, RestoreEntity, SensorEntity
         A total does not go stale the way a reading does: while the product is
         failing it is still the right sum of everything counted so far, and the
         missed releases are added once they can be fetched.
+
         """
         return self._total is not None
 
     @property
     def native_value(self) -> float | None:
-        """Return the running total in mm."""
+        """Return the running total in mm.
+
+        Rounded to 0.01 mm for the state; the sum itself keeps full precision.
+        None until the first release is counted.
+
+        """
         return None if self._total is None else round(self._total, 2)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return the end of the newest window included in the total."""
-        return {
-            "counted_until": (
-                self._last_release.isoformat() if self._last_release else None
-            )
-        }
+        """Return the end of the newest window included in the total.
+
+        Shown as ``counted_until``: the release time of the newest release
+        counted, which is the end of its window.
+
+        """
+        return {"counted_until": iso(self._last_release)}
 
     @property
     def extra_restore_state_data(self) -> PrecipitationTotalExtraData:
-        """Return the total to persist across restarts."""
+        """Return the total, and what is still missing from it, to persist.
+
+        Home Assistant stores it with the state and hands it back at the next
+        start (see async_added_to_hass).
+
+        """
         return PrecipitationTotalExtraData(
-            total=self._total, last_release=self._last_release
+            total=self._total,
+            last_release=self._last_release,
+            pending=list(self._pending),
         )
 
     async def async_added_to_hass(self) -> None:
-        """Restore the total and count whatever was released in the meantime."""
+        """Restore the total and count whatever was released in the meantime.
+
+        Called by Home Assistant when the entity is added, after the
+        coordinator's first refresh. The stored total is restored, the current
+        release counted, releases missed while Home Assistant was down go on
+        the pending list, and the backfill a restart interrupted resumes.
+
+        """
         await super().async_added_to_hass()
 
         if (restored := await self.async_get_last_extra_data()) is not None:
-            data = PrecipitationTotalExtraData.from_dict(restored.as_dict())
-            self._total = data.total
-            self._last_release = data.last_release
+            self._restore(PrecipitationTotalExtraData.from_dict(restored.as_dict()))
 
         # coordinator.data is already populated by the first refresh.
         self._count_new_release()
+        # Resume a backfill a restart interrupted, even with no new release.
+        self._start_backfill()
+
+    def _restore(self, data: PrecipitationTotalExtraData) -> None:
+        """Adopt a restored total, on the product's current release grid.
+
+        Takes the total, the newest release counted and the pending list. A
+        total stored by an older version may sit off the grid (RW at :50); it
+        is mapped onto it once (see counted_on_grid). Without a counted
+        release, counting starts over from the next release.
+
+        """
+        self._total = data.total
+        if data.total is None or data.last_release is None:
+            return  # Without a total, nothing was counted: start over.
+
+        self._last_release = counted_on_grid(self.coordinator.grid, data.last_release)
+        self._pending = data.pending
 
     @callback
     def _handle_coordinator_update(self) -> None:
-        """Handle updated data from the coordinator."""
+        """Count a new release, then write the state.
+
+        Called by the coordinator after every update, including retries that
+        brought nothing new.
+
+        """
         self._count_new_release()
         super()._handle_coordinator_update()
 
     @callback
     def _count_new_release(self) -> None:
-        """Add the coordinator's release to the total if it is a new one."""
+        """Add the coordinator's release to the total if it is a new one.
+
+        Keyed on the release time, so a release seen twice is counted once. The
+        first one only fixes the starting point, since its window began before
+        the sensor existed. Releases missed since the last one counted go on
+        the pending list, and a backfill is started.
+
+        """
         release = self.coordinator.curr_release
         cdata = self.coordinator.data
         if release is None or cdata is None:
@@ -514,106 +661,220 @@ class PrecipitationTotalSensor(DwdCoordinatorEntity, RestoreEntity, SensorEntity
         if self._last_release is not None and release <= self._last_release:
             return
 
-        if self._last_release is None or self._total is None:
+        if self._last_release is None:
             # First release ever seen: it fixes the starting point only.
             self._total = self._total or 0.0
             self._last_release = release
             return
 
-        missed = missed_releases(
-            self.coordinator,
+        missed, lost = missed_releases(
+            self.coordinator.grid,
             self._last_release,
             release,
             self.entity_description.max_backfill,
         )
-
-        if (value := countable(cdata.data)) is not None:
-            self._total += value
-        self._last_release = release
-
-        if missed:
-            self.coordinator.config_entry.async_create_background_task(
-                self.hass,
-                self._async_backfill(missed),
-                f"{self.entity_id} backfill",
+        if lost:
+            _LOGGER.info(
+                "%s: the DWD releases from %s to %s were missed and are too old "
+                "to fetch now, so the total leaves them out",
+                self.entity_id,
+                lost[0].isoformat(),
+                lost[1].isoformat(),
             )
 
-    async def _async_backfill(self, releases: list[datetime]) -> None:
-        """Fetch releases that were never counted and add them to the total."""
-        failed = 0
-        for release in releases:
-            try:
-                value, _metadata = await self.coordinator._fetch_and_parse(release)
-            except Exception as err:  # noqa: BLE001 - any failure skips the file
-                _LOGGER.debug(
-                    "%s: could not backfill %s: %s",
-                    self.entity_id,
-                    release.isoformat(),
-                    err,
-                )
-                failed += 1
-                continue
+        if (value := countable(cdata.data.get(KEY_AMOUNT))) is not None:
+            self._total = (self._total or 0.0) + value
+        self._last_release = release
+        self._pending = sorted(set(self._pending) | set(missed))
 
-            if (mm := countable(value)) is not None:
-                self._total = (self._total or 0.0) + mm
+        # A new release means DWD is serving again: retry what is missing.
+        self._start_backfill()
+
+    @callback
+    def _start_backfill(self) -> None:
+        """Give up on releases too old to fetch, and fetch the rest.
+
+        Pending releases OpenData no longer keeps are dropped and logged once.
+        The rest are fetched in a background task, one round at a time; a round
+        already running picks up what joined.
+
+        """
+        if self._last_release is None:
+            return
+
+        self._pending, gone = split_fetchable(
+            self.coordinator.grid,
+            self._pending,
+            self._last_release,
+            self.entity_description.max_backfill,
+        )
+        if gone:
+            _LOGGER.info(
+                "%s: %s missed DWD release(s) from %s to %s could not be "
+                "fetched while DWD still served them, so the total leaves "
+                "them out",
+                self.entity_id,
+                len(gone),
+                gone[0].isoformat(),
+                gone[-1].isoformat(),
+            )
+
+        if not self._pending or self._backfilling:
+            return
+
+        self._backfilling = True
+        self.coordinator.config_entry.async_create_background_task(
+            self.hass,
+            self._async_backfill(),
+            f"{self.entity_id} backfill",
+        )
+
+    async def _async_backfill(self) -> None:
+        """Fetch the pending releases, oldest first, and add them to the total.
+
+        Each is tried once per round, including any that join the list while
+        the round runs. A release leaves the list only once it is fetched; a
+        failure stays for the next round, which the next new release starts.
+        The state is written once per round.
+
+        """
+        tried: set[datetime] = set()
+        failed = 0
+        added = False
+        try:
+            while todo := [r for r in self._pending if r not in tried]:
+                release = todo[0]
+                tried.add(release)
+                try:
+                    fetched = await self.coordinator.async_fetch_release(release)
+                    value = fetched.data.get(KEY_AMOUNT)
+                except Exception as err:  # noqa: BLE001 - retried next round
+                    _LOGGER.debug(
+                        "%s: could not backfill %s: %s",
+                        self.entity_id,
+                        release.isoformat(),
+                        err,
+                    )
+                    failed += 1
+                    continue
+
+                if release not in self._pending:
+                    continue  # given up on while it was being fetched
+                self._pending.remove(release)
+                if (mm := countable(value)) is not None:
+                    self._total = (self._total or 0.0) + mm
+                    added = True
+        finally:
+            self._backfilling = False
+            # One state write per round, not one per release: a restart after
+            # two days down backfills 47 releases.
+            if added:
                 self.async_write_ha_state()
 
         if failed:
-            _LOGGER.info(
-                "%s: %s of %s missed DWD releases could not be fetched, so the "
-                "total leaves them out",
+            _LOGGER.debug(
+                "%s: %s missed DWD release(s) could not be fetched yet; they "
+                "are retried with the next release",
                 self.entity_id,
                 failed,
-                len(releases),
             )
 
 
+# Where each dry-streak source keeps its past-hour total.
+_PAST_HOUR_KEY = {"rs": KEY_LAST_60, RW_SLIDING_KEY: KEY_AMOUNT}
+
+
+DRY_STREAK_SENSOR = SensorEntityDescription(
+    key="timespan_without_precipitation",
+    translation_key="timespan_without_precipitation",
+    icon="mdi:weather-sunny",
+    device_class=SensorDeviceClass.DURATION,
+    native_unit_of_measurement=UnitOfTime.DAYS,
+    state_class=SensorStateClass.MEASUREMENT,
+    suggested_display_precision=2,
+)
+
+
 class TimespanWithoutPrecipitationSensor(
-    CoordinatorEntity[BaseProductUpdateCoordinator], RestoreEntity, SensorEntity
+    DwdCoordinatorEntity, RestoreEntity, SensorEntity
 ):
     """Number of days since precipitation last reached the reset threshold.
 
     Counts elapsed time since an anchor (``dry_since``). The anchor is re-set
-    whenever "Precipitation now" reaches the configurable threshold, and stands
-    otherwise, so the value grows continuously while it stays dry and drops back
-    to ~0 when it rains. The anchor is persisted across restarts and corrected on
-    startup against the RW/SF accumulation products to catch rain during downtime.
+    whenever the past-hour total of the dry-streak source (RW or RS ``_000``,
+    see ``CONF_DRY_STREAK_SOURCE``) reaches the configurable threshold, and
+    stands otherwise, so the value grows continuously while it stays dry and
+    drops back to ~0 when it rains. The anchor is persisted across restarts and
+    corrected on startup against the RW/SF accumulation products to catch rain
+    during downtime.
+
+    A reading without data cannot reset the streak, so time the source did not
+    watch for more than its hour (no data for the location, DWD failing, Home
+    Assistant down) is checked against RW instead: once the source reports
+    again, the RW clock hours of the gap are fetched from OpenData in the
+    background, and one that reached the threshold resets the streak to its
+    end (see unwatched_hours).
+
     """
 
-    _attr_has_entity_name = True
-    _attr_translation_key = "timespan_without_precipitation"
-    _attr_icon = "mdi:weather-sunny"
-    _attr_device_class = SensorDeviceClass.DURATION
-    _attr_native_unit_of_measurement = UnitOfTime.DAYS
-    _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_suggested_display_precision = 2
+    def __init__(
+        self,
+        coordinator: BaseProductUpdateCoordinator,
+        sub_key: str,
+        hourly: BaseProductUpdateCoordinator | None = None,
+        daily: BaseProductUpdateCoordinator | None = None,
+    ) -> None:
+        """Bind the sensor to the dry-streak source's coordinator.
 
-    def __init__(self, coordinator: BaseProductUpdateCoordinator) -> None:
-        """Initialize the sensor, bound to the RS ("Precipitation now") coordinator."""
-        super().__init__(coordinator)
-        entry = coordinator.config_entry
-        self._attr_unique_id = f"{entry.entry_id}_timespan_without_precipitation"
-        self._attr_device_info = DeviceInfo(
-            entry_type=DeviceEntryType.SERVICE,
-            identifiers={(DOMAIN, entry.entry_id)},
-            name=entry.title or "DWD Precipitation",
-        )
+        ``coordinator`` is the product the streak counts (RS, or RW's 10-minute
+        runs), ``sub_key`` where it keeps its past-hour total. ``hourly`` and
+        ``daily`` (RW and SF) correct the anchor at startup for rain during
+        downtime; ``hourly`` also fills the hours the source did not watch.
+
+        """
+        super().__init__(coordinator, DRY_STREAK_SENSOR)
         self._dry_since: datetime | None = None
+        # Where the source keeps its past-hour total (see _PAST_HOUR_KEY).
+        self._sub_key = sub_key
+        # The analyses that correct the anchor for rain during downtime:
+        # RW's last clock hour and SF's last 24 h, whatever the source.
+        self._hourly = hourly
+        self._daily = daily
+        # The end of the newest hour the source reported, and the RW hours
+        # still to fetch for the time before it that it did not watch.
+        self._watched_until: datetime | None = None
+        self._gap_hours: list[datetime] = []
+        self._filling = False
 
     @property
     def _threshold(self) -> float:
-        """Return the configured rain reset threshold in mm."""
-        return self.coordinator.config_entry.options.get(
-            CONF_PRECIPITATION_RESET_THRESHOLD, DEFAULT_PRECIPITATION_RESET_THRESHOLD
-        )
+        """Return the configured rain reset threshold in mm.
+
+        A past-hour total at or above it resets the streak.
+
+        """
+        return self.coordinator.options.precipitation_reset_threshold
+
+    def _reading(self) -> tuple[Any, ProductMetadata | None]:
+        """Return the source's past-hour total and its metadata, unconverted.
+
+        Either part is None when the coordinator has nothing.
+
+        """
+        cdata = self.coordinator.data
+        if cdata is None:
+            return None, None
+
+        return cdata.data.get(self._sub_key), cdata.metadata.get(self._sub_key)
 
     def _precip_now(self) -> float | None:
-        """Return the latest RS hourly total (mm), or None if unavailable."""
-        cdata = self.coordinator.data
-        if cdata is None or cdata.data is None:
-            return None
+        """Return the source's latest past-hour total (mm), or None.
 
-        value = cdata.data[0]  # rs lead time [0] == the past hour's total
+        None when the source has no value or holds NaN, so a missing reading
+        never resets the streak.
+
+        """
+        value, _ = self._reading()
         if value is None:
             return None
 
@@ -621,43 +882,182 @@ class TimespanWithoutPrecipitationSensor(
 
         return None if value != value else value  # drop NaN
 
-    def _measurement_time(self) -> datetime:
-        """Return the rs_000 measurement timestamp, falling back to utcnow()."""
-        cdata = self.coordinator.data
-        if cdata is not None and cdata.metadata:
-            meta = cdata.metadata[0]
-            if meta is not None and meta.source_timestamp is not None:
-                return meta.source_timestamp  # UTC-aware
+    def _reading_end(self) -> datetime | None:
+        """Return the end of the source's hour (its release time), or None."""
+        _, meta = self._reading()
 
-        return dt_util.utcnow()
+        return getattr(meta, "source_timestamp", None)  # UTC-aware
+
+    def _measurement_time(self) -> datetime:
+        """Return the end of the source's hour, falling back to utcnow().
+
+        A reset is dated to when the rain was measured (the release time of the
+        reading), not to when it was fetched, which can be about half an hour
+        later.
+
+        """
+        return self._reading_end() or dt_util.utcnow()
 
     def _process(self) -> None:
-        """Refresh the dry-since anchor from the latest coordinator data."""
+        """Reset the dry-since anchor if the latest hour reached the threshold.
+
+        Called on every coordinator update. The first reading also sets the
+        anchor when there is none yet. A new reading that leaves time unwatched
+        before its hour queues the RW hours of that gap and starts fetching
+        them; a reading without data counts as not watched.
+
+        """
         precip = self._precip_now()
+        if precip is not None and self._watch(self._reading_end()):
+            self._start_gap_fill()
+
         if precip is not None and precip >= self._threshold:
             self._dry_since = self._measurement_time()  # it rained -> reset
         elif self._dry_since is None:
             self._dry_since = self._measurement_time()  # first observation
 
+    def _watch(self, end: datetime | None) -> bool:
+        """Record that the source watched the hour ending at ``end``.
+
+        Queues the RW hours of any stretch before that hour the streak did not
+        watch (see unwatched_hours). True if the reading is newer than any
+        before it, which is also when a failed gap fetch is retried: the
+        coordinator's own retries bring nothing new and retry nothing here.
+
+        """
+        if end is None or (
+            self._watched_until is not None and end <= self._watched_until
+        ):
+            return False
+
+        if self._watched_until is not None and self._hourly is not None:
+            gap = unwatched_hours(self._hourly.grid, self._watched_until, end)
+            self._gap_hours = sorted(set(self._gap_hours) | set(gap))
+        self._watched_until = end
+
+        return True
+
+    def _start_gap_fill(self) -> None:
+        """Give up on gap hours too old to fetch, and fetch those released.
+
+        RW hours OpenData no longer keeps are dropped and logged once; hours
+        not released yet wait for a later reading. The rest are fetched in a
+        background task, one round at a time.
+
+        """
+        rw = self._hourly
+        if rw is None or not self._gap_hours or self._filling:
+            return
+
+        latest = rw.grid.at_or_before(dt_util.utcnow() - rw.release_delay)
+        self._gap_hours, gone = split_fetchable(
+            rw.grid, self._gap_hours, latest, RW_KEPT
+        )
+        if gone:
+            _LOGGER.info(
+                "%s: the DWD RW hours from %s to %s, which the dry-streak "
+                "source did not cover, could not be checked for rain while DWD "
+                "still served them, so rain in them does not reset the streak",
+                self.entity_id,
+                gone[0].isoformat(),
+                gone[-1].isoformat(),
+            )
+
+        if not any(hour <= latest for hour in self._gap_hours):
+            return
+
+        self._filling = True
+        rw.config_entry.async_create_background_task(
+            self.hass,
+            self._async_fill_gap(rw, latest),
+            f"{self.entity_id} gap check",
+        )
+
+    async def _async_fill_gap(
+        self, rw: BaseProductUpdateCoordinator, latest: datetime
+    ) -> None:
+        """Fetch the released gap hours, newest first, and reset on rain.
+
+        An hour leaves the list once fetched, whether it reached the threshold,
+        stayed below it or held no data for the location. The first failed
+        fetch ends the round, so an RW outage costs one request per new
+        reading; the next new reading retries. Newest first, so an hour DWD
+        deleted a little early at the old end of the window cannot hold up
+        the rest. The state is written once per round, and only if the
+        anchor moved.
+
+        """
+        moved = False
+        try:
+            while todo := [hour for hour in self._gap_hours if hour <= latest]:
+                hour = todo[-1]
+                try:
+                    fetched = await rw.async_fetch_release(hour)
+                except Exception as err:  # noqa: BLE001 - retried next reading
+                    _LOGGER.debug(
+                        "%s: could not fetch RW %s to check a gap: %s",
+                        self.entity_id,
+                        hour.isoformat(),
+                        err,
+                    )
+                    break
+
+                if hour not in self._gap_hours:
+                    continue  # given up on while it was being fetched
+                self._gap_hours.remove(hour)
+                reading = release_reading(fetched)
+                # No data for the cell (None or NaN) cannot reset, like dry.
+                if reading.value is None or not reading.value >= self._threshold:
+                    continue
+
+                rain_end = reading.end or hour
+                if self._dry_since is None or rain_end > self._dry_since:
+                    _LOGGER.info(
+                        "%s: the dry-streak source did not cover the hour "
+                        "ending %s (no data for the location, or Home Assistant "
+                        "was down), and DWD's RW analysis shows %.1f mm in it; "
+                        "the streak now counts from then",
+                        self.entity_id,
+                        rain_end.isoformat(),
+                        reading.value,
+                    )
+                    self._dry_since = rain_end
+                    moved = True
+        finally:
+            self._filling = False
+            if moved:
+                self.async_write_ha_state()
+
     @callback
     def _handle_coordinator_update(self) -> None:
-        """Handle updated data from the coordinator."""
+        """Check the new reading, then write the state.
+
+        Called by the coordinator after every update.
+
+        """
         self._process()
         super()._handle_coordinator_update()
 
     async def async_added_to_hass(self) -> None:
-        """Restore the anchor and correct it for any rain during downtime."""
+        """Restore the anchor and correct it for any rain during downtime.
+
+        Called by Home Assistant when the entity is added, after the first
+        refresh. RW's last hour and SF's last 24 hours move a restored anchor
+        forward if it rained meanwhile. On a fresh install they set the oldest
+        dry time they can prove. Then the current reading is checked.
+
+        """
         await super().async_added_to_hass()
 
         if (restored := await self.async_get_last_extra_data()) is not None:
-            self._dry_since = DryStreakExtraData.from_dict(
-                restored.as_dict()
-            ).dry_since
+            data = DryStreakExtraData.from_dict(restored.as_dict())
+            self._dry_since = data.dry_since
+            self._watched_until = data.watched_until
+            self._gap_hours = data.gap_hours
 
         now = dt_util.utcnow()
-        siblings = self.coordinator.config_entry.runtime_data.coordinators
-        rw = scalar_reading(siblings.get("rw"))
-        sf = scalar_reading(siblings.get("sf"))
+        rw = amount_reading(self._hourly)
+        sf = amount_reading(self._daily)
 
         if self._dry_since is not None:
             # Clamp a stale restored anchor forward if RW/SF show recent rain.
@@ -668,17 +1068,33 @@ class TimespanWithoutPrecipitationSensor(
             # Fresh install: establish the oldest provable dry time.
             self._dry_since = fresh_anchor(self._threshold, rw, sf, now)
 
-        # coordinator.data is already populated by the first refresh; catch up once.
+        # coordinator.data is already populated by the first refresh; catch up
+        # once. Time since the restored watched_until is a gap like any other.
         self._process()
+        # Resume a gap check a restart interrupted, even with no new reading.
+        self._start_gap_fill()
 
     @property
     def extra_restore_state_data(self) -> DryStreakExtraData:
-        """Return the anchor to persist across restarts."""
-        return DryStreakExtraData(dry_since=self._dry_since)
+        """Return the anchor to persist across restarts.
+
+        Home Assistant stores it and hands it back at the next start.
+
+        """
+        return DryStreakExtraData(
+            dry_since=self._dry_since,
+            watched_until=self._watched_until,
+            gap_hours=list(self._gap_hours),
+        )
 
     @property
     def native_value(self) -> float | None:
-        """Return the dry streak in days."""
+        """Return the dry streak in days.
+
+        The time since the anchor, which grows while it stays dry and drops to
+        0 at a reset; None until there is an anchor.
+
+        """
         if self._dry_since is None:
             return None
 
@@ -688,7 +1104,12 @@ class TimespanWithoutPrecipitationSensor(
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return the dry streak in hours (always present)."""
+        """Return the dry streak in hours, and the anchor.
+
+        ``hours_without_precipitation`` is always present, None until there is
+        an anchor; ``dry_since`` is the anchor itself.
+
+        """
         if self._dry_since is None:
             return {"hours_without_precipitation": None}
 

@@ -16,6 +16,7 @@ PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR]
 CONF_COORDS = "coordinates"
 
 CONF_EXTRA_ATTRIBUTES = "extra_state_attributes"
+DEFAULT_EXTRA_ATTRIBUTES = False
 
 CONF_UNAVAILABLE_WHEN_STALE = "unavailable_when_stale"
 
@@ -52,20 +53,56 @@ DEFAULT_PRECIPITATION_END_ALGORITHM = DEFAULT_END_ALGO
 
 CONF_FULL_ROLLING_SERIES = "full_rolling_series"
 
-# Where "Peak hourly precipitation next 2h" comes from. Off: summed from the RV
+# Where "Peak hourly precipitation next 120 min" comes from. Off: summed from the RV
 # 5-minute steps that are decoded anyway, which only reaches the 13 rolling
 # hours wholly in the future. On: RS decodes all 25 of its members, adding the
 # 12 windows that straddle now. The peak itself is identical either way.
 DEFAULT_FULL_ROLLING_SERIES = False
 
+CONF_RAIN_EVENTS = "rain_events"
+
+# Whether the entry tracks rain events (the "Rain events" sensor). Off by
+# default: the tracker fetches missed analyses and keeps a store, which only
+# pays off for the blueprints that read it.
+DEFAULT_RAIN_EVENTS = False
+
+CONF_RAIN_EVENT_THRESHOLD = "rain_event_threshold"
+
+# mm/h; a 5-minute step above a twelfth of this is wet for rain_events. Not a
+# clutter filter (the composite is clean): it stops trace rain forming events
+# and drizzle bridging two cells, while light rain still counts. Deliberately
+# independent of CONF_PRECIPITATION_THRESHOLD.
+DEFAULT_RAIN_EVENT_THRESHOLD = 0.1
+
+# The coordinator for RW's 10-minute runs: each a sliding hour ending at that
+# mark, gauge-adjusted as strongly as the hourly run (scripts/compare_rw_runs.py).
+# Created only when the dry streak counts RW.
+RW_SLIDING_KEY = "rw_10min"
+
 CONF_PRECIPITATION_RESET_THRESHOLD = "precipitation_reset_threshold"
 
-# mm; "Precipitation now" at/above this value resets the dry streak counter.
+# mm; a past-hour total from the dry-streak source at/above this value resets
+# the dry streak counter.
 DEFAULT_PRECIPITATION_RESET_THRESHOLD = 1.0
+
+CONF_DRY_STREAK_SOURCE = "dry_streak_source"
+
+# Which product's past-hour total resets the dry streak. Both are 60-minute
+# totals in mm, so the reset threshold means the same thing either way.
+# "rw" = RW, gauge-adjusted: its 10-minute runs (RW_SLIDING_KEY), ~28 min late.
+# "rs" = RS _000, radar only, a rolling hour refreshed every 5 minutes.
+DRY_STREAK_SOURCE_RW = "rw"
+DRY_STREAK_SOURCE_RS = "rs"
+DRY_STREAK_SOURCES = (DRY_STREAK_SOURCE_RW, DRY_STREAK_SOURCE_RS)
+DEFAULT_DRY_STREAK_SOURCE = DRY_STREAK_SOURCE_RW
+
+# Entries created before the option existed counted RS; the 1.2 migration pins
+# them to it, so only new installs pick up the default.
+LEGACY_DRY_STREAK_SOURCE = DRY_STREAK_SOURCE_RS
 
 # HymecNG precipitation-type classes, indexed by the DWD class value (0..10) as
 # defined by the ODIM legend embedded in the composite. These are the possible
-# states of the "Precipitation type" enum sensor.
+# states of the "Precipitation type now" enum sensor.
 PRECIP_TYPE_BY_INDEX = (
     "no_precipitation",   # 0  NO_PRECIPITATION
     "not_classified",     # 1  NOT_CLASSIFIED
@@ -79,12 +116,14 @@ PRECIP_TYPE_BY_INDEX = (
     "hail",               # 9  HAIL
     "large_hail",         # 10 LARGE_HAIL
 )
-PRECIP_TYPE_OPTIONS = list(PRECIP_TYPE_BY_INDEX)
+PRECIP_TYPE_OPTIONS: list[str] = list(PRECIP_TYPE_BY_INDEX)
 
-DWD_OPENDATA_URL = "https://opendata.dwd.de"
-
-DWD_RADOLAN_URL = f"{DWD_OPENDATA_URL}/weather/radar/radolan"
-
-DWD_RADVOR_URL = f"{DWD_OPENDATA_URL}/weather/radar/radvor"
-
-DWD_COMPOSITE_URL = f"{DWD_OPENDATA_URL}/weather/radar/composite"
+# Sub-keys of the coordinator payloads: each product's data and metadata are
+# dicts keyed by these (RV's are its own, see RadvorRV), and every entity
+# description names the one it shows.
+KEY_LAST_60 = "last_60"          # RS _000: the past hour
+KEY_NEXT_60 = "next_60"          # RS _060
+KEY_NEXT_60_120 = "next_60_120"  # RS _120
+KEY_NEXT_120 = "next_120"        # RS _060 + _120
+KEY_AMOUNT = "amount"            # RADOLAN: mm in the analysis window
+KEY_PRECIPITATION_TYPE = "precipitation_type"  # HymecNG

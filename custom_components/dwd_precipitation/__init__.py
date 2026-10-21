@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
+from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -12,14 +13,19 @@ from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .coordinator import BaseProductUpdateCoordinator
-from .const import PLATFORMS
+from .options import DwdOptions
+from .utils import DownloadCache
+from .const import CONF_DRY_STREAK_SOURCE, LEGACY_DRY_STREAK_SOURCE, PLATFORMS
+from .rain_events_tracker import RainEventsTracker
 from .products import (
     RadvorRS,
     RadvorRV,
     HymecNG,
     RadolanRW,
+    RadolanRW10,
     RadolanSF,
     RadolanSFLastYesterday,
+    WholeFileProduct,
 )
 
 PRODUCT_CLASSES: tuple[type[BaseProductUpdateCoordinator], ...] = (
@@ -27,32 +33,68 @@ PRODUCT_CLASSES: tuple[type[BaseProductUpdateCoordinator], ...] = (
     RadvorRV,
     HymecNG,
     RadolanRW,
+    RadolanRW10,
     RadolanSF,
     RadolanSFLastYesterday,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
-type MyConfigEntry = ConfigEntry[MyData]
+# How long a shared download is kept: two products fetch the same release
+# within their fetch jitter (<= 30 s) of each other; a few minutes also
+# covers one of them retrying after a 404. RADOLAN files are ~30 KB.
+SHARED_DOWNLOAD_TTL = timedelta(minutes=5)
+
+type DwdConfigEntry = ConfigEntry[DwdRuntimeData]
 
 
 @dataclass
-class MyData:
+class DwdRuntimeData:
     """Runtime data definition."""
 
     coordinators: dict[str, BaseProductUpdateCoordinator]
+    options: DwdOptions
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: MyConfigEntry) -> bool:
-    """Set up DWD Precipitation from a config entry."""
+async def async_setup_entry(hass: HomeAssistant, entry: DwdConfigEntry) -> bool:
+    """Set up DWD Precipitation from a config entry.
+
+    Builds one coordinator per DWD product the entry's options need, fetches
+    every product once in parallel, and registers each product's release
+    schedule, so later fetches happen when DWD publishes. The entry fails to
+    load (ConfigEntryNotReady, which Home Assistant retries) only if no product
+    could be fetched at all; a single failing product just leaves its own
+    sensors unavailable while it keeps retrying. Finally the sensor and binary
+    sensor platforms are set up on the coordinators.
+
+    """
     client = async_get_clientsession(hass)
 
     lat = entry.data["latitude"]
     lon = entry.data["longitude"]
 
+    # Products that exist for one option are only built when it is in use, so
+    # an entry never fetches what none of its entities show.
+    options = DwdOptions.from_options(entry.options)
     product_coordinators: list[BaseProductUpdateCoordinator] = [
-        cls(hass, entry, client, lat, lon) for cls in PRODUCT_CLASSES
+        cls(hass, entry, client, lat, lon)
+        for cls in PRODUCT_CLASSES
+        if cls.is_needed(options)
     ]
+    # Products that read the same files share one download of each.
+    downloads = DownloadCache(SHARED_DOWNLOAD_TTL.total_seconds())
+    for coordinator in product_coordinators:
+        if isinstance(coordinator, WholeFileProduct):
+            coordinator.download_cache = downloads
+    # Rain events take each measured step's type from HymecNG.
+    by_key = {c.PRODUCT_KEY: c for c in product_coordinators}
+    rv, hymecng = by_key.get(RadvorRV.PRODUCT_KEY), by_key.get(HymecNG.PRODUCT_KEY)
+    if (
+        isinstance(rv, RadvorRV)
+        and isinstance(hymecng, HymecNG)
+        and rv.rain_tracker is not None
+    ):
+        hymecng.attach_rain_tracker(rv.rain_tracker)
 
     # Refresh every product concurrently. async_refresh() records a failure on
     # the coordinator instead of raising, so one dead product cannot veto the
@@ -88,7 +130,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: MyConfigEntry) -> bool:
     for coordinator in product_coordinators:
         coordinator.async_track_releases()
 
-    entry.runtime_data = MyData({c.PRODUCT_KEY: c for c in product_coordinators})
+    if not options.rain_events:
+        # Turned off: drop what the tracker stored, so turning it on again
+        # starts clean rather than from a state days out of date.
+        await RainEventsTracker.async_remove(hass, entry.entry_id)
+
+    entry.runtime_data = DwdRuntimeData(by_key, options)
     entry.async_on_unload(entry.add_update_listener(update_listener))
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -96,11 +143,64 @@ async def async_setup_entry(hass: HomeAssistant, entry: MyConfigEntry) -> bool:
     return True
 
 
-async def update_listener(hass: HomeAssistant, entry: MyConfigEntry) -> None:
-    """Handle config entry updates."""
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Migrate an older config entry to the current version.
+
+    Home Assistant calls this before setup whenever an entry's stored version
+    is older than ConfigFlow.VERSION / MINOR_VERSION. Entries from before
+    version 1.2 get the dry-streak source they have always counted (RS) written
+    into their options, so an upgrade does not change their sensor. Entries
+    from a newer major version are refused, since this version cannot know
+    their format.
+
+    """
+    if entry.version > 1:
+        # Written by a newer major version; HA refuses to load it either way.
+        return False
+
+    if entry.minor_version < 2:
+        # 1.2 added the dry-streak source. Pin entries that predate it to the
+        # product they have always counted, so an upgrade changes nothing.
+        options = {**entry.options}
+        options.setdefault(CONF_DRY_STREAK_SOURCE, LEGACY_DRY_STREAK_SOURCE)
+        hass.config_entries.async_update_entry(
+            entry, options=options, minor_version=2
+        )
+
+    return True
+
+
+async def update_listener(hass: HomeAssistant, entry: DwdConfigEntry) -> None:
+    """Reload the entry when its options change.
+
+    Registered at setup; Home Assistant calls it after the options form is
+    saved. Coordinators and entities read the options once, when they are built
+    (DwdOptions is a snapshot), so a reload is how a changed option takes
+    effect.
+
+    """
     await hass.config_entries.async_reload(entry.entry_id)
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: MyConfigEntry) -> bool:
-    """Unload a config entry."""
+async def async_unload_entry(hass: HomeAssistant, entry: DwdConfigEntry) -> bool:
+    """Unload a config entry.
+
+    Called when the entry is disabled, deleted or reloaded. Removes the sensor
+    platforms; the coordinators cancel their timers and the rain-events tracker
+    saves its state through callbacks they registered with the entry, so
+    nothing needs doing here for them.
+
+    """
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Delete what the entry stored when it is removed.
+
+    Called once, after the user deletes the entry. Only the rain-events tracker
+    keeps a file of its own (a Store per entry); the totals and the dry streak
+    live in Home Assistant's restore state, which goes with the entities.
+    Deleting the file here means a removed entry leaves nothing behind.
+
+    """
+    await RainEventsTracker.async_remove(hass, entry.entry_id)
