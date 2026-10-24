@@ -119,8 +119,11 @@ wird:
   genauer. Der DWD rechnet sie alle 10 Minuten neu, daher zeigt sich ein
   Zurücksetzen etwa 30 bis 40 Minuten nach dem Regen.
 - **Nur Radar (RS):** alle 5 Minuten aktualisiert, reagiert also schneller,
-  ist aber ungenauer und setzt die Zählung bis zu eine Stunde nach dem Ende
-  des Regens immer wieder zurück.
+  ist aber ungenauer.
+
+Beide betrachten die letzten 60 Minuten, daher beginnt die Zählung mit beiden
+bis zu eine Stunde nach dem Ende des Regens immer wieder von vorn, bis der
+Regen aus dieser Stunde heraus ist.
 
 Installationen, die vor dieser Einstellung eingerichtet wurden, behalten
 **Nur Radar**, ein Update ändert also nichts; stelle hier um, wenn du die

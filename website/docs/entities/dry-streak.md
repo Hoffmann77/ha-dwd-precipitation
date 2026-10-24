@@ -30,11 +30,15 @@ Two options decide it:
 | Source | Updated | A reset shows | Notes |
 |--------|---------|---------------|-------|
 | **Radar and rain gauges (RW)** | every 10 min | 30 to 40 min after the rain | Corrected with rain gauges, more accurate. Default for new installs |
-| **Radar only (RS)**, the hour of `Precipitation last 60 min` | every 5 min | a few minutes after the rain | Radar only, noisier; its rolling hour keeps resetting the counter for up to an hour after the rain stops |
+| **Radar only (RS)**, the hour of `Precipitation last 60 min` | every 5 min | a few minutes after the rain | Radar only, noisier |
 
-With RW, the counter follows DWD's reruns of the analysis every 10 minutes,
-each covering the hour ending then. A reset moves `dry_since` to the end of
-that hour.
+Both sources are the rain of the last 60 minutes: RS a new hour every
+5 minutes, RW every 10, as DWD reruns its analysis for the hour ending then.
+A reset moves `dry_since` to the end of the hour that reached the threshold.
+So with either source, rain keeps resetting the counter after it has
+stopped, for as long as what fell inside the latest hour still reaches the
+threshold: up to an hour. The counter then starts at the end of the last
+such hour, at most an hour after the rain stopped.
 
 Installs set up before the source option existed keep RS, so upgrading
 changes nothing. When you switch, the counter keeps its value.

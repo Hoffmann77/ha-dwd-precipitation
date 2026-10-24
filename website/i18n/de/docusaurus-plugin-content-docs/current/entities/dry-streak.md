@@ -31,11 +31,16 @@ Zwei Optionen entscheiden das:
 | Quelle | Aktualisiert | Ein Zurücksetzen zeigt sich | Hinweise |
 |--------|--------------|-----------------------------|----------|
 | **Radar und Regenmessern (RW)** | alle 10 min | 30 bis 40 min nach dem Regen | Mit Niederschlagsmessern korrigiert, genauer. Standard für neue Installationen |
-| **Nur Radar (RS)**, die Stunde von `Niederschlag letzte 60 min` | alle 5 min | wenige Minuten nach dem Regen | Nur Radar, stärker schwankend; seine gleitende Stunde setzt den Zähler noch bis zu eine Stunde nach Regenende immer wieder zurück |
+| **Nur Radar (RS)**, die Stunde von `Niederschlag letzte 60 min` | alle 5 min | wenige Minuten nach dem Regen | Nur Radar, stärker schwankend |
 
-Mit RW folgt der Zähler den Neuberechnungen der Analyse, die der DWD alle
-10 Minuten macht, jede für die Stunde, die dann endet. Ein Zurücksetzen
-verschiebt `dry_since` auf das Ende dieser Stunde.
+Beide Quellen sind der Regen der letzten 60 Minuten: RS alle 5 Minuten eine
+neue Stunde, RW alle 10, weil der DWD seine Analyse für die dann endende
+Stunde neu rechnet. Ein Zurücksetzen verschiebt `dry_since` auf das Ende der
+Stunde, die den Schwellwert erreicht hat. Mit beiden Quellen setzt Regen den
+Zähler daher auch nach seinem Ende noch zurück, solange das, was innerhalb
+der neuesten Stunde gefallen ist, den Schwellwert noch erreicht: bis zu eine
+Stunde lang. Der Zähler beginnt dann am Ende der letzten solchen Stunde,
+höchstens eine Stunde nach dem Ende des Regens.
 
 Installationen, die eingerichtet wurden, bevor es die Option für die Quelle
 gab, behalten RS, ein Update ändert also nichts. Wenn du wechselst, behält der

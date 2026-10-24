@@ -112,8 +112,11 @@ Which measurement of the past hour's rain is compared with that amount:
   DWD recalculates this every 10 minutes, so a reset shows about 30 to 40
   minutes after the rain.
 - **Radar only (RS):** updated every 5 minutes, so it reacts faster, but it
-  is less exact, and it keeps resetting the count for up to an hour after the
-  rain has stopped.
+  is less exact.
+
+Both look at the last 60 minutes, so with either one the count keeps
+starting again for up to an hour after the rain has stopped, until the rain
+has left that hour.
 
 Installs set up before this setting existed keep **Radar only**, so upgrading
 changes nothing; switch here if you prefer the other one. The count keeps its
