@@ -125,10 +125,12 @@ whole archive, with one warning per run of fallbacks.
   ([ADR 0011](/development/adr/0011-dry-streak-gaps-checked-against-rw)).
 - **Rain events** are recomputed from stored measured steps every release
   rather than accumulated
-  ([ADR 0006](/development/adr/0006-rain-events-opt-in-entity)).
+  ([ADR 0006](/development/adr/0006-rain-events-opt-in-entity)); HymecNG
+  gives each measured step its type, and no type is estimated
+  ([ADR 0012](/development/adr/0012-rain-event-types-are-measured-only)).
 - **Rain warnings** are config subentries, each a device with two entities,
   that filter the rain-events view once per release
-  ([ADR 0012](/development/adr/0012-rain-warnings-as-subentries)). The
+  ([ADR 0013](/development/adr/0013-rain-warnings-as-subentries)). The
   tracker runs for the option or for any warning.
 
 ## Entity naming

@@ -4,7 +4,9 @@ description: Precipitation type now, from DWD's HymecNG radar classification.
 ---
 
 HymecNG is DWD's classification of what is falling, derived from radar every
-5 minutes. The integration reads the class of your grid cell.
+5 minutes. The integration reads the class of your grid cell. With
+[Rain events](rain-events.md#precipitation-type) on, it also gives each
+measured step of a rain event its type.
 
 ## Precipitation type now
 

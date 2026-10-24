@@ -5,6 +5,8 @@ description: Niederschlagsart aktuell, aus der HymecNG-Radarklassifikation des D
 
 HymecNG ist die Klassifikation des DWD, was gerade fällt, alle 5 Minuten aus
 Radardaten abgeleitet. Die Integration liest die Klasse deiner Gitterzelle.
+Mit eingeschalteten [Regenereignissen](rain-events.md#precipitation-type) gibt
+sie außerdem jedem gemessenen Schritt eines Regenereignisses seine Art.
 
 ## Niederschlagsart aktuell {#precipitation-type-now}
 

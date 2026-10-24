@@ -69,7 +69,7 @@ Radarvorhersage veraltet ist, wie die anderen Vorhersagesensoren.
 | `mm` | Seine Summe: bisher gemessen plus vorhergesagt, in mm |
 | `peak_1h` | Der Regen in seiner nassesten Stunde, in mm |
 | `peak_10min` | Der Regen in seinen nassesten 10 Minuten, in mm |
-| `type` | Für die gemessene Niederschlagsart reserviert; vorerst immer `null` |
+| `type` | Die gemessene Niederschlagsart des Ereignisses, etwa `rain` oder `snow`, wie in [Regenereignisse](rain-events.md); `null`, solange es nur vorhergesagt ist, da der DWD keine Art vorhersagt |
 
 Alle sind `null`, solange der Status `dry` ist, und keines wird im Verlauf
 aufgezeichnet.

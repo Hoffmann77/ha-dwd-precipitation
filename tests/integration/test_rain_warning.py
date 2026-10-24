@@ -38,7 +38,9 @@ def _warning(subentry_id: str, title: str, **data) -> dict:
     }
 
 
-def _view(start_in_min: float, status: str = "upcoming", mm: float = 2.0) -> dict:
+def _view(
+    start_in_min: float, status: str = "upcoming", mm: float = 2.0, type_: str | None = None
+) -> dict:
     """Return a rain-events view with one event starting that far from now."""
     start = dt_util.utcnow() + timedelta(minutes=start_in_min)
     return {
@@ -55,6 +57,7 @@ def _view(start_in_min: float, status: str = "upcoming", mm: float = 2.0) -> dic
                     "peak_10min": {"mm": 0.6, "start": None, "end": None},
                 },
                 "absorbed": [],
+                "type": type_,
             }
         ],
         "last_ended": None,
@@ -271,9 +274,13 @@ async def test_each_warning_is_a_device_with_two_entities(
 
 
 async def test_ongoing_rain_is_rain(make_entry, hass: HomeAssistant) -> None:
-    await _set_up(hass, make_entry, [_warning(LAUNDRY, "Laundry")], view=_view(-10, "ongoing"))
+    await _set_up(
+        hass, make_entry, [_warning(LAUNDRY, "Laundry")], view=_view(-10, "ongoing", type_="graupel")
+    )
 
-    assert hass.states.get("sensor.home_laundry_rain_warning_status").state == "rain"
+    state = hass.states.get("sensor.home_laundry_rain_warning_status")
+    assert state.state == "rain"
+    assert state.attributes["type"] == "graupel"
     assert hass.states.get("binary_sensor.home_laundry_rain_warning").state == "on"
 
 
@@ -305,7 +312,10 @@ async def test_a_warning_runs_the_tracker_without_the_rain_events_sensor(
 ) -> None:
     entry = await _set_up(hass, make_entry, [_warning(LAUNDRY, "Laundry")], view=_view(40))
 
-    assert entry.runtime_data.coordinators["rv"]._rain_tracker is not None
+    coordinators = entry.runtime_data.coordinators
+    assert coordinators["rv"].rain_tracker is not None
+    # The warnings get the measured type too: HymecNG feeds the same tracker.
+    assert coordinators["hymecng"]._rain_tracker is coordinators["rv"].rain_tracker
     assert (
         er.async_get(hass).async_get_entity_id(
             "sensor", DOMAIN, f"{entry.entry_id}_radvor_rv_rain_events"

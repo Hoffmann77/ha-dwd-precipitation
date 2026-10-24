@@ -144,11 +144,13 @@ solcher Rückfälle.
   ([ADR 0011](/development/adr/0011-dry-streak-gaps-checked-against-rw)).
 - **Regenereignisse** werden bei jeder Veröffentlichung aus den gespeicherten
   gemessenen Schritten neu berechnet, statt aufaddiert zu werden
-  ([ADR 0006](/development/adr/0006-rain-events-opt-in-entity)).
+  ([ADR 0006](/development/adr/0006-rain-events-opt-in-entity)); HymecNG gibt
+  jedem gemessenen Schritt seine Art, und keine Art wird geschätzt
+  ([ADR 0012](/development/adr/0012-rain-event-types-are-measured-only)).
 - **Regenwarnungen** sind Konfigurations-Untereinträge, jede ein Gerät mit
   zwei Entitäten, die die Sicht der Regenereignisse einmal pro
   Veröffentlichung filtern
-  ([ADR 0012](/development/adr/0012-rain-warnings-as-subentries)). Die
+  ([ADR 0013](/development/adr/0013-rain-warnings-as-subentries)). Die
   Ereignisverfolgung läuft für die Option oder für eine beliebige Warnung.
 
 ## Benennung der Entitäten {#entity-naming}

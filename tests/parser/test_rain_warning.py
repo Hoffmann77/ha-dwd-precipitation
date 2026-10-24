@@ -43,6 +43,7 @@ def event(
     peak_1h: float | None = 1.5,
     peak_10min: float | None = 0.8,
     absorbed: list[str] | None = None,
+    type_: str | None = None,
 ) -> dict:
     """Return an EventView with what the warning reads; ``start`` minutes from NOW."""
     return {
@@ -55,6 +56,7 @@ def event(
             "peak_10min": None if peak_10min is None else peak(peak_10min),
         },
         "absorbed": absorbed or [],
+        "type": type_,
     }
 
 
@@ -197,6 +199,13 @@ def test_the_attributes_describe_the_event() -> None:
         "type": None,
     }
     assert tuple(result.attributes()) == ATTRIBUTES
+
+
+def test_the_type_is_the_events_measured_one() -> None:
+    """Rain events publishes it once measured; an upcoming event has none."""
+    result = verdict(WarningRule(lead_time=60), event("a", "ongoing", start=-10, type_="snow"))
+
+    assert result.attributes()["type"] == "snow"
 
 
 def test_the_attributes_are_none_while_dry() -> None:

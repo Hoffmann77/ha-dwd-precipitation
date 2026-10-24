@@ -1,4 +1,4 @@
-# 0012 — Regenwarnungen sind Untereinträge, die die Sicht der Regenereignisse filtern
+# 0013 — Regenwarnungen sind Untereinträge, die die Sicht der Regenereignisse filtern
 
 Status: angenommen (2026.11.0)
 
@@ -59,8 +59,8 @@ Entitäten und Geräten.
 - **Zwei Entitäten auf einem eigenen Gerät.** Ein binärer Sensor
   („Regenwarnung“, an bei `rain` oder `soon`) und ein Enum-Sensor
   („Regenwarnung Status“, mit `event_id`, `start`, `mm`, `peak_1h`,
-  `peak_10min` des Ereignisses und einem reservierten `type`, alle nicht
-  aufgezeichnet). Home Assistant hält ein Gerät in einem Untereintrag: Fügt
+  `peak_10min` des Ereignisses und seiner gemessenen Art `type` (ADR 0012,
+  `null`, solange es bevorsteht), alle nicht aufgezeichnet). Home Assistant hält ein Gerät in einem Untereintrag: Fügt
   man die Entitäten eines Untereintrags dem Gerät des Standorts hinzu, wandert
   dieses Gerät in den Untereintrag, was 2026.x meldet und 2027.8 verweigert.
   Daher ist jede Warnung ein Gerät, benannt nach dem Standort und der Warnung
@@ -83,8 +83,8 @@ Entitäten und Geräten.
   Zustandszeilen am Tag pro Warnung, trockene Tage eingeschlossen, für einen
   Wert, den das Frontend aus `start` ableiten kann.
 - **Eine Niederschlagsart aus benachbarten Zellen von HymecNG.** Eine
-  Schätzung; das Attribut `type` bleibt `null`, bis die Sicht der
-  Regenereignisse eine gemessene Art enthält.
+  Schätzung; das Attribut `type` ist nur die gemessene Art des Ereignisses
+  (ADR 0012).
 - **Die Option `rain_events` voraussetzen.** Man müsste einen
   Blueprint-Sensor einschalten, den man nicht will, und es bliebe offen, was
   mit den Warnungen geschieht, wenn man ihn ausschaltet.

@@ -104,7 +104,7 @@ poll loop.
    coordinator. What adopting a release should also do goes in
    `_async_on_new_release(release, data, metadata)`, called once per adopted
    release before it is published, never raising: RV feeds the rain-events
-   tracker there.
+   tracker there, and HymecNG hands it each release's type.
 4. The coordinator wraps those in a `CoordinatorData`. Every product has the
    same shape: `data` and `metadata` are dicts keyed by the same sub-keys
    (`KEY_*` in `const.py`, except RV's own), `metadata` holding each value's `ProductMetadata`
@@ -700,11 +700,12 @@ docs page `website/docs/entities/rain-events.md`. `radar/rain_events.py` holds t
 `RainEventsTracker` (`rain_events_tracker.py`) its life in HA (store, fill,
 save policy, warnings); `RadvorRV` only hands it each adopted release in
 `_async_on_new_release` and lends it an analysis fetch and a publish
-callback; `RainEventsSensor` in sensor.py is the entity.
+callback, `HymecNG` (attached at setup) each adopted release's type and a
+type fetch; `RainEventsSensor` in sensor.py is the entity.
 
 - **Built when needed.** `RadvorRV.__init__` builds a tracker only when
   `tracks_rain_events(entry, options)`: the `rain_events` option (Advanced,
-  default off) or any rain-warning subentry (ADR 0012; ADR 0006 had the
+  default off) or any rain-warning subentry (ADR 0013; ADR 0006 had the
   option gate all of it). Without one there is nothing to track, so an entry
   that uses neither makes no fill requests and writes nothing. The option
   only controls the entity: turning it off removes the entity from the
@@ -764,6 +765,18 @@ callback; `RainEventsSensor` in sensor.py is the entity.
   answers the same release after a restart without processing it twice.
 - **Isolation.** A tracker failure is logged once and leaves the attribute
   out; it never fails the RV update the other sensors depend on.
+- **Precipitation type** (ADR 0012). Each measured step can carry the
+  HymecNG label of the moment it ends (`RainEventsState.types`, by step end;
+  `type_nodata` for a file without one, not refetched). HymecNG records it
+  through `async_record_type`, usually before RV adopts the same release;
+  recording by step time leaves nothing to race, and a late type counts from
+  the next release. The fill round fetches missed types after the analyses,
+  wet steps in the published hour only (`types_to_fill`). Published as
+  `observed.types` (wet measured steps per label) and `type` (the latest
+  wet measured step's). **Measured only:** an upcoming event's `type` is
+  `null`, and nothing is estimated (no neighbouring cell, regional summary or
+  temperature rule); a label is published as DWD gives it, even
+  `no_precipitation` on a wet step. Old stores and views read as no type known.
 - **Threshold.** `rain_event_threshold` is independent of
   `precipitation_threshold` (no `max()`); changing it drops the events (new
   ids) but keeps the measured steps and `last_ended`.
@@ -771,7 +784,7 @@ callback; `RainEventsSensor` in sensor.py is the entity.
 ## Rain warnings
 
 User-defined warnings ("Laundry, 60 min"), each a config subentry of type
-`rain_warning` (ADR 0012), on the Rain events tracker and nothing else:
+`rain_warning` (ADR 0013), on the Rain events tracker and nothing else:
 
 - **A filter, not an event model.** `radar/rain_warning.py` judges the
   tracker's view (`data["rain_events"]` on `rv`): `rain` if an ongoing event
@@ -779,9 +792,9 @@ User-defined warnings ("Laundry, 60 min"), each a config subentry of type
   `lead_time` minutes of now, else `dry`; no view (`None`) is unknown, never
   dry. The filter compares the event's `total` block (`mm`,
   `peak_1h.mm`, `peak_10min.mm`) with the optional minimums, `combine` "any"
-  or "all"; no minimum passes every event. The measured type is reserved as
-  the `type` attribute, always `None` until the view carries one; never an
-  estimate.
+  or "all"; no minimum passes every event. The `type` attribute is the
+  event's measured `type` from the view (ADR 0012): `None` while upcoming,
+  never an estimate.
 - **Per release.** A verdict is judged once per view object
   (`RainWarning.evaluate` keys on identity), at the `now` of the first entity
   asking, so both entities agree and the memory moves once per release. No

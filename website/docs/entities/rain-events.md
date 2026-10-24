@@ -4,18 +4,19 @@ description: The Rain events sensor follows each burst of rain from forecast to 
 ---
 
 The **Rain events** sensor (`sensor.<name>_rain_events`) is meant for
-blueprints that warn about or report short bursts of rain. For a plain
-warning ("Laundry, 60 minutes ahead") you need neither the sensor nor a
-blueprint: add a [rain warning](rain-warnings.md), which works on the same
-events. It follows each
+blueprints that warn about or report short bursts of rain. It follows each
 event from the first forecast that shows it until it has fallen, under one id,
-and reports what was forecast against what was measured.
+and reports what was forecast against what was measured, and what type of
+precipitation was measured. For a plain warning ("Laundry, 60 minutes ahead")
+you need neither the sensor nor a blueprint: add a
+[rain warning](rain-warnings.md), which works on the same events.
 
 It is off by default. Turn it on with the advanced option
 [*Track rain events*](../getting-started/configuration.md#track-rain-events).
-With it on, the integration also fetches radar analyses it missed and keeps a
-small record of recent rain on disk; turning it off removes the sensor, and
-the record too unless a rain warning still uses it.
+With it on, the integration also fetches radar analyses and precipitation
+types it missed and keeps a small record of recent rain on disk; turning it
+off removes the sensor, and the record too unless a rain warning still uses
+it.
 
 ## State
 
@@ -65,14 +66,16 @@ events:                                # upcoming | ongoing | unseen, sorted by 
     last_wet_observed: "…"             # null while upcoming
     missing_steps: 0                   # measured steps without data inside the event
     observed_complete: true            # false: measured amounts may be too low
-    observed: {mm, peak_1h: {mm, start, end}, peak_10min: {mm, start, end}}
+    observed: {mm, peak_1h: {mm, start, end}, peak_10min: {mm, start, end},
+               types: {rain: 9, snow: 3}}  # wet measured steps per type
     forecast: {mm, peak_1h, peak_10min}
     total:    {mm, peak_1h, peak_10min}
+    type: snow                         # of the latest wet measured step; null while upcoming
     forecast_at_onset: {base, start, end, mm, peak_1h, peak_10min,
                         expected_so_far_mm, observed_so_far_mm}   # or null
     absorbed: []                       # ids merged into this event
 last_ended: {id, first_seen, start, start_clipped, end, end_clipped, missing_steps,
-             observed_complete, observed, forecast_at_onset, absorbed}   # or null
+             observed_complete, observed, type, forecast_at_onset, absorbed}   # or null
 ```
 
 ### Steps
@@ -108,6 +111,28 @@ release does not leave a gap.
   *including* rain just outside it, because DWD's heavy-rain criterion is
   simply the amount within an hour.
 
+### Precipitation type
+
+- `observed.types` counts the event's wet measured steps by the type DWD's
+  [HymecNG](hymecng.md) classification gave for your location at the end of
+  each step, with the states of
+  [Precipitation type now](hymecng.md#precipitation-type-now):
+  `{rain: 9, snow: 3}` is 45 minutes of rain and 15 of snow.
+- `type` is the type of the latest wet measured step that has one.
+- Only measured steps have a type. DWD's nowcast forecasts amounts, not
+  types, so an upcoming event has `type: null` and no `types`; its type
+  appears with its first measured rain. The integration does not estimate
+  one.
+- The types are DWD's, as they are. HymecNG classifies separately from the
+  amounts, so a wet step can come with `no_precipitation` or
+  `not_classified`; it is counted under that state.
+- A wet step without a type is not counted, so the counts can add up to fewer
+  than the event's wet steps. That happens when HymecNG has no data for your
+  location, or its file could not be fetched; a missed type is fetched later,
+  like a missed analysis, while the step is in the published hour.
+- A step usually gets its type from HymecNG before the radar analysis
+  arrives. A type that arrives later shows from the next release on.
+
 ### Forecast at onset
 
 `forecast_at_onset` is the event's last forecast before its rain arrived,
@@ -129,9 +154,12 @@ when it first sees a new id.
 - Missed releases can be fetched up to an hour back. After a longer downtime,
   or while DWD keeps failing to serve a release, an event's measured values
   can be too low: check `observed_complete` (and `missing_steps`,
-  `start_clipped`, `end_clipped`). In short, don't restart Home Assistant
+  `start_clipped`, `end_clipped`). The same goes for the types, whose counts
+  then miss those steps. In short, don't restart Home Assistant
   during a severe downpour.
 - The record survives restarts and option changes. Deleting the integration
   entry deletes it.
 - [ADR 0006](/development/adr/0006-rain-events-opt-in-entity) explains why
-  the events are their own opt-in entity and are recomputed every release.
+  the events are their own opt-in entity and are recomputed every release,
+  [ADR 0012](/development/adr/0012-rain-event-types-are-measured-only) why
+  they have a type only once it is measured.

@@ -129,10 +129,11 @@ it until it has fallen, for blueprints that warn about or report rain.
 
 With it on, or while the location has a
 [rain warning](../entities/rain-warnings.md), the integration also fetches
-the radar analyses it missed (a small part of each file) and keeps a small
-record of recent rain on disk. Turning it off removes the sensor; the record
-is deleted once no rain warning needs it either, so turning it on again then
-starts clean. Rain warnings work with this option off.
+the radar analyses (a small part of each file) and the precipitation types
+it missed, and keeps a small record of recent rain on disk. Turning it off
+removes the sensor; the record is deleted once no rain warning needs it
+either, so turning it on again then starts clean. Rain warnings work with
+this option off.
 
 ### Rain event threshold
 

@@ -67,7 +67,7 @@ is out of date, like the other forecast sensors.
 | `mm` | Its total: measured so far plus forecast, in mm |
 | `peak_1h` | The rain in its wettest hour, in mm |
 | `peak_10min` | The rain in its wettest 10 minutes, in mm |
-| `type` | Reserved for the measured precipitation type; always `null` for now |
+| `type` | The measured precipitation type of the event, such as `rain` or `snow`, as in [Rain events](rain-events.md); `null` while it is only forecast, since DWD forecasts no type |
 
 All of them are `null` while the status is `dry`, and none is recorded in
 history.

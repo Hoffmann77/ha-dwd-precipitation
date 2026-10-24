@@ -568,8 +568,9 @@ class RainWarningStatusSensor(RainWarningEntity, SensorEntity):
         """Return the event the warning is about; all None while dry.
 
         ``event_id`` (the Rain events id), ``start``, and from the event's
-        total ``mm``, ``peak_1h`` and ``peak_10min`` (mm). ``type`` is always
-        None for now. Empty while there is no view. None of it is recorded.
+        total ``mm``, ``peak_1h`` and ``peak_10min`` (mm), and its measured
+        ``type`` (None while upcoming). Empty while there is no view. None of
+        it is recorded.
 
         """
         verdict = self._verdict()

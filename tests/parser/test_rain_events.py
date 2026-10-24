@@ -14,7 +14,9 @@ from radar.rain_events import (
     STEP,
     at_stake,
     record_measured,
+    record_type,
     steps_to_fill,
+    types_to_fill,
     update,
     wet_step_milli,
 )
@@ -33,6 +35,7 @@ def iso(hhmm: str) -> str:
 
 
 Rain = Callable[[datetime], float]
+Types = Callable[[datetime], str | None]
 
 
 def steady(mm: float, start: str, end: str) -> Rain:
@@ -51,11 +54,15 @@ DRY: Rain = lambda _t: 0.0
 class Sim:
     """Feeds releases to the tracker the way RadvorRV does."""
 
-    def __init__(self, threshold_mmh: float = 0.1) -> None:
+    def __init__(self, threshold_mmh: float = 0.1, types: Types | None = None) -> None:
         self.state = RainEventsState()
         self.milli = wet_step_milli(threshold_mmh)
         self.unfillable: set[datetime] = set()
         self.fills: list[datetime] = []
+        # HymecNG: the type at each moment, recorded before RV's release (as
+        # HymecNG is usually adopted first) and filled like the amounts.
+        self.types = types
+        self.type_fills: list[datetime] = []
 
     def release(self, base: datetime, truth: Rain, forecast: Rain | None = None) -> dict:
         for t in steps_to_fill(self.state, base):
@@ -63,6 +70,14 @@ class Sim:
                 continue
             self.fills.append(t)
             record_measured(self.state, t, truth(t))
+        if self.types is not None:
+            for t in types_to_fill(self.state, base, self.milli):
+                if t in self.unfillable:
+                    continue
+                self.type_fills.append(t)
+                record_type(self.state, t, self.types(t))
+            if base not in self.unfillable:
+                record_type(self.state, base, self.types(base))
         forecast = forecast or truth
         steps = [forecast(base + (k + 1) * STEP) for k in range(24)]
         return update(self.state, base, truth(base), steps, self.milli)
@@ -319,6 +334,7 @@ def test_hour_straddling_now():
         "mm": 9.0,
         "peak_1h": {"mm": 9.0, "start": iso("14:00"), "end": iso("14:30")},
         "peak_10min": {"mm": 3.0, "start": iso("14:00"), "end": iso("14:10")},
+        "types": {},
     }
     assert event["forecast"] == {
         "mm": 9.0,
@@ -599,3 +615,168 @@ def test_the_published_view_is_the_declared_schema():
     for event in with_event["events"]:
         assert set(event) == set(EventView.__annotations__)
     assert set(ended) == set(EndedRecord.__annotations__)
+
+
+# ---------------------------------------------------------------------------
+# Precipitation type (HymecNG), measured steps only
+# ---------------------------------------------------------------------------
+
+
+def switching(change: str, before: str = "rain", after: str = "snow") -> Types:
+    """HymecNG reports ``before`` up to ``change``, ``after`` from then on."""
+    return lambda t: before if t <= at(change) else after
+
+
+def test_an_ongoing_event_counts_its_wet_steps_per_type():
+    sim = Sim(types=switching("14:15"))
+    view = sim.release(at("14:30"), steady(1.0, "14:00", "15:00"))
+
+    event = only(view)
+    # Wet measured steps 14:05..14:30: three rain, three snow.
+    assert event["observed"]["types"] == {"rain": 3, "snow": 3}
+    assert event["type"] == "snow"  # the latest wet step's
+
+
+def test_an_upcoming_event_has_no_type():
+    """DWD forecasts no type; nothing is carried over from the type now."""
+    sim = Sim(types=lambda _t: "snow")
+    view = sim.release(at("13:30"), DRY, steady(1.0, "14:00", "14:30"))
+
+    event = only(view)
+    assert event["status"] == "upcoming"
+    assert event["type"] is None
+    assert event["observed"]["types"] == {}
+
+
+def test_only_wet_steps_count_and_hymecng_labels_are_kept_as_they_are():
+    # HymecNG sees nothing at 14:10 although RV measured rain: that is DWD's
+    # value, kept as it is, not corrected.
+    types = lambda t: "no_precipitation" if t == at("14:10") or t > at("14:20") else "rain"
+    sim = Sim(types=types)
+    view = sim.release(at("14:25"), steady(1.0, "14:00", "14:20"))
+
+    event = only(view)
+    assert event["observed"]["types"] == {"rain": 3, "no_precipitation": 1}
+    assert event["type"] == "rain"  # dry steps after the rain do not count
+
+
+def test_a_wet_step_without_a_type_is_not_counted():
+    sim = Sim(types=lambda t: None if t == at("14:30") else "rain")
+    view = sim.release(at("14:30"), steady(1.0, "14:00", "15:00"))
+
+    event = only(view)
+    assert event["observed"]["types"] == {"rain": 5}
+    assert event["type"] == "rain"  # the latest wet step that has one
+
+
+def test_a_type_recorded_late_counts_from_the_next_release():
+    sim = Sim()
+    rain = steady(1.0, "14:00", "15:00")
+    for t in ("14:05", "14:10"):
+        record_type(sim.state, at(t), "rain")
+    sim.release(at("14:10"), rain)
+    record_type(sim.state, at("14:15"), "graupel")  # ahead of RV's 14:15
+    view = sim.release(at("14:15"), rain)
+    assert only(view)["observed"]["types"] == {"rain": 2, "graupel": 1}
+
+    # 14:20's type comes after RV's 14:20: that view lacks it, the next has it.
+    view = sim.release(at("14:20"), rain)
+    assert only(view)["type"] == "graupel"
+    record_type(sim.state, at("14:20"), "hail")
+    view = sim.release(at("14:25"), rain)
+    assert only(view)["observed"]["types"] == {"rain": 2, "graupel": 1, "hail": 1}
+    assert only(view)["type"] == "hail"
+
+
+def test_types_to_fill_wants_wet_steps_in_the_window_only():
+    sim = Sim()
+    sim.unfillable = {at("13:05")}
+    sim.run("12:00", "13:10", steady(1.0, "12:50", "13:30"), skip=["13:05"])
+    sim.unfillable = set()
+    for t in ("12:55", "13:00"):
+        record_type(sim.state, at(t), "rain")
+
+    # 12:55/13:00 have a type, 13:05 is not measured yet, 13:10 is the release
+    # itself, which the HymecNG coordinator fetches anyway.
+    assert types_to_fill(sim.state, at("13:10"), sim.milli) == []
+    sim.release(at("13:15"), steady(1.0, "12:50", "13:30"))
+    assert types_to_fill(sim.state, at("13:15"), sim.milli) == [at("13:10"), at("13:05")]
+    # A step whose HymecNG file had no type for the cell is not refetched.
+    record_type(sim.state, at("13:10"), None)
+    assert types_to_fill(sim.state, at("13:15"), sim.milli) == [at("13:05")]
+
+
+def test_missed_types_are_filled_before_the_release_is_processed():
+    sim = Sim(types=switching("14:10"))
+    sim.unfillable = {at("14:10"), at("14:15")}
+    sim.run("13:30", "14:15", steady(1.0, "14:00", "15:00"), skip=["14:10", "14:15"])
+    sim.unfillable = set()
+
+    view = sim.release(at("14:20"), steady(1.0, "14:00", "15:00"))
+
+    assert sim.type_fills[-2:] == [at("14:15"), at("14:10")]
+    assert only(view)["observed"]["types"] == {"rain": 2, "snow": 2}
+
+
+def test_an_ended_event_keeps_its_types():
+    sim = Sim(types=switching("14:10", "snow", "sleet"))
+    views = sim.run("13:30", "14:40", steady(1.0, "14:00", "14:20"))
+
+    ended = views["14:40"]["last_ended"]
+    assert ended["observed"]["types"] == {"snow": 2, "sleet": 2}
+    assert ended["type"] == "sleet"
+
+
+def test_types_survive_restarts_unchanged():
+    rain = combine(steady(1.0, "13:10", "13:40"), steady(2.0, "15:50", "16:05"))
+    types = switching("13:25", "rain", "graupel")
+    plain, restarted = Sim(types=types), Sim(types=types)
+    t = at("13:00")
+    while t <= at("16:30"):
+        expected = plain.release(t, rain)
+        restarted.restart()
+        assert restarted.release(t, rain) == expected, t
+        t += STEP
+
+
+def test_a_store_from_before_the_types_reads_as_no_type_known():
+    sim = Sim()
+    sim.run("13:30", "14:40", steady(1.0, "14:00", "14:20"))
+    sim.release(at("14:45"), DRY, steady(1.0, "15:30", "15:40"))
+    raw = json.loads(json.dumps(sim.state.as_dict()))
+    del raw["types"], raw["type_nodata"]
+    del raw["last_ended"]["type"], raw["last_ended"]["observed"]["types"]
+    for event in raw["events"]:
+        del event["view"]["type"], event["view"]["observed"]["types"]
+        # Not in this forecast: unseen, republished from its stored view.
+        assert event["status"] == "upcoming"
+
+    state = RainEventsState.from_dict(raw)
+    sim.state = state
+    view = update(state, at("14:50"), 0.0, [0.0] * 24, sim.milli)
+
+    assert view["last_ended"]["type"] is None
+    assert view["last_ended"]["observed"]["types"] == {}
+    assert only(view)["status"] == "unseen"
+    assert only(view)["type"] is None and only(view)["observed"]["types"] == {}
+
+
+def test_a_type_ahead_of_the_release_is_kept_until_rv_gets_there():
+    sim = Sim()
+    sim.release(at("14:00"), DRY)
+    record_type(sim.state, at("14:05"), "rain")
+    sim.release(at("14:00"), DRY)  # the same release again prunes nothing it needs
+    assert sim.state.types == {at("14:05"): "rain"}
+    raw = json.loads(json.dumps(sim.state.as_dict()))
+    assert RainEventsState.from_dict(raw).types == {at("14:05"): "rain"}
+
+
+@pytest.mark.parametrize(
+    "value",
+    [[], {"not a time": "rain"}, {"2026-10-12T14:00:00+00:00": 3}],
+)
+def test_damaged_types_are_rejected(value):
+    raw = _stored_with_event()
+    raw["types"] = value
+    with pytest.raises(ValueError):
+        RainEventsState.from_dict(raw)

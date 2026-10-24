@@ -112,9 +112,10 @@ class Verdict:
 
         ``event_id`` and ``start`` come from the event; ``mm``, ``peak_1h``
         and ``peak_10min`` are its ``total`` block (mm, the peaks as their
-        amount). ``type`` is the measured precipitation type, which the
-        rain-events view does not carry yet, so it is always None for now.
-        All None while dry.
+        amount). ``type`` is the event's measured precipitation type, the
+        HymecNG label of its latest wet measured step: None while it is only
+        upcoming (DWD forecasts no type) and when none was measured. All None
+        while dry.
 
         """
         event = self.event or {}
@@ -125,7 +126,7 @@ class Verdict:
             "mm": total.get("mm"),
             "peak_1h": _peak_mm(total.get("peak_1h")),
             "peak_10min": _peak_mm(total.get("peak_10min")),
-            "type": None,
+            "type": event.get("type"),
         }
 
 

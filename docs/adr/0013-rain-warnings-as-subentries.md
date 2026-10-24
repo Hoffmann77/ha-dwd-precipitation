@@ -1,4 +1,4 @@
-# 0012 — Rain warnings are subentries that filter the rain-events view
+# 0013 — Rain warnings are subentries that filter the rain-events view
 
 Status: accepted (2026.11.0)
 
@@ -48,12 +48,12 @@ entry, each with its own flow, entities and devices.
   judges events afresh.
 - **Two entities on a device of their own.** A binary sensor ("Rain warning",
   on for `rain` or `soon`) and an enum sensor ("Rain warning status", with
-  the event's `event_id`, `start`, `mm`, `peak_1h`, `peak_10min` and a
-  reserved `type`, all unrecorded). Home Assistant keeps a device in one
-  subentry: adding a subentry's entities to the location's device moves that
-  device into the subentry, which 2026.x reports and 2027.8 refuses. So each
-  warning is a device named after the location and the warning ("Home
-  Laundry"), and the entity ids are
+  the event's `event_id`, `start`, `mm`, `peak_1h`, `peak_10min` and its
+  measured `type` (ADR 0012, `null` while upcoming), all unrecorded). Home
+  Assistant keeps a device in one subentry: adding a subentry's entities to
+  the location's device moves that device into the subentry, which 2026.x
+  reports and 2027.8 refuses. So each warning is a device named after the
+  location and the warning ("Home Laundry"), and the entity ids are
   `binary_sensor.<location>_<warning>_rain_warning` and
   `sensor.<location>_<warning>_rain_warning_status`, independent of the UI
   language. Unique ids are `<entry_id>_<subentry_id>_rain_warning` and
@@ -72,8 +72,7 @@ entry, each with its own flow, entities and devices.
   rows a day per warning, dry days included, for a value the frontend can
   derive from `start`.
 - **A precipitation type from HymecNG's nearby cells.** An estimate; the
-  `type` attribute stays `null` until the rain-events view carries a measured
-  type.
+  `type` attribute is the event's measured type only (ADR 0012).
 - **Requiring the `rain_events` option.** It would make users turn on a
   blueprint sensor they do not want, and leave the question of what happens
   to the warnings when it is turned off.

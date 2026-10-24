@@ -96,6 +96,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: DwdConfigEntry) -> bool:
     for coordinator in product_coordinators:
         if isinstance(coordinator, WholeFileProduct):
             coordinator.download_cache = downloads
+    # Rain events take each measured step's type from HymecNG.
+    by_key = {c.PRODUCT_KEY: c for c in product_coordinators}
+    rv, hymecng = by_key.get(RadvorRV.PRODUCT_KEY), by_key.get(HymecNG.PRODUCT_KEY)
+    if (
+        isinstance(rv, RadvorRV)
+        and isinstance(hymecng, HymecNG)
+        and rv.rain_tracker is not None
+    ):
+        hymecng.attach_rain_tracker(rv.rain_tracker)
 
     # Refresh every product concurrently. async_refresh() records a failure on
     # the coordinator instead of raising, so one dead product cannot veto the
@@ -138,7 +147,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: DwdConfigEntry) -> bool:
         await RainEventsTracker.async_remove(hass, entry.entry_id)
 
     entry.runtime_data = DwdRuntimeData(
-        {c.PRODUCT_KEY: c for c in product_coordinators},
+        by_key,
         options,
         {
             subentry.subentry_id: RainWarning(rain_warning_rule(subentry.data))

@@ -109,3 +109,48 @@ async def test_hymecng_real_file(make_coordinator, kind) -> None:
         expected = PRECIP_TYPE_BY_INDEX[cell["value"]]
     assert data == {"precipitation_type": expected}
     assert meta["precipitation_type"].source_timestamp == real_release("hymecng")
+
+
+@pytest.mark.asyncio
+async def test_hymecng_hands_each_adopted_type_to_the_rain_events_tracker(
+    make_coordinator, make_entry
+) -> None:
+    from custom_components.dwd_precipitation.products import RadvorRV
+
+    entry = make_entry({"rain_events": True})
+    rv = make_coordinator(RadvorRV, entry=entry)
+    coord = make_coordinator(HymecNG, entry=entry)
+    coord.attach_rain_tracker(rv.rain_tracker)
+    ts = datetime(2026, 7, 29, 17, 30, tzinfo=timezone.utc)
+
+    await coord._async_on_new_release(ts, {"precipitation_type": "snow"}, {})
+    later = ts.replace(minute=35)
+    await coord._async_on_new_release(later, {"precipitation_type": None}, {})
+
+    state = rv.rain_tracker.state
+    assert state.types == {ts: "snow"}
+    assert state.type_nodata == {later}  # no type for the cell: not refetched
+
+
+@pytest.mark.asyncio
+async def test_hymecng_without_rain_events_hands_nothing_on(make_coordinator) -> None:
+    coord = make_coordinator(HymecNG)
+    ts = datetime(2026, 7, 29, 17, 30, tzinfo=timezone.utc)
+    await coord._async_on_new_release(ts, {"precipitation_type": "snow"}, {})
+    assert coord._rain_tracker is None
+
+
+@pytest.mark.asyncio
+async def test_hymecng_fetches_a_past_type_and_checks_its_moment(make_coordinator) -> None:
+    coord = make_coordinator(HymecNG)
+    ts = datetime(2026, 7, 29, 17, 30, tzinfo=timezone.utc)  # the reader's moment
+    hd5 = make_hymecng_h5(shape=(DE1200_WHERE["ysize"], DE1200_WHERE["xsize"]), fill=8)
+    with (
+        patch.object(products, "async_get", new=AsyncMock(return_value=AsyncResponse(content=hd5.getvalue()))),
+        patch.object(products, "read_odim_classification_at", side_effect=_hymecng_reader(8)),
+    ):
+        assert await coord._async_fetch_type(ts) == PRECIP_TYPE_BY_INDEX[8]
+        # A file for another moment is never recorded as this step's type.
+        with pytest.raises(ValueError, match="is for"):
+            await coord._async_fetch_type(ts.replace(minute=35))
+    assert coord.curr_release is None  # a past release is not adopted

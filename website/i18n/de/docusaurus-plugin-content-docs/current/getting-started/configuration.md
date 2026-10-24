@@ -135,11 +135,12 @@ für Blueprints, die vor Regen warnen oder über Regen berichten.
 
 Ist die Option an oder hat der Standort eine
 [Regenwarnung](../entities/rain-warnings.md), ruft die Integration auch die
-verpassten Radaranalysen ab (einen kleinen Teil jeder Datei) und speichert
-eine kleine Aufzeichnung des jüngsten Regens auf der Festplatte. Ausschalten
-entfernt den Sensor; die Aufzeichnung wird gelöscht, sobald auch keine
-Regenwarnung sie mehr braucht, sodass ein erneutes Einschalten dann sauber von
-vorn beginnt. Regenwarnungen funktionieren auch bei ausgeschalteter Option.
+verpassten Radaranalysen (einen kleinen Teil jeder Datei) und
+Niederschlagsarten ab und speichert eine kleine Aufzeichnung des jüngsten
+Regens auf der Festplatte. Ausschalten entfernt den Sensor; die Aufzeichnung
+wird gelöscht, sobald auch keine Regenwarnung sie mehr braucht, sodass ein
+erneutes Einschalten dann sauber von vorn beginnt. Regenwarnungen
+funktionieren auch bei ausgeschalteter Option.
 
 ### Schwelle für Regenereignisse {#rain-event-threshold}
 

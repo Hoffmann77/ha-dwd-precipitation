@@ -1,7 +1,7 @@
 # 0006 — Rain events are their own opt-in entity, recomputed every release
 
 Status: accepted (2026.11.0); the opt-in part superseded by
-[0012](0012-rain-warnings-as-subentries.md), which also runs the tracker for
+[0013](0013-rain-warnings-as-subentries.md), which also runs the tracker for
 rain warnings
 
 ## Context
