@@ -99,3 +99,21 @@ def test_german_headings_keep_the_english_anchors(en_page, de_page):
         for heading in _headings(de_page.read_text(encoding="utf-8"))
     ]
     assert actual == expected
+
+
+DOCS_SITE = "https://hoffmann77.github.io/ha-dwd-precipitation/"
+SITE_PAGE = re.compile(re.escape(DOCS_SITE) + r"(de/)?([^)\s\"]*)")
+
+
+def _site_pages(text: str, german: bool) -> set[str]:
+    """Return the docs pages a README links in its own language, without /de."""
+    return {page for de, page in SITE_PAGE.findall(text) if bool(de) == german}
+
+
+def test_the_readme_has_a_german_version():
+    """README.de.md follows README.md: same sections, the same docs pages in German."""
+    en = (ROOT / "README.md").read_text(encoding="utf-8")
+    de = (ROOT / "README.de.md").read_text(encoding="utf-8")
+    assert "README.de.md" in en and "README.md" in de
+    assert len(_headings(de)) == len(_headings(en))
+    assert _site_pages(de, german=True) == _site_pages(en, german=False)

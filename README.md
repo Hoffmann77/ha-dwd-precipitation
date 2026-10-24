@@ -1,7 +1,8 @@
-
-
 # DWD Precipitation
 
+**English** | [Deutsch](https://github.com/Hoffmann77/ha-dwd-precipitation/blob/main/README.de.md)
+
+[![Documentation](https://img.shields.io/badge/docs-read%20online-blue.svg)](https://hoffmann77.github.io/ha-dwd-precipitation/)
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://hacs.xyz)
 [![GitHub Release](https://img.shields.io/github/v/release/Hoffmann77/ha-dwd-precipitation)](https://github.com/Hoffmann77/ha-dwd-precipitation/releases/latest)
 [![Tests](https://github.com/Hoffmann77/ha-dwd-precipitation/actions/workflows/tests.yml/badge.svg)](https://github.com/Hoffmann77/ha-dwd-precipitation/actions/workflows/tests.yml)
@@ -13,7 +14,10 @@ Radar-based precipitation measurements and forecasts from the German Weather Ser
 > This integration **only works** for locations **within Germany** and areas immediately adjacent to the German border.
 > The DWD radar composites do not cover other countries.
 
-**[Read the documentation](https://hoffmann77.github.io/ha-dwd-precipitation/)** ([Deutsch](https://hoffmann77.github.io/ha-dwd-precipitation/de/)) for every sensor, the options, how it works, and troubleshooting.
+> [!TIP]
+> **[Read the documentation](https://hoffmann77.github.io/ha-dwd-precipitation/)** for every sensor, every option, how it works, and help with problems. Also [in German](https://hoffmann77.github.io/ha-dwd-precipitation/de/).
+>
+> [Installation](https://hoffmann77.github.io/ha-dwd-precipitation/getting-started/installation) · [Configuration](https://hoffmann77.github.io/ha-dwd-precipitation/getting-started/configuration) · [Entities](https://hoffmann77.github.io/ha-dwd-precipitation/entities/overview) · [Rain warnings](https://hoffmann77.github.io/ha-dwd-precipitation/entities/rain-warnings) · [FAQ](https://hoffmann77.github.io/ha-dwd-precipitation/help/faq) · [Troubleshooting](https://hoffmann77.github.io/ha-dwd-precipitation/help/troubleshooting)
 
 ## Features
 
@@ -24,8 +28,8 @@ Radar-based precipitation measurements and forecasts from the German Weather Ser
 - **Measured totals:** past hour, past 24 hours, yesterday, and a days-without-rain counter
 - **Long-term totals:** running rain totals for Home Assistant's statistics, so weekly, monthly and yearly sums work out of the box
 - **Rain warnings:** your own warnings, such as "Laundry, 60 minutes ahead", each an on/off entity for automations, optionally only for rain above a minimum
-- **Rain events for blueprints** (optional): each burst of rain followed under one id from forecast to measurement, with forecast and measured amounts side by side
-- **Customizable thresholds** for rain events to use as input for automations.
+- **Rain events for blueprints** (optional): each shower followed from the first forecast until it has passed, with forecast and measured amounts side by side
+- **Adjustable thresholds:** choose how much rain counts, for the forecast sensors and for rain events alike
 
 ## Entities
 

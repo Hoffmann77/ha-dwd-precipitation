@@ -530,6 +530,11 @@ categories) are in the JSON files next to them (`npm run write-translations`
 adds new keys); `code.json` keeps only overrides of the theme's own German.
 `.md` is CommonMark and `.mdx` MDX (`markdown.format: 'detect'`).
 
+The README has a German twin too, `README.de.md` (HACS shows only
+`README.md`): both start with the language switch and the documentation
+callout, and `test_website.py` checks they have the same headings and link
+the same docs pages, the German one under `/de/`.
+
 npm, Node from `website/.nvmrc`; Renovate groups the `@docusaurus/*`
 packages. Locally: `npm ci`, then `npm start` (or `npm run start:de`) in
 `website/`; search only works in a build (`npm run build && npm run serve`).
