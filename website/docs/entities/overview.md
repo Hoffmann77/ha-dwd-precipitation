@@ -4,7 +4,8 @@ description: Every entity of DWD Precipitation at a glance, and how their names 
 ---
 
 All entities belong to one **DWD Precipitation** device per configured
-location. Their ids start with the name you gave the location: with the name
+location, except the [rain warnings](rain-warnings.md), which are a device
+each. Their ids start with the name you gave the location: with the name
 `Home`, `Precipitation last 60 min` is `sensor.home_precipitation_last_60_min`.
 
 :::note[Installed before 2026.11.0?]
@@ -59,9 +60,12 @@ window ended about 3 to 10 minutes earlier. See
 | Precipitation total daily¹ | `sensor.<name>_precipitation_total_daily` | mm | daily | [Running totals](totals.md) |
 | Timespan without precipitation | `sensor.<name>_timespan_without_precipitation` | d | 5 or 10 min | [Timespan without precipitation](dry-streak.md) |
 | Rain events² | `sensor.<name>_rain_events` | state | 5 min | [Rain events](rain-events.md) |
+| Rain warning³ | `binary_sensor.<name>_<warning>_rain_warning` | on/off | 5 min | [Rain warnings](rain-warnings.md) |
+| Rain warning status³ | `sensor.<name>_<warning>_rain_warning_status` | state | 5 min | [Rain warnings](rain-warnings.md) |
 
 ¹ Disabled by default on installs set up from 2026.11.0 on.
 ² Only with the *Track rain events* option on.
+³ One pair per rain warning you add, on its own device.
 
 ## Radar only or gauge-adjusted
 

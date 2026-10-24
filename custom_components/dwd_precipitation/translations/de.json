@@ -50,14 +50,72 @@
               "unavailable_when_stale": "Sensoren als nicht verfügbar anzeigen, wenn die Daten veraltet sind"
             },
             "data_description": {
-              "rain_events": "Fügt den Sensor „Regenereignisse“ hinzu, der jeden Regenschauer von der ersten Vorhersage, die ihn zeigt, bis er gefallen ist, verfolgt – für Blueprints, die vor Regen warnen oder darüber berichten. Standardmäßig aus: eingeschaltet ruft die Integration auch verpasste Radaranalysen ab und speichert eine kleine Aufzeichnung des jüngsten Regens.",
-              "rain_event_threshold": "Wie viel Regen ein 5-Minuten-Schritt braucht, um im Sensor „Regenereignisse“ zu einem Regenereignis zu zählen. 0 bedeutet, dass jede Spur ein Ereignis bildet. Unabhängig von der Schwelle für Regenerkennung, daher können die Ereignisse und „Niederschlagsbeginn“ voneinander abweichen, wenn sich die beiden Schwellen unterscheiden. Nur wirksam, wenn „Regenereignisse verfolgen“ eingeschaltet ist.",
+              "rain_events": "Fügt den Sensor „Regenereignisse“ hinzu, der jeden Regenschauer von der ersten Vorhersage, die ihn zeigt, bis er gefallen ist, verfolgt – für Blueprints, die vor Regen warnen oder darüber berichten. Standardmäßig aus. Ist sie eingeschaltet oder hat der Ort eine Regenwarnung, ruft die Integration auch verpasste Radaranalysen ab und speichert eine kleine Aufzeichnung des jüngsten Regens.",
+              "rain_event_threshold": "Wie viel Regen ein 5-Minuten-Schritt braucht, um zu einem Regenereignis zu zählen, für den Sensor „Regenereignisse“ und die Regenwarnungen. 0 bedeutet, dass jede Spur ein Ereignis bildet. Unabhängig von der Schwelle für Regenerkennung, daher können die Ereignisse und „Niederschlagsbeginn“ voneinander abweichen, wenn sich die beiden Schwellen unterscheiden.",
               "precipitation_end_algorithm": "„Erste trockene Lücke“ meldet das Ende des aktuellen Schauers und springt daher bei Schauerwetter hin und her. „Niederschlag endet innerhalb von 2 h“ wartet, bis kein weiterer Regen vorhergesagt ist – das ist stabiler, bleibt aber länger unbekannt. Der DWD sagt nur zwei Stunden voraus, darüber hinaus ist der Sensor in beiden Fällen „unbekannt“.",
               "full_rolling_series": "Lässt das Attribut „forecast_rolling_1h“ von „Maximaler Stundenniederschlag nächste 120 min“ eine Stunde früher beginnen. Jeder Eintrag ist der Niederschlag in der Stunde, die zu diesem Zeitpunkt beginnt. Die ersten Einträge enthalten damit auch Regen, der bereits gefallen ist, und ein Diagramm zeigt die vergangene Stunde und die Vorhersage als eine durchgehende Kurve. Der Wert des Sensors ist in beiden Fällen gleich, da er nur die kommenden Stunden betrachtet. Die frühere Stunde wird ohne zusätzliche Downloads aus den Radaranalysen der vergangenen Stunde berechnet; nach einem Neustart erscheint sie daher, sobald die Integration eine Stunde gelaufen ist.",
               "unavailable_when_stale": "Veröffentlicht der DWD nicht rechtzeitig eine neue Datei, melden die betroffenen Sensoren „nicht verfügbar“, statt den letzten Wert zu behalten. Schalte dies aus, um immer den neuesten Messwert zu behalten – auch wenn er Stunden alt sein kann. In beiden Fällen wird die fehlende Datei im Hintergrund weiter abgerufen."
             }
           }
         }
+      }
+    }
+  },
+  "config_subentries": {
+    "rain_warning": {
+      "initiate_flow": {
+        "user": "Regenwarnung hinzufügen",
+        "reconfigure": "Regenwarnung ändern"
+      },
+      "entry_type": "Regenwarnung",
+      "step": {
+        "user": {
+          "title": "Regenwarnung hinzufügen",
+          "description": "Eine Regenwarnung geht an, kurz bevor Regen diesen Ort erreicht, und bleibt an, solange es regnet. Jede Warnung ist ein eigenes Gerät, benannt nach dem Ort und der Warnung („Home Wäsche“), mit zwei Entitäten: „Regenwarnung“ (an/aus) und „Regenwarnung Status“ (trocken, bald oder Regen, mit den Details des Regenereignisses). Sie arbeitet mit den Regenereignissen, die die Integration verfolgt; was als Regen zählt, legt daher die erweiterte Option „Schwelle für Regenereignisse“ fest.",
+          "data": {
+            "name": "Name",
+            "lead_time": "Vorlaufzeit",
+            "min_mm": "Mindestregen insgesamt (mm)",
+            "min_peak_1h": "Mindestregen in der nassesten Stunde (mm)",
+            "min_peak_10min": "Mindestregen in den nassesten 10 Minuten (mm)",
+            "combine": "Bei mehreren Mindestwerten"
+          },
+          "data_description": {
+            "name": "Wofür die Warnung ist, etwa „Wäsche“ oder „Fenster“. An einem Ort namens „Home“ ergibt „Wäsche“ das Gerät „Home Wäsche“ und binary_sensor.home_wasche_rain_warning.",
+            "lead_time": "Wie viele Minuten vor dem Regen die Warnung angeht. Die Vorhersage reicht zwei Stunden voraus und kommt ein paar Minuten nach der DWD-Veröffentlichung an, daher kann die Warnung bis zu 5 Minuten später kommen.",
+            "min_mm": "Nur vor einem Regenereignis warnen, das insgesamt mindestens so viel bringt, gemessen und vorhergesagt. Leer lassen, um vor jedem Regenereignis zu warnen.",
+            "min_peak_1h": "Nur vor einem Regenereignis warnen, dessen nasseste Stunde mindestens so viel bringt. Leer lassen, um es nicht zu prüfen.",
+            "min_peak_10min": "Nur vor einem Regenereignis warnen, dessen nasseste 10 Minuten mindestens so viel bringen, für kurze, heftige Schauer. Leer lassen, um es nicht zu prüfen.",
+            "combine": "Ob ein Ereignis einen der gesetzten Mindestwerte erreichen muss oder alle. Ohne Mindestwert spielt es keine Rolle."
+          }
+        },
+        "reconfigure": {
+          "title": "Regenwarnung ändern",
+          "description": "Ein neuer Name benennt das Gerät und die Entitäten der Warnung um; ihre Entitäts-IDs bleiben, wie sie sind.",
+          "data": {
+            "name": "Name",
+            "lead_time": "Vorlaufzeit",
+            "min_mm": "Mindestregen insgesamt (mm)",
+            "min_peak_1h": "Mindestregen in der nassesten Stunde (mm)",
+            "min_peak_10min": "Mindestregen in den nassesten 10 Minuten (mm)",
+            "combine": "Bei mehreren Mindestwerten"
+          },
+          "data_description": {
+            "name": "Wofür die Warnung ist, etwa „Wäsche“ oder „Fenster“. An einem Ort namens „Home“ ergibt „Wäsche“ das Gerät „Home Wäsche“ und binary_sensor.home_wasche_rain_warning.",
+            "lead_time": "Wie viele Minuten vor dem Regen die Warnung angeht. Die Vorhersage reicht zwei Stunden voraus und kommt ein paar Minuten nach der DWD-Veröffentlichung an, daher kann die Warnung bis zu 5 Minuten später kommen.",
+            "min_mm": "Nur vor einem Regenereignis warnen, das insgesamt mindestens so viel bringt, gemessen und vorhergesagt. Leer lassen, um vor jedem Regenereignis zu warnen.",
+            "min_peak_1h": "Nur vor einem Regenereignis warnen, dessen nasseste Stunde mindestens so viel bringt. Leer lassen, um es nicht zu prüfen.",
+            "min_peak_10min": "Nur vor einem Regenereignis warnen, dessen nasseste 10 Minuten mindestens so viel bringen, für kurze, heftige Schauer. Leer lassen, um es nicht zu prüfen.",
+            "combine": "Ob ein Ereignis einen der gesetzten Mindestwerte erreichen muss oder alle. Ohne Mindestwert spielt es keine Rolle."
+          }
+        }
+      },
+      "error": {
+        "invalid_name": "Bitte gib einen Namen ein.",
+        "name_already_exists": "Dieser Ort hat bereits eine Regenwarnung mit diesem Namen. Bitte wähle einen anderen Namen."
+      },
+      "abort": {
+        "reconfigure_successful": "Die Regenwarnung wurde geändert."
       }
     }
   },
@@ -78,6 +136,12 @@
       "options": {
         "rw": "Angeeichte Stunde (RW, alle 10 Minuten)",
         "rs": "Niederschlag letzte 60 min (Radar, RS)"
+      }
+    },
+    "combine": {
+      "options": {
+        "any": "Einer davon genügt",
+        "all": "Alle müssen erreicht werden"
       }
     }
   },
@@ -157,11 +221,22 @@
           "upcoming": "Bevorstehend",
           "ongoing": "Laufend"
         }
+      },
+      "rain_warning_status": {
+        "name": "Regenwarnung Status",
+        "state": {
+          "dry": "Trocken",
+          "soon": "Bald",
+          "rain": "Regen"
+        }
       }
     },
     "binary_sensor": {
       "precipitation_expected": {
         "name": "Niederschlag erwartet"
+      },
+      "rain_warning": {
+        "name": "Regenwarnung"
       }
     }
   }

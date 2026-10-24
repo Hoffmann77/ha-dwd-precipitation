@@ -5,7 +5,7 @@ description: DWD Precipitation mit HACS oder von Hand installieren und dann zu H
 
 ## Voraussetzungen {#requirements}
 
-- Eine Home-Assistant-Installation, die `opendata.dwd.de` über HTTPS
+- Home Assistant 2025.4 oder neuer, das `opendata.dwd.de` über HTTPS
   erreicht.
 - Ein Standort in Deutschland oder nahe seiner Grenze. Was abgedeckt ist,
   steht unter [Gitterzellen-Suche](../how-it-works/grid-lookup.md).

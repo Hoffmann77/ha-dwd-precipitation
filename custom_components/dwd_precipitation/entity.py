@@ -7,12 +7,15 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, cast
 
+from homeassistant.config_entries import ConfigSubentry
 from homeassistant.helpers.entity import EntityDescription
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
 from .coordinator import BaseProductUpdateCoordinator, ProductMetadata
+from .radar.rain_warning import RainWarning, Verdict
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -161,3 +164,58 @@ class DwdCoordinatorEntity(CoordinatorEntity[BaseProductUpdateCoordinator]):
                 }
             )
         return attrs
+
+
+class RainWarningEntity(DwdCoordinatorEntity):
+    """Base of a rain warning's two entities: on RV, judged by its RainWarning.
+
+    One binary sensor ("Rain warning") and one enum sensor ("Rain warning
+    status") per rain-warning subentry, on a device of their own named after
+    the location and the warning ("Home Laundry"): Home Assistant gives each
+    subentry its own devices, so they cannot share the location's. Both read
+    the same RainWarning, so they always agree; its verdict changes only when
+    RV brings a new rain-events view.
+
+    """
+
+    def __init__(
+        self,
+        coordinator: BaseProductUpdateCoordinator,
+        description: EntityDescription,
+        subentry: ConfigSubentry,
+        warning: RainWarning,
+    ) -> None:
+        """Bind the entity to its subentry's device and the warning's memory.
+
+        ``description`` carries the platform's translation key; its key is the
+        unique-id suffix after the subentry id. The device name is the
+        location's title and the warning's, both as the user typed them, so
+        entity ids do not depend on Home Assistant's language. Renaming the
+        warning renames the device; the entity ids stay.
+
+        """
+        super().__init__(coordinator, description)
+        entry = coordinator.config_entry
+        self._attr_unique_id = unique_id_for(
+            entry.entry_id, f"{subentry.subentry_id}_{description.key}"
+        )
+        self._attr_device_info = DeviceInfo(
+            entry_type=DeviceEntryType.SERVICE,
+            identifiers={(DOMAIN, f"{entry.entry_id}_{subentry.subentry_id}")},
+            name=f"{entry.title or 'DWD Precipitation'} {subentry.title}",
+        )
+        self._warning = warning
+
+    def _verdict(self) -> Verdict | None:
+        """Return the warning's verdict on RV's latest view; None without one.
+
+        None until RV has data, and when the tracker has no view for this
+        release (it failed, or a background fill is still running after a
+        restart); the entities show unknown then.
+
+        """
+        if self.coordinator.data is None:
+            return None
+        return self._warning.evaluate(
+            self.coordinator.data.data.get("rain_events"), dt_util.utcnow()
+        )

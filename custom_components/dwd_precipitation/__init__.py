@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
@@ -13,7 +13,13 @@ from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .coordinator import BaseProductUpdateCoordinator
-from .options import DwdOptions
+from .options import (
+    DwdOptions,
+    rain_warning_rule,
+    rain_warning_subentries,
+    tracks_rain_events,
+)
+from .radar.rain_warning import RainWarning
 from .utils import DownloadCache
 from .const import CONF_DRY_STREAK_SOURCE, LEGACY_DRY_STREAK_SOURCE, PLATFORMS
 from .rain_events_tracker import RainEventsTracker
@@ -54,6 +60,9 @@ class DwdRuntimeData:
 
     coordinators: dict[str, BaseProductUpdateCoordinator]
     options: DwdOptions
+    # One per rain-warning subentry, by subentry id: the memory its two
+    # entities share (see RainWarning).
+    rain_warnings: dict[str, RainWarning] = field(default_factory=dict)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: DwdConfigEntry) -> bool:
@@ -65,7 +74,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: DwdConfigEntry) -> bool:
     load (ConfigEntryNotReady, which Home Assistant retries) only if no product
     could be fetched at all; a single failing product just leaves its own
     sensors unavailable while it keeps retrying. Finally the sensor and binary
-    sensor platforms are set up on the coordinators.
+    sensor platforms are set up on the coordinators, with the two entities of
+    every rain-warning subentry.
 
     """
     client = async_get_clientsession(hass)
@@ -130,12 +140,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: DwdConfigEntry) -> bool:
     for coordinator in product_coordinators:
         coordinator.async_track_releases()
 
-    if not options.rain_events:
-        # Turned off: drop what the tracker stored, so turning it on again
-        # starts clean rather than from a state days out of date.
+    if not tracks_rain_events(entry, options):
+        # Neither the option nor a rain warning uses it any more: drop what the
+        # tracker stored, so using it again starts clean rather than from a
+        # state days out of date.
         await RainEventsTracker.async_remove(hass, entry.entry_id)
 
-    entry.runtime_data = DwdRuntimeData(by_key, options)
+    entry.runtime_data = DwdRuntimeData(
+        by_key,
+        options,
+        {
+            subentry.subentry_id: RainWarning(rain_warning_rule(subentry.data))
+            for subentry in rain_warning_subentries(entry)
+        },
+    )
     entry.async_on_unload(entry.add_update_listener(update_listener))
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -171,12 +189,14 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def update_listener(hass: HomeAssistant, entry: DwdConfigEntry) -> None:
-    """Reload the entry when its options change.
+    """Reload the entry when its options or its rain warnings change.
 
     Registered at setup; Home Assistant calls it after the options form is
-    saved. Coordinators and entities read the options once, when they are built
-    (DwdOptions is a snapshot), so a reload is how a changed option takes
-    effect.
+    saved, and after a rain-warning subentry is added, reconfigured or
+    deleted. Coordinators and entities read the options and subentries once,
+    when they are built (DwdOptions is a snapshot), so a reload is how a
+    change takes effect. A deleted subentry's entities are removed by Home
+    Assistant itself.
 
     """
     await hass.config_entries.async_reload(entry.entry_id)

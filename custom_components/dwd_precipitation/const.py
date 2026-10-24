@@ -61,9 +61,9 @@ DEFAULT_FULL_ROLLING_SERIES = False
 
 CONF_RAIN_EVENTS = "rain_events"
 
-# Whether the entry tracks rain events (the "Rain events" sensor). Off by
-# default: the tracker fetches missed analyses and keeps a store, which only
-# pays off for the blueprints that read it.
+# Whether the entry has the "Rain events" sensor. Off by default: its view is
+# for blueprints. The tracker behind it also runs for rain warnings, with the
+# option off (options.tracks_rain_events).
 DEFAULT_RAIN_EVENTS = False
 
 CONF_RAIN_EVENT_THRESHOLD = "rain_event_threshold"
@@ -73,6 +73,16 @@ CONF_RAIN_EVENT_THRESHOLD = "rain_event_threshold"
 # and drizzle bridging two cells, while light rain still counts. Deliberately
 # independent of CONF_PRECIPITATION_THRESHOLD.
 DEFAULT_RAIN_EVENT_THRESHOLD = 0.1
+
+# Rain warnings: config subentries of this type, one warning each, filtering
+# the rain-events view (radar/rain_warning.py). Their data keys; defaults in
+# options.DEFAULT_RAIN_WARNING.
+SUBENTRY_RAIN_WARNING = "rain_warning"
+CONF_LEAD_TIME = "lead_time"
+CONF_MIN_MM = "min_mm"
+CONF_MIN_PEAK_1H = "min_peak_1h"
+CONF_MIN_PEAK_10MIN = "min_peak_10min"
+CONF_COMBINE = "combine"
 
 # The coordinator for RW's 10-minute runs: each a sliding hour ending at that
 # mark, gauge-adjusted as strongly as the hourly run (scripts/compare_rw_runs.py).

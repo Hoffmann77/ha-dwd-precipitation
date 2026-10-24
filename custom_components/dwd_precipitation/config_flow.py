@@ -10,6 +10,7 @@ from homeassistant.core import callback
 from homeassistant.data_entry_flow import section
 from homeassistant.helpers import selector
 from homeassistant.const import CONF_NAME
+from homeassistant.util import slugify
 
 from .const import (
     DOMAIN,
@@ -30,8 +31,20 @@ from .const import (
     CONF_FULL_ROLLING_SERIES,
     CONF_RAIN_EVENTS,
     CONF_RAIN_EVENT_THRESHOLD,
+    CONF_LEAD_TIME,
+    CONF_MIN_MM,
+    CONF_MIN_PEAK_1H,
+    CONF_MIN_PEAK_10MIN,
+    CONF_COMBINE,
+    SUBENTRY_RAIN_WARNING,
 )
-from .options import DwdOptions
+from .options import (
+    DEFAULT_RAIN_WARNING,
+    DwdOptions,
+    rain_warning_rule,
+    rain_warning_subentries,
+)
+from .radar.rain_warning import COMBINES
 
 # Where DWD's radar can have data for a location: a latitude/longitude box
 # around its DE1200 grid (45.69-56.21 N, 1.47-18.73 E), rounded outwards. It
@@ -44,6 +57,13 @@ COVERAGE_LON = (1.4, 18.8)
 # The collapsed part of the options form. Only the form is nested: its values
 # are stored flat with the others (see OptionsFlowHandler.async_step_init).
 SECTION_ADVANCED = "advanced_options"
+
+# A rain warning's lead time: how many minutes before the rain it starts, in
+# the 5-minute steps of the forecast, up to its 2-hour horizon.
+LEAD_TIME_MIN, LEAD_TIME_MAX, LEAD_TIME_STEP = 5, 120, 5
+
+# A rain warning's optional minimums, all in mm.
+RAIN_WARNING_MINIMUMS = (CONF_MIN_MM, CONF_MIN_PEAK_1H, CONF_MIN_PEAK_10MIN)
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -161,6 +181,19 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     # 1.2: options carry CONF_DRY_STREAK_SOURCE (see async_migrate_entry).
     MINOR_VERSION = 2
 
+    @classmethod
+    @callback
+    def async_get_supported_subentry_types(
+        cls, config_entry: config_entries.ConfigEntry
+    ) -> dict[str, type[config_entries.ConfigSubentryFlow]]:
+        """Return the subentries an entry can have: rain warnings.
+
+        Home Assistant shows an "Add rain warning" button on the entry for
+        each type returned here, and opens RainWarningSubentryFlow from it.
+
+        """
+        return {SUBENTRY_RAIN_WARNING: RainWarningSubentryFlow}
+
     @staticmethod
     @callback
     def async_get_options_flow(config_entry) -> OptionsFlowHandler:
@@ -250,3 +283,130 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         }
 
         return vol.Schema(schema)
+
+
+class RainWarningSubentryFlow(config_entries.ConfigSubentryFlow):
+    """Add or change one rain warning of a location (a config subentry).
+
+    The form asks for a name, the lead time and the optional minimum event;
+    the name is the subentry's title, and with the location's title the name
+    of the warning's device ("Home Laundry"). The data is stored flat and read back with rain_warning_rule().
+    Saving reloads the entry (see update_listener).
+
+    """
+
+    async def async_step_user(self, user_input=None) -> config_entries.SubentryFlowResult:
+        """Show the form for a new warning, or create it from what was entered."""
+        return await self._async_step_form("user", user_input, None)
+
+    async def async_step_reconfigure(
+        self, user_input=None
+    ) -> config_entries.SubentryFlowResult:
+        """Show the form filled with the warning's values, or save the changes.
+
+        The name can change too: the device gets the new name, the entity ids
+        stay what they were.
+
+        """
+        return await self._async_step_form(
+            "reconfigure", user_input, self._get_reconfigure_subentry()
+        )
+
+    async def _async_step_form(
+        self,
+        step_id: str,
+        user_input: dict | None,
+        subentry: config_entries.ConfigSubentry | None,
+    ) -> config_entries.SubentryFlowResult:
+        """Validate and save the form of ``step_id``, or show it.
+
+        ``subentry`` is the warning being reconfigured (None for a new one).
+        An empty name, or one another warning of this location already has
+        (compared as entity ids would see it, so "Laundry" and "laundry!"
+        collide), shows the form again with an error.
+
+        """
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            name = user_input[CONF_NAME].strip()
+            taken = {
+                slugify(other.title)
+                for other in rain_warning_subentries(self._get_entry())
+                if subentry is None or other.subentry_id != subentry.subentry_id
+            }
+            # slugify() turns a name without letters or digits into "unknown".
+            if not any(char.isalnum() for char in name):
+                errors["base"] = "invalid_name"
+            elif slugify(name) in taken:
+                errors["base"] = "name_already_exists"
+            else:
+                data = {
+                    CONF_LEAD_TIME: int(user_input[CONF_LEAD_TIME]),
+                    CONF_COMBINE: user_input[CONF_COMBINE],
+                }
+                data.update(
+                    {
+                        key: float(user_input[key])
+                        for key in RAIN_WARNING_MINIMUMS
+                        if user_input.get(key) is not None
+                    }
+                )
+                if subentry is None:
+                    return self.async_create_entry(title=name, data=data)
+                return self.async_update_and_abort(
+                    self._get_entry(), subentry, title=name, data=data
+                )
+
+        return self.async_show_form(
+            step_id=step_id,
+            data_schema=self._schema(subentry, user_input),  # pyright: ignore[reportArgumentType]  (probatio, see OptionsFlowHandler)
+            errors=errors,
+        )
+
+    @staticmethod
+    def _schema(
+        subentry: config_entries.ConfigSubentry | None, user_input: dict | None
+    ) -> vol.Schema:
+        """Return the warning form, filled with what it should show.
+
+        What was just entered when the form comes back with an error, else the
+        warning's stored values (reconfigure), else the defaults. A minimum is
+        only suggested, never a default, so clearing the field removes it.
+
+        """
+        if user_input is not None:
+            values = dict(user_input)
+        elif subentry is not None:
+            rule = rain_warning_rule(subentry.data)
+            values = {CONF_NAME: subentry.title} | {
+                key: getattr(rule, key) for key in DEFAULT_RAIN_WARNING
+            }
+        else:
+            values = {CONF_NAME: ""} | DEFAULT_RAIN_WARNING
+
+        def suggested(key: str) -> dict:
+            return {"suggested_value": values.get(key)}
+
+        return vol.Schema(
+            {
+                vol.Required(CONF_NAME, description=suggested(CONF_NAME)): str,
+                vol.Required(CONF_LEAD_TIME, default=values[CONF_LEAD_TIME]): (
+                    selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=LEAD_TIME_MIN,
+                            max=LEAD_TIME_MAX,
+                            step=LEAD_TIME_STEP,
+                            unit_of_measurement="min",
+                            mode=selector.NumberSelectorMode.SLIDER,
+                        )
+                    )
+                ),
+                **{
+                    vol.Optional(key, description=suggested(key)): _number("mm")
+                    for key in RAIN_WARNING_MINIMUMS
+                },
+                vol.Required(CONF_COMBINE, default=values[CONF_COMBINE]): _dropdown(
+                    list(COMBINES), CONF_COMBINE
+                ),
+            }
+        )

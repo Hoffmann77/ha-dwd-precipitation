@@ -31,6 +31,14 @@ eigenen Satz Entitäten, daher braucht jeder einen anderen Namen.
 Um einen bestehenden Eintrag an einen anderen Standort zu verlegen, lösche ihn
 und füge ihn neu hinzu.
 
+### Regenwarnungen {#rain-warnings}
+
+Ein Standort kann eigene Regenwarnungen haben, etwa „Wäsche, 60 Minuten
+vorher“. Füge eine mit **Regenwarnung hinzufügen** am Eintrag des Standorts
+unter **Einstellungen > Geräte & Dienste > DWD Precipitation** hinzu. Jede
+Warnung ist ein Gerät mit einer An/Aus- und einer Status-Entität; siehe
+[Regenwarnungen](../entities/rain-warnings.md).
+
 ## Optionen {#options}
 
 Öffne **Einstellungen > Geräte & Dienste > DWD Precipitation >
@@ -113,7 +121,7 @@ meisten Installationen brauchen ihn nie.
 | Option | Standard | Betrifft |
 |--------|----------|----------|
 | [Regenereignisse verfolgen](#track-rain-events) | aus | fügt den Sensor Regenereignisse hinzu |
-| [Schwelle für Regenereignisse](#rain-event-threshold) | 0,1 mm/h | Regenereignisse |
+| [Schwelle für Regenereignisse](#rain-event-threshold) | 0,1 mm/h | Regenereignisse, Regenwarnungen |
 | [Wann „Niederschlagsende“ den Regen als beendet ansieht](#end-algorithm) | Erste trockene Lücke | Niederschlagsende |
 | [Vergangene Stunde in die stündliche Vorhersagereihe aufnehmen](#past-hour-in-the-series) | aus | ein Attribut von Maximaler Stundenniederschlag nächste 120 min |
 | [Sensoren als nicht verfügbar anzeigen, wenn die Daten veraltet sind](#unavailable-when-out-of-date) | an | Verfügbarkeit der Sensoren |
@@ -125,20 +133,24 @@ meisten Installationen brauchen ihn nie.
 Regenschauer von der ersten Vorhersage, die ihn zeigt, bis er gefallen ist,
 für Blueprints, die vor Regen warnen oder über Regen berichten.
 
-Ist die Option an, ruft die Integration auch die verpassten Radaranalysen
-(einen kleinen Teil jeder Datei) und Niederschlagsarten ab und speichert eine kleine Aufzeichnung des
-jüngsten Regens auf der Festplatte. Ausschalten entfernt den Sensor und löscht
-diese Aufzeichnung, sodass ein erneutes Einschalten sauber von vorn beginnt.
+Ist die Option an oder hat der Standort eine
+[Regenwarnung](../entities/rain-warnings.md), ruft die Integration auch die
+verpassten Radaranalysen (einen kleinen Teil jeder Datei) und
+Niederschlagsarten ab und speichert eine kleine Aufzeichnung des jüngsten
+Regens auf der Festplatte. Ausschalten entfernt den Sensor; die Aufzeichnung
+wird gelöscht, sobald auch keine Regenwarnung sie mehr braucht, sodass ein
+erneutes Einschalten dann sauber von vorn beginnt. Regenwarnungen
+funktionieren auch bei ausgeschalteter Option.
 
 ### Schwelle für Regenereignisse {#rain-event-threshold}
 
 **Schwelle für Regenereignisse (mm pro Stunde)** legt fest, wie viel Regen ein
-5-Minuten-Schritt braucht, um zu einem Ereignis des Sensors `Regenereignisse`
-zu zählen. `0` bedeutet, dass jede Spur ein Ereignis bildet. Der Wert ist
-unabhängig von der [Schwelle für Regenerkennung](#rain-detection-threshold),
-daher können die Ereignisse und `Niederschlagsbeginn` voneinander abweichen,
-wenn sich die beiden unterscheiden. Wird nur verwendet, wenn
-*Regenereignisse verfolgen* an ist.
+5-Minuten-Schritt braucht, um zu einem Regenereignis zu zählen, für den
+Sensor `Regenereignisse` und die [Regenwarnungen](../entities/rain-warnings.md).
+`0` bedeutet, dass jede Spur ein Ereignis bildet. Der Wert ist unabhängig von
+der [Schwelle für Regenerkennung](#rain-detection-threshold), daher können die
+Ereignisse und `Niederschlagsbeginn` voneinander abweichen, wenn sich die
+beiden unterscheiden.
 
 ### Algorithmus für das Ende {#end-algorithm}
 

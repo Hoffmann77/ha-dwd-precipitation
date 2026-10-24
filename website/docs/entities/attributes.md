@@ -17,6 +17,7 @@ description: The attributes of the DWD Precipitation entities, and the technical
 | `dry_since` | `Timespan without precipitation` | The time the counter counts from: the end of the hour that last reset it, or on a new install the start of the dry period DWD's data shows |
 | `counted_until` | `Precipitation total`, `Precipitation total daily` | End of the newest DWD window included in the total; `null` until the first file arrives. Missed files fetched later are added without moving it back |
 | `schema`, `events`, `steps`, … | `Rain events` | The rain around your location split into events, see [Rain events](rain-events.md#attributes) |
+| `event_id`, `start`, `mm`, `peak_1h`, `peak_10min`, `type` | `Rain warning status` | The rain event the warning is about; all `null` while dry, see [Rain warnings](rain-warnings.md#attributes) |
 
 Times are ISO-8601 in UTC, for example `2026-10-12T14:30:00+00:00`;
 templates turn them into local time with `as_local(as_datetime(...))`.
@@ -26,7 +27,7 @@ templates turn them into local time with `as_local(as_datetime(...))`.
 Some attributes are large and change every 5 minutes, so Home Assistant's
 recorder leaves them out of the history database: `forecast_5min`,
 `forecast_rolling_1h`, `window_start` / `window_end`, and every attribute of
-`Rain events`. They are always available on the current state, so templates,
+`Rain events` and `Rain warning status`. They are always available on the current state, so templates,
 automations and blueprints can read them; only the history graph does not
 keep them.
 
@@ -35,7 +36,8 @@ keep them.
 With the option
 [*Add technical details to each sensor*](../getting-started/configuration.md#technical-details)
 on, every DWD sensor except `Precipitation expected`, the two running totals,
-`Timespan without precipitation` and `Rain events` also has:
+`Timespan without precipitation`, `Rain events` and the rain warnings also
+has:
 
 | Attribute | Description |
 |-----------|-------------|
