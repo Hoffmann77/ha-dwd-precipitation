@@ -2,26 +2,21 @@
 
 Network-free: DWD is stubbed with an in-memory ``last_modified`` function that
 maps each release URL to a publication time. Lives in the integration tier
-because the drift guard imports the real product classes to confirm the ``ast``
-extractor agrees with the running integration.
+because the script imports the product classes, whose constants it checks.
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-import pytest
-
+from custom_components.dwd_precipitation import PRODUCT_CLASSES
 from custom_components.dwd_precipitation.products import (
-    HymecNG,
-    RadolanRW,
     RadolanSF,
-    RadvorRS,
+    RadolanSFLastYesterday,
 )
 from scripts.check_release_delay import (
     PRODUCTS,
     Measurement,
-    extract_timing,
     measure,
     previous_release,
 )
@@ -30,24 +25,30 @@ UTC = timezone.utc
 
 
 # ---------------------------------------------------------------------------
-# Drift guard: extractor must agree with the real integration constants
+# What is probed
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("cls", [RadvorRS, RadolanRW, RadolanSF, HymecNG])
-def test_extract_timing_matches_integration(cls):
-    """The ast extractor reproduces each class's resolved RELEASE_* constants."""
-    timing = extract_timing(cls.__name__)
-    assert timing["RELEASE_INTERVAL"] == cls.RELEASE_INTERVAL
-    assert timing["RELEASE_DELAY"] == cls.RELEASE_DELAY
-    assert timing["RELEASE_OFFSET"] == cls.RELEASE_OFFSET
+def test_every_utc_product_is_probed():
+    """A product the probe skips would let its RELEASE_DELAY drift unnoticed."""
+    probed = {spec.cls for spec in PRODUCTS.values()}
+    assert probed == {cls for cls in PRODUCT_CLASSES if not cls.USE_LOCAL_TIME}
 
 
-def test_extract_timing_resolves_inheritance():
-    """SF inherits its base's delay while overriding interval/offset upstream."""
-    timing = extract_timing("RadolanSF")
-    assert timing["RELEASE_INTERVAL"] == timedelta(hours=1)
-    assert timing["RELEASE_OFFSET"] == timedelta(minutes=50)
-    assert timing["RELEASE_DELAY"] == timedelta(minutes=31)  # the HDF5 edition
+def test_the_probe_checks_the_class_constants():
+    timing = PRODUCTS["sf"].timing()
+    assert timing == {
+        "RELEASE_INTERVAL": RadolanSF.RELEASE_INTERVAL,
+        "RELEASE_DELAY": RadolanSF.RELEASE_DELAY,
+        "RELEASE_OFFSET": RadolanSF.RELEASE_OFFSET,
+    }
+
+
+async def test_sf_2350_waits_like_the_sf_it_reads(make_coordinator):
+    """sf_2350 is not probed on its own: it reads SF's files, so SF's lag is its."""
+    assert RadolanSFLastYesterday.RELEASE_DELAY == RadolanSF.RELEASE_DELAY
+    ts = datetime(2026, 7, 3, 21, 50, tzinfo=UTC)
+    sf_2350 = make_coordinator(RadolanSFLastYesterday)
+    assert PRODUCTS["sf"].url_for(ts) == sf_2350._get_url(ts)
 
 
 # ---------------------------------------------------------------------------
@@ -55,7 +56,7 @@ def test_extract_timing_resolves_inheritance():
 # ---------------------------------------------------------------------------
 
 def test_previous_release_hourly_offset():
-    """RW/SF: releases at HH:50 → previous release before 13:20 is 12:50."""
+    """SF: releases at HH:50 → previous release before 13:20 is 12:50."""
     now = datetime(2025, 6, 1, 13, 20, tzinfo=UTC)
     prev = previous_release(now, timedelta(hours=1), timedelta(minutes=50))
     assert prev == datetime(2025, 6, 1, 12, 50, tzinfo=UTC)

@@ -29,8 +29,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
-      - name: Install unit-test dependencies
-        run: uv sync --locked --only-group unit-test
+      - name: Install the HA environment (the script imports the product classes)
+        run: uv sync --locked --only-group ha-test
 
       - name: Restore consecutive-drift streak
         uses: actions/cache/restore@v6

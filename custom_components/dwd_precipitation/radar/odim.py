@@ -1,79 +1,25 @@
-"""ODIM_H5 reader for DWD RS Cartesian precipitation composites."""
+"""ODIM_H5 reader for DWD's Cartesian composites (RS, RV, HymecNG, RW, SF).
 
-import re
-import math
+The integration reads one cell: the one holding a location, on the grid the
+file itself describes in its /where group (radar/grid.py). The whole-grid
+readers are the oracle for the test tiers and scripts/.
+
+"""
 
 import numpy as np
 import h5py
 
-# RS polar-stereographic projection parameters (constant for all RS files)
-_RS_A     = 6378137.0            # WGS84 semi-major axis (metres)
-_RS_B     = 6356752.3142451802   # WGS84 semi-minor axis (metres)
-_RS_E2    = 1 - (_RS_B / _RS_A) ** 2      # first eccentricity squared
-_RS_E     = math.sqrt(_RS_E2)             # first eccentricity
-_RS_LAT_TS = math.radians(60.0)           # standard parallel
-_RS_LON_0  = 10.0                         # central meridian (degrees)
-
-# Precomputed scale-factor constants at the standard parallel (lat_ts = 60°).
-# m_c / t_c implements Snyder's polar stereographic for the ellipsoid:
-#   ρ = a · m_c · t(φ) / t_c    where t(φ) is the conformal latitude factor.
-_sin_lat_ts = math.sin(_RS_LAT_TS)
-_cos_lat_ts = math.cos(_RS_LAT_TS)
-_RS_M_C = _cos_lat_ts / math.sqrt(1 - _RS_E2 * _sin_lat_ts ** 2)
-_RS_T_C = (
-    math.tan(math.pi / 4 - _RS_LAT_TS / 2)
-    / ((1 - _RS_E * _sin_lat_ts) / (1 + _RS_E * _sin_lat_ts)) ** (_RS_E / 2)
-)
-
-# Fixed RS grid metadata (confirmed from DWD ODIM_H5 files)
-RS_WHERE = {
-    "projdef": (
-        "+proj=stere +lat_ts=60 +lat_0=90 +lon_0=10"
-        " +x_0=543196.83521776402 +y_0=3622588.8619310022"
-        " +units=m +a=6378137 +b=6356752.3142451802 +no_defs"
-    ),
-    # Outer corner of the south-west pixel, at the precision DWD stores it.
-    # Rounding it to 3 decimals would move the grid by ~50 m.
-    "LL_lat": 45.696425377390064,
-    "LL_lon": 3.5669946350078914,
-    "xscale": 1000.0,
-    "yscale": 1000.0,
-    "ysize": 1200,
-    "xsize": 1100,
-}
-
-# Expected grid shape (rows, cols) of RS and RV composites — used to bound the
-# array read and reject a crafted file that declares a different-sized dataset.
-RS_GRID_SHAPE = (RS_WHERE["ysize"], RS_WHERE["xsize"])
-
-
-def _parse_proj_param(projdef: str, key: str) -> float:
-    """Extract a numeric PROJ4 parameter from a projdef string."""
-    m = re.search(rf"\+{key}=(\S+)", projdef)
-    if m is None:
-        raise ValueError(f"Parameter +{key} not found in: {projdef}")
-    return float(m.group(1))
-
-
-def _lonlat_to_xy(lon: float, lat: float, x_0: float, y_0: float):
-    """Convert (lon, lat) to RS projection (x, y) in metres.
-
-    Ellipsoidal polar-stereographic (Snyder §21) matching pyproj's
-    +proj=stere +lat_0=90 +lat_ts=60 on WGS84.  Sub-millimetre accuracy.
-    """
-    phi = math.radians(lat)
-    lam = math.radians(lon - _RS_LON_0)
-    sin_phi = math.sin(phi)
-    t = (
-        math.tan(math.pi / 4 - phi / 2)
-        / ((1 - _RS_E * sin_phi) / (1 + _RS_E * sin_phi)) ** (_RS_E / 2)
-    )
-    rho = _RS_A * _RS_M_C * t / _RS_T_C
-    return rho * math.sin(lam) + x_0, -rho * math.cos(lam) + y_0
+from .grid import Grid, UnsupportedGrid, grid_from_where
 
 
 def _normalise_attr_value(value):
-    """Return HDF5 attributes as plain Python values."""
+    """Return an HDF5 attribute as a plain Python value.
+
+    h5py hands strings over as bytes and numbers as numpy scalars; this turns
+    them into str, int and float, so the attribute dicts the readers return can
+    be compared and stored like any other.
+
+    """
     if hasattr(value, "decode"):
         return value.decode()
     if hasattr(value, "item"):
@@ -82,15 +28,14 @@ def _normalise_attr_value(value):
 
 
 def _resolve_hard(parent, path: str):
-    """Traverse ``path`` under ``parent``, requiring every component to be a hard link.
+    """Walk ``path`` in the file, following hard links only.
 
-    ``get(..., getclass=True, getlink=True)`` returns the *link class* without
-    dereferencing it, so a soft or external link is rejected before libhdf5 ever
-    follows it. This closes the HDF5 external-link / soft-link vector: a crafted
-    file could otherwise redirect a path to another object — or, via an external
-    link, to another file on disk — the moment we index into it. DWD RS/RV
-    composites are self-contained with plain hard links only, so nothing
-    legitimate is rejected.
+    ``parent`` is the open file (or a group in it), ``path`` a slash-separated
+    path such as "dataset1/data1/data". A soft or external link is refused with
+    ValueError before libhdf5 follows it, so a crafted file cannot redirect a
+    read to another object, or to another file on disk. DWD's files use plain
+    hard links only.
+
     """
     obj = parent
     for part in path.split("/"):
@@ -106,12 +51,12 @@ def _resolve_hard(parent, path: str):
 
 
 def _require_plain_dataset(dset, expected_shape=None):
-    """Return ``dset`` if it is a safe in-file dataset, else raise.
+    """Return ``dset`` if it is a safe in-file dataset, else raise ValueError.
 
-    Rejects virtual datasets and datasets whose raw data lives in external files
-    — both let a crafted file pull bytes from outside the buffer we opened — and,
-    when ``expected_shape`` is given, any unexpected shape (which also bounds the
-    allocation the subsequent read performs).
+    Refuses anything that is not a dataset, virtual datasets and data stored in
+    external files, which could pull bytes from outside the opened buffer, and
+    any shape other than ``expected_shape`` when one is given.
+
     """
     if not isinstance(dset, h5py.Dataset):
         raise ValueError("Expected an HDF5 dataset for the composite payload")
@@ -126,12 +71,48 @@ def _require_plain_dataset(dset, expected_shape=None):
     return dset
 
 
+def _parse_nodes(value) -> tuple[str, ...]:
+    """Return the radar names of an ODIM ``nodes`` attribute.
+
+    DWD writes them as one quoted, comma-separated string,
+    "'deasb','deboo',...,'depro',..."; this gives ("deasb", "deboo", ...), in
+    the file's order.
+
+    """
+    names = (part.strip().strip("'\"").strip() for part in str(value).split(","))
+    return tuple(name for name in names if name)
+
+
+def _file_nodes(hf) -> tuple[str, ...] | None:
+    """Return the radars the open composite was built from (its /how nodes).
+
+    None when the file does not say. A radar that drops out of DWD's composite
+    drops out of this list, which is how a lost cell is put down to it.
+
+    """
+    if "how" not in hf:
+        return None
+    nodes = _resolve_hard(hf, "how").attrs.get("nodes")
+    return None if nodes is None else _parse_nodes(_normalise_attr_value(nodes))
+
+
 def _open_composite(hf, dataset: str, moment: str, expected_shape):
-    """Return ``(dset, dataset_what, what)`` for a composite's payload, checked."""
+    """Return a composite's payload dataset and the attributes describing it.
+
+    ODIM_H5 keeps each grid in ``<dataset>/<moment>/data`` ("dataset1/data1" in
+    DWD's files). Opens it with the hardening checks, along with the dataset's
+    ``what`` group (validity window, product) and the moment's (gain, offset,
+    nodata), both as plain dicts. The radars the composite was built from (the
+    file's /how ``nodes``, see _file_nodes) are added to the dataset's dict as
+    ``nodes`` when the file lists them. The payload is not read yet.
+
+    """
     dataset_what = {
         k: _normalise_attr_value(v)
         for k, v in _resolve_hard(hf, f"{dataset}/what").attrs.items()
     }
+    if (nodes := _file_nodes(hf)) is not None:
+        dataset_what["nodes"] = nodes
     what = {
         k: _normalise_attr_value(v)
         for k, v in _resolve_hard(hf, f"{dataset}/{moment}/what").attrs.items()
@@ -142,19 +123,44 @@ def _open_composite(hf, dataset: str, moment: str, expected_shape):
     return dset, dataset_what, what
 
 
-def _cell(dset, row: int, col: int):
-    """Return the 1x1 slice of ``dset`` at (row, col), rejecting outside cells.
+def _file_grid(hf) -> Grid:
+    """Return the grid the open file's /where group describes.
 
-    A negative index would otherwise wrap around to the far edge of the grid.
+    Every reader finds its cell on this grid rather than on a copy of DWD's
+    grid in the code (ADR 0010). Raises UnsupportedGrid for a file without
+    /where, or one this version cannot place a location on.
+
     """
-    rows, cols = dset.shape
-    if not (0 <= row < rows and 0 <= col < cols):
-        raise ValueError(f"Cell ({row}, {col}) is outside the {dset.shape} grid")
-    return dset[row:row + 1, col:col + 1]
+    if "where" not in hf:
+        raise UnsupportedGrid("the file has no /where group")
+    attrs = _resolve_hard(hf, "where").attrs
+    return grid_from_where({k: _normalise_attr_value(v) for k, v in attrs.items()})
+
+
+def _cell_of(hf, lat: float, lon: float, dataset: str, moment: str):
+    """Return the raw cell holding a location, and the attributes describing it.
+
+    The cell is found on the file's own grid (OutsideGrid when the location is
+    not on it), and the payload must be exactly that grid, which also bounds
+    what the read inflates. Returns the cell as a 1 x 1 array of stored counts,
+    the dataset's ``what`` and the moment's ``what``.
+
+    """
+    grid = _file_grid(hf)
+    row, col = grid.cell(lat, lon)
+    dset, dataset_what, what = _open_composite(hf, dataset, moment, grid.shape)
+    return dset[row:row + 1, col:col + 1], dataset_what, what
 
 
 def _scale(raw, what):
-    """Turn raw ACRR counts into mm: nodata → NaN, undetect → 0.0."""
+    """Turn raw ACRR counts into mm: nodata -> NaN, undetect -> 0.0.
+
+    ACRR is accumulated precipitation, stored as integer counts; the value in
+    mm is count * gain + offset, from the moment's ``what``. "nodata" (outside
+    coverage) becomes NaN; "undetect" (radar scanned, nothing found) becomes a
+    dry 0.0 rather than the offset's -0.001 mm. Works on any array shape.
+
+    """
     gain     = float(what["gain"])
     offset   = float(what["offset"])
     nodata   = int(what["nodata"])
@@ -166,27 +172,30 @@ def _scale(raw, what):
     return data
 
 
+def read_odim_grid(fileobj) -> Grid:
+    """Return the grid an ODIM_H5 file describes.
+
+    ``fileobj`` is a path or a file-like object. For the test tiers and
+    scripts/; the integration's readers find the grid themselves.
+
+    """
+    with h5py.File(fileobj, "r") as hf:
+        return _file_grid(hf)
+
+
 def read_odim_composite(
     fileobj,
     dataset: str = "dataset1",
     moment: str = "data1",
     expected_shape=None,
 ):
-    """Read a Cartesian ODIM_H5 composite, the whole grid.
+    """Read a whole Cartesian ODIM_H5 composite, in mm.
 
-    No runtime caller: the integration reads one cell
-    (:func:`read_odim_composite_cell`). This is the oracle the test tiers and
-    scripts/ compare against.
+    Returns the float32 grid (NaN for no data, 0.0 for undetect) and its
+    /dataset/what attributes (with the file's radar ``nodes``), under the same untrusted-file checks as the cell
+    reader. No runtime caller: the oracle the test tiers and scripts/ compare
+    the cell reader against.
 
-    Returns (data, dataset_what) where data is a float32 array and dataset_what
-    is the normalised /dataset/what attribute dict.
-    nodata cells (outside radar range / masked) → NaN.
-    undetect cells (radar scanned, zero precipitation detected) → 0.0.
-
-    The file is treated as untrusted input: every path is walked hard-link-only
-    and the payload dataset must be a plain in-file array (no virtual/external
-    storage). Pass ``expected_shape`` (rows, cols) to also pin the grid size,
-    which bounds the array allocation.
     """
     with h5py.File(fileobj, "r") as hf:
         dset, dataset_what, what = _open_composite(hf, dataset, moment, expected_shape)
@@ -195,25 +204,24 @@ def read_odim_composite(
     return _scale(raw, what), dataset_what
 
 
-def read_odim_composite_cell(
+def read_odim_composite_at(
     fileobj,
-    row: int,
-    col: int,
+    lat: float,
+    lon: float,
     dataset: str = "dataset1",
     moment: str = "data1",
-    expected_shape=None,
 ):
-    """Read one cell of a Cartesian ODIM_H5 composite.
+    """Read the cell holding (lat, lon) from a Cartesian ODIM_H5 composite.
 
-    Returns (value, dataset_what): the same float32 value
-    :func:`read_odim_composite` would hold at ``[row, col]`` (NaN for nodata),
-    with the same untrusted-input checks. DWD stores the whole grid as a single
-    compressed chunk, so libhdf5 still inflates it; what this saves is scaling
-    and masking 1.3 million cells to keep one, which is most of the cost.
+    What every amount product (RS, RV, RW, SF) reads per release. Returns the
+    cell's value in mm, the value read_odim_composite would hold there (NaN for
+    no data), and the dataset's ``what`` attributes (validity window, product,
+    and the radars the composite was built from as ``nodes``). The cell is found on the file's own grid. libhdf5 still inflates the whole
+    grid; reading one cell saves scaling and masking 1.3 million of them.
+
     """
     with h5py.File(fileobj, "r") as hf:
-        dset, dataset_what, what = _open_composite(hf, dataset, moment, expected_shape)
-        raw = _cell(dset, row, col)
+        raw, dataset_what, what = _cell_of(hf, lat, lon, dataset, moment)
 
     return _scale(raw, what)[0, 0], dataset_what
 
@@ -224,23 +232,14 @@ def read_odim_classification(
     moment: str = "data1",
     expected_shape=None,
 ):
-    """Read a Cartesian ODIM_H5 *classification* composite (e.g. HymecNG).
+    """Read a whole classification composite (HymecNG), unscaled.
 
-    The whole grid, for the test tiers; HymecNG reads one cell with
-    :func:`read_odim_classification_cell`.
+    The cells are precipitation-type class indices (0 no precipitation, 3 rain,
+    7 snow, ...), returned as stored, together with the dataset's ``what``
+    (with the file's radar ``nodes``) and the moment's ``what``, which says which values mean "no data" and "nothing
+    detected". For the test tiers; HymecNG reads one cell with
+    read_odim_classification_at.
 
-    Unlike :func:`read_odim_composite`, the payload holds a discrete class index
-    (a precipitation-type category) rather than a physical quantity, so it is
-    returned unscaled. Returns ``(raw, dataset_what, moment_what)``:
-
-    * ``raw`` — the integer class-index grid (as stored, dtype preserved),
-    * ``dataset_what`` — the ``/dataset/what`` attributes (validity window),
-    * ``moment_what`` — the ``/dataset/data/what`` attributes, including
-      ``nodata`` and ``undetect`` so the caller can distinguish "outside
-      coverage" from "scanned, no precipitation".
-
-    The file is treated as untrusted input with the same hard-link-only,
-    plain-dataset, shape-pinned checks as :func:`read_odim_composite`.
     """
     with h5py.File(fileobj, "r") as hf:
         dset, dataset_what, moment_what = _open_composite(
@@ -251,69 +250,21 @@ def read_odim_classification(
     return raw, dataset_what, moment_what
 
 
-def read_odim_classification_cell(
+def read_odim_classification_at(
     fileobj,
-    row: int,
-    col: int,
+    lat: float,
+    lon: float,
     dataset: str = "dataset1",
     moment: str = "data1",
-    expected_shape=None,
 ):
-    """Read one cell of a classification composite.
+    """Read the class index of the cell holding (lat, lon).
 
-    Returns ``(value, dataset_what, moment_what)``: the class index
-    :func:`read_odim_classification` would hold at ``[row, col]``, as an int,
-    with the same untrusted-input checks; a cell outside the grid raises.
+    From a classification composite (HymecNG), on the file's own grid. Returns
+    the index as an int, the dataset's ``what`` (with the file's radar
+    ``nodes``) and the moment's ``what``, which says which values mean "no data" and "nothing detected".
+
     """
     with h5py.File(fileobj, "r") as hf:
-        dset, dataset_what, moment_what = _open_composite(
-            hf, dataset, moment, expected_shape
-        )
-        raw = _cell(dset, row, col)
+        raw, dataset_what, moment_what = _cell_of(hf, lat, lon, dataset, moment)
 
     return int(raw[0, 0]), dataset_what, moment_what
-
-
-def get_rs_grid_index(lat: float, lon: float, where: dict | None = None):
-    """Return (row, col) of the RS grid cell containing (lat, lon).
-
-    ODIM_H5 corner attributes (``LL_lon``/``LL_lat`` …) are the *outer*
-    corners of the edge pixels, not pixel centres: DWD's LL corner projects to
-    (-500 m, -1 199 500 m), and its pixel centres sit on whole kilometres (the
-    RV format description puts the centre of the north-west pixel at the
-    projection origin). So the cell is found by flooring the offset from the
-    corner; rounding it picks a neighbouring cell for about three locations in
-    four.
-
-    The result can lie outside the grid; :func:`rs_grid_contains` checks that.
-    Uses the fixed RS grid parameters by default; pass a custom where dict
-    to override (e.g. for testing or future grid changes).
-    """
-    if where is None:
-        where = RS_WHERE
-
-    projdef = where["projdef"]
-    if hasattr(projdef, "decode"):
-        projdef = projdef.decode()
-
-    x_0 = _parse_proj_param(projdef, "x_0")
-    y_0 = _parse_proj_param(projdef, "y_0")
-    xscale = float(where["xscale"])
-    yscale = float(where["yscale"])
-    ysize = int(where["ysize"])
-
-    x_ll, y_ll = _lonlat_to_xy(float(where["LL_lon"]), float(where["LL_lat"]), x_0, y_0)
-    x_pt, y_pt = _lonlat_to_xy(lon, lat, x_0, y_0)
-
-    col = math.floor((x_pt - x_ll) / xscale)
-    # Row 0 is the top (highest y); y_ll is the southernmost (lowest y)
-    row = ysize - 1 - math.floor((y_pt - y_ll) / yscale)
-    return row, col
-
-
-def rs_grid_contains(lat: float, lon: float, where: dict | None = None) -> bool:
-    """Return True if (lat, lon) falls within the RS composite grid extent."""
-    if where is None:
-        where = RS_WHERE
-    row, col = get_rs_grid_index(lat, lon, where)
-    return 0 <= row < int(where["ysize"]) and 0 <= col < int(where["xsize"])
