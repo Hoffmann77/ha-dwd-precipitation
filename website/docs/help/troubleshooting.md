@@ -89,8 +89,8 @@ partial downloads work again.
 
 ## Old values persist after a DWD outage
 
-The advanced option *Show sensors as unavailable when the data is out of
-date* is off, so the last value is kept. Turn it on to have sensors report
+The advanced option *Show "unavailable" when the data is out of date*
+is off, so the last value is kept. Turn it on to have sensors report
 `unavailable` instead. See
 [Availability and staleness](../how-it-works/availability.md#keeping-the-last-value-instead).
 
@@ -129,7 +129,7 @@ with:
 - the integration and Home Assistant versions,
 - the log messages, ideally with debug logging,
 - for a wrong value: the sensor, its value and the time, and the attributes
-  shown with *Add technical details to each sensor* on, which say exactly
+  shown with *Add technical details to the sensors* on, which say exactly
   which DWD file the value came from.
 
 You do not need to post your exact location; the nearest town is enough.

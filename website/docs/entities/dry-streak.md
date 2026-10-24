@@ -21,16 +21,16 @@ across restarts.
 
 Two options decide it:
 
-- [**Rain needed to reset the dry-streak counter**](../getting-started/configuration.md#dry-streak-threshold)
+- [**Rain that resets the count**](../getting-started/configuration.md#dry-streak-threshold)
   (default 1.0 mm): a past-hour total at or above this resets the counter. It
   is an amount within the hour, not a rate.
-- [**Product that resets the dry-streak counter**](../getting-started/configuration.md#dry-streak-source)
+- [**Measured with**](../getting-started/configuration.md#dry-streak-source)
   picks which past-hour total is compared:
 
 | Source | Updated | A reset shows | Notes |
 |--------|---------|---------------|-------|
-| **Gauge-adjusted hour (RW)** | every 10 min | 30 to 40 min after the rain | Corrected with rain gauges, more accurate. Default for new installs |
-| **Precipitation last 60 min (RS)** | every 5 min | a few minutes after the rain | Radar only, noisier; its rolling hour keeps resetting the counter for up to an hour after the rain stops |
+| **Radar and rain gauges (RW)** | every 10 min | 30 to 40 min after the rain | Corrected with rain gauges, more accurate. Default for new installs |
+| **Radar only (RS)**, the hour of `Precipitation last 60 min` | every 5 min | a few minutes after the rain | Radar only, noisier; its rolling hour keeps resetting the counter for up to an hour after the rain stops |
 
 With RW, the counter follows DWD's reruns of the analysis every 10 minutes,
 each covering the hour ending then. A reset moves `dry_since` to the end of

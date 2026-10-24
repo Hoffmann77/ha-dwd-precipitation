@@ -32,7 +32,7 @@ throughout, see [Release timing](release-timing.md#when-dwd-is-late).
 ### Keeping the last value instead
 
 With the advanced option
-[*Show sensors as unavailable when the data is out of date*](../getting-started/configuration.md#unavailable-when-out-of-date)
+[*Show "unavailable" when the data is out of date*](../getting-started/configuration.md#unavailable-when-out-of-date)
 turned off, sensors always keep their most recent value, however old. That
 suits dashboards that should never show a gap, but the value can then be
 hours old without any sign of it. The technical details attributes

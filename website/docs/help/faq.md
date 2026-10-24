@@ -58,10 +58,10 @@ The first is faster, the second more accurate. See
 
 ## Why does "Precipitation end" keep changing?
 
-With the default *First dry gap*, it reports the end of the current burst,
-which moves as showers form and dissolve. The advanced option *When
-"Precipitation end" counts rain as over* can be set to *Precipitation clears
-within 2 h* for a steadier answer. See
+With the default *The first dry break*, it reports the end of the current
+shower, which moves as showers form and dissolve. The option *"Precipitation
+end" shows* can be set to *When no more rain is forecast* for a steadier
+answer. See
 [RADVOR RV nowcast](../entities/radvor-rv.md#precipitation-start-and-end).
 
 ## Why is "Precipitation start" unknown?

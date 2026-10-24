@@ -14,6 +14,7 @@ from homeassistant.util import slugify
 
 from .const import (
     DOMAIN,
+    DOCS_URL,
     CONF_COORDS,
     CONF_EXTRA_ATTRIBUTES,
     CONF_UNAVAILABLE_WHEN_STALE,
@@ -43,6 +44,7 @@ from .options import (
     DwdOptions,
     rain_warning_rule,
     rain_warning_subentries,
+    tracks_rain_events,
 )
 from .radar.rain_warning import COMBINES
 
@@ -54,9 +56,27 @@ from .radar.rain_warning import COMBINES
 COVERAGE_LAT = (45.6, 56.3)
 COVERAGE_LON = (1.4, 18.8)
 
-# The collapsed part of the options form. Only the form is nested: its values
-# are stored flat with the others (see OptionsFlowHandler.async_step_init).
+# The sections of the options form, one per group of sensors, in the order
+# shown. Only the form is nested: every option is stored flat, under its own
+# key (see OptionsFlowHandler.async_step_init).
+SECTION_RAIN_FORECAST = "rain_forecast"
+SECTION_DRY_STREAK = "dry_streak"
+SECTION_RAIN_EVENTS = "rain_event_tracking"
 SECTION_ADVANCED = "advanced_options"
+OPTION_SECTIONS: dict[str, tuple[str, ...]] = {
+    SECTION_RAIN_FORECAST: (
+        CONF_PRECIPITATION_THRESHOLD,
+        CONF_START_END_MODE,
+        CONF_PRECIPITATION_END_ALGORITHM,
+    ),
+    SECTION_DRY_STREAK: (CONF_PRECIPITATION_RESET_THRESHOLD, CONF_DRY_STREAK_SOURCE),
+    SECTION_RAIN_EVENTS: (CONF_RAIN_EVENTS, CONF_RAIN_EVENT_THRESHOLD),
+    SECTION_ADVANCED: (
+        CONF_EXTRA_ATTRIBUTES,
+        CONF_FULL_ROLLING_SERIES,
+        CONF_UNAVAILABLE_WHEN_STALE,
+    ),
+}
 
 # A rain warning's lead time: how many minutes before the rain it starts, in
 # the 5-minute steps of the forecast, up to its 2-hour horizon.
@@ -83,21 +103,31 @@ def _number(unit: str) -> selector.NumberSelector:
     )
 
 
-def _dropdown(options: list[str], translation_key: str) -> selector.SelectSelector:
-    """Return a dropdown of ``options``, labelled by ``translation_key``.
+def _dropdown(
+    options: list[str],
+    translation_key: str,
+    mode: selector.SelectSelectorMode = selector.SelectSelectorMode.DROPDOWN,
+) -> selector.SelectSelector:
+    """Return a choice of ``options``, labelled by ``translation_key``.
 
     ``options`` are the values stored; the labels the user sees come from the
     translations under ``translation_key`` (translations/en.json, de.json), so
-    the stored values never depend on the language.
+    the stored values never depend on the language. ``mode`` LIST shows them
+    as radio buttons, which reads better than a dropdown for two choices.
 
     """
     return selector.SelectSelector(
         selector.SelectSelectorConfig(
             options=options,
             translation_key=translation_key,
-            mode=selector.SelectSelectorMode.DROPDOWN,
+            mode=mode,
         )
     )
+
+
+def _choice(options: list[str], translation_key: str) -> selector.SelectSelector:
+    """Return ``options`` as radio buttons (see _dropdown)."""
+    return _dropdown(options, translation_key, selector.SelectSelectorMode.LIST)
 
 
 class OptionsFlowHandler(config_entries.OptionsFlow):
@@ -107,19 +137,29 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         """Show the options form, or save what the user entered.
 
         Home Assistant calls this twice: without input to show the form, and
-        with the submitted values. The rarely needed options sit in a collapsed
-        "Advanced" section of the form, but they are stored flat like the rest:
-        every option keeps its key, so nothing that reads ``entry.options``
-        notices the section and no migration is needed. Saving reloads the
-        entry (see update_listener).
+        with the submitted values. The form has one section per group of
+        sensors (OPTION_SECTIONS), but the options are stored flat: every
+        option keeps its key, so nothing that reads ``entry.options`` notices
+        the sections and no migration is needed. Saving reloads the entry
+        (see update_listener).
+
+        The "Rain events" section opens expanded only when the entry tracks
+        rain events (the sensor or a rain warning), since its threshold does
+        nothing otherwise; "Advanced" is always collapsed. The help texts link
+        to the documentation through the ``docs_url`` placeholder.
 
         """
         if user_input is not None:
-            data = {k: v for k, v in user_input.items() if k != SECTION_ADVANCED}
-            data.update(user_input.get(SECTION_ADVANCED, {}))
+            data = {}
+            for key, value in user_input.items():
+                if key in OPTION_SECTIONS:
+                    data.update(value)
+                else:
+                    data[key] = value
             return self.async_create_entry(title="", data=data)
 
-        options = DwdOptions.from_options(self.config_entry.options)
+        entry = self.config_entry
+        options = DwdOptions.from_options(entry.options)
 
         def current(key: str) -> vol.Optional:
             """Return an optional field showing the stored value or the default.
@@ -132,36 +172,39 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             """
             return vol.Optional(key, default=getattr(options, key))
 
-        advanced = vol.Schema(
-            {
-                current(CONF_RAIN_EVENTS): selector.BooleanSelector(),
-                current(CONF_RAIN_EVENT_THRESHOLD): _number(
-                    "mm/h"
-                ),
-                current(CONF_PRECIPITATION_END_ALGORITHM): _dropdown(
-                    [RAIN_END_ALGO_EPISODE, RAIN_END_ALGO_CLEARING],
-                    CONF_PRECIPITATION_END_ALGORITHM,
-                ),
-                current(CONF_FULL_ROLLING_SERIES): selector.BooleanSelector(),
-                current(CONF_UNAVAILABLE_WHEN_STALE): selector.BooleanSelector(),
-            }
-        )
+        fields = {
+            CONF_PRECIPITATION_THRESHOLD: _number("mm/h"),
+            CONF_START_END_MODE: _choice(
+                [START_END_MODE_TIMESTAMP, START_END_MODE_DURATION],
+                CONF_START_END_MODE,
+            ),
+            CONF_PRECIPITATION_END_ALGORITHM: _choice(
+                [RAIN_END_ALGO_EPISODE, RAIN_END_ALGO_CLEARING],
+                CONF_PRECIPITATION_END_ALGORITHM,
+            ),
+            CONF_PRECIPITATION_RESET_THRESHOLD: _number("mm"),
+            CONF_DRY_STREAK_SOURCE: _choice(
+                list(DRY_STREAK_SOURCES), CONF_DRY_STREAK_SOURCE
+            ),
+            CONF_RAIN_EVENTS: selector.BooleanSelector(),
+            CONF_RAIN_EVENT_THRESHOLD: _number("mm/h"),
+            CONF_EXTRA_ATTRIBUTES: selector.BooleanSelector(),
+            CONF_FULL_ROLLING_SERIES: selector.BooleanSelector(),
+            CONF_UNAVAILABLE_WHEN_STALE: selector.BooleanSelector(),
+        }
+        collapsed = {
+            SECTION_RAIN_FORECAST: False,
+            SECTION_DRY_STREAK: False,
+            SECTION_RAIN_EVENTS: not tracks_rain_events(entry, options),
+            SECTION_ADVANCED: True,
+        }
         schema = vol.Schema(
             {
-                current(CONF_EXTRA_ATTRIBUTES): selector.BooleanSelector(),
-                current(CONF_PRECIPITATION_THRESHOLD): _number("mm/h"),
-                current(CONF_START_END_MODE): _dropdown(
-                    [START_END_MODE_TIMESTAMP, START_END_MODE_DURATION],
-                    CONF_START_END_MODE,
-                ),
-                current(CONF_PRECIPITATION_RESET_THRESHOLD): _number("mm"),
-                current(CONF_DRY_STREAK_SOURCE): _dropdown(
-                    list(DRY_STREAK_SOURCES), CONF_DRY_STREAK_SOURCE
-                ),
-                vol.Required(SECTION_ADVANCED): section(
-                    advanced,  # pyright: ignore[reportArgumentType]  (probatio, see below)
-                    {"collapsed": True},
-                ),
+                vol.Required(name): section(
+                    vol.Schema({current(key): fields[key] for key in keys}),  # pyright: ignore[reportArgumentType]  (probatio, see below)
+                    {"collapsed": collapsed[name]},
+                )
+                for name, keys in OPTION_SECTIONS.items()
             }
         )
         # HA's annotations name probatio.Schema, which HA installs as
@@ -170,6 +213,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         return self.async_show_form(
             step_id="init",
             data_schema=schema,  # pyright: ignore[reportArgumentType]
+            description_placeholders={"docs_url": DOCS_URL},
         )
 
 

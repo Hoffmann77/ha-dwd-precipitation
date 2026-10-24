@@ -64,7 +64,7 @@ window ended about 3 to 10 minutes earlier. See
 | Rain warning status³ | `sensor.<name>_<warning>_rain_warning_status` | state | 5 min | [Rain warnings](rain-warnings.md) |
 
 ¹ Disabled by default on installs set up from 2026.11.0 on.
-² Only with the *Track rain events* option on.
+² Only with the option *Add the "Rain events" sensor* on.
 ³ One pair per rain warning you add, on its own device.
 
 ## Radar only or gauge-adjusted

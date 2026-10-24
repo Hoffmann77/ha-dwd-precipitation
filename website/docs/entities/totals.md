@@ -53,8 +53,8 @@ spring and missed in autumn.
   equally wet hours are still two releases.
 - A file without data for your grid cell adds nothing.
 - They **stay available while DWD is not publishing**, because the total
-  counted so far is still correct. The option *Show sensors as unavailable
-  when the data is out of date* does not apply to them.
+  counted so far is still correct. The option *Show "unavailable" when the
+  data is out of date* does not apply to them.
 
 | Attribute | Meaning |
 |-----------|---------|

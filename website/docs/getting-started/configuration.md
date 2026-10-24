@@ -39,142 +39,144 @@ device with an on/off and a status entity; see
 
 ## Options
 
-Open **Settings > Devices & services > DWD Precipitation > Configure**.
-Saving the options reloads the integration; the values come back within a
-few seconds.
+Open **Settings > Devices & services > DWD Precipitation > Configure**. The
+form has one section for each group of sensors, and every setting's help text
+links to its description on this page. Saving reloads the integration; the
+sensors are back after a few seconds.
 
-None of the options change how often data is fetched: each product is
-refreshed as soon as DWD publishes it, and failed fetches are retried
+None of the settings change how often data is fetched: each product is
+fetched as soon as DWD publishes it, and a failed download is retried
 automatically.
 
-| Option | Default | Affects |
-|--------|---------|---------|
-| [Add technical details to each sensor](#technical-details) | off | attributes of most sensors |
-| [Rain detection threshold](#rain-detection-threshold) | 0 mm/h | Precipitation start, end, expected |
-| [How "Precipitation start" and "Precipitation end" report](#start-and-end-format) | clock time | Precipitation start, end |
-| [Rain needed to reset the dry-streak counter](#dry-streak-threshold) | 1.0 mm | Timespan without precipitation |
-| [Product that resets the dry-streak counter](#dry-streak-source) | gauge-adjusted hour (RW) | Timespan without precipitation |
+| Section | Setting | Default |
+|---------|---------|---------|
+| [Rain forecast](#rain-forecast) | [Only count rain heavier than](#rain-detection-threshold) | 0 mm/h |
+| | [Show start and end as](#start-and-end-format) | clock time |
+| | ["Precipitation end" shows](#end-algorithm) | the first dry break |
+| [Timespan without precipitation](#timespan-without-precipitation) | [Rain that resets the count](#dry-streak-threshold) | 1.0 mm |
+| | [Measured with](#dry-streak-source) | radar and rain gauges (RW) |
+| [Rain events and rain warnings](#rain-events-and-rain-warnings) | [Add the "Rain events" sensor](#track-rain-events) | off |
+| | [Only count rain heavier than](#rain-event-threshold) | 0.1 mm/h |
+| [Advanced](#advanced-options) | [Add technical details to the sensors](#technical-details) | off |
+| | [Add the past hour to the hourly rain series](#past-hour-in-the-series) | off |
+| | [Show "unavailable" when the data is out of date](#unavailable-when-out-of-date) | on |
 
-### Technical details
+## Rain forecast
 
-**Add technical details to each sensor** attaches the DWD product name, the
-measurement time and the period each value covers to the sensors as
-attributes. It is useful in templates, or when you report a problem; leave it
-off otherwise. [Attributes](../entities/attributes.md#technical-details)
-lists them.
+Settings for `Precipitation start`, `Precipitation end` and
+`Precipitation expected`. The other sensors always report what DWD reports,
+whatever you set here.
 
-### Rain detection threshold
+### Only count rain heavier than {#rain-detection-threshold}
 
-**Rain detection threshold (mm per hour)** sets how much forecast rain counts
-as rain for `Precipitation start`, `Precipitation end` and
-`Precipitation expected`. `0` means any amount DWD detects; raise it to
-around `0.5` to ignore drizzle.
+Rain lighter than this, in mm per hour, counts as dry for the three sensors.
+`0` (the default) counts any rain the radar sees; around `0.5` ignores
+drizzle.
 
-The other sensors always report what DWD reports, whatever this threshold.
+### Show start and end as {#start-and-end-format}
 
-### Start and end format
+- **Clock time** (default): the sensors show a time, for example `14:25`.
+- **Minutes from now**: the sensors show how many minutes are left, for
+  example `20`.
 
-**How "Precipitation start" and "Precipitation end" report** chooses between:
+Whichever you do not pick is still there as an attribute of the same sensor
+(`at` or `minutes_until`).
 
-- **Clock time** (default): the sensors are timestamps, for example `14:25`.
-- **Minutes from now**: the sensors are durations in minutes, for example
-  `20`.
+### "Precipitation end" shows {#end-algorithm}
 
-Whichever form you do not pick stays available as an attribute on the same
-sensor (`at` or `minutes_until`).
+- **The first dry break** (default): when the current shower stops. In
+  showery weather this moves around, because the next shower is not counted.
+- **When no more rain is forecast:** when the forecast shows no further rain
+  at all. It changes less often, but stays `unknown` for longer.
 
-### Dry-streak threshold
+DWD's forecast reaches only two hours ahead, so if the rain lasts longer than
+that, the sensor is `unknown` either way.
 
-**Rain needed to reset the dry-streak counter (mm)** sets how much rain
-resets `Timespan without precipitation` to zero. It is compared against the
-past-hour total of the selected product, in millimetres accumulated over that
-hour: `1` means 1 mm fell within the hour, not a rate.
+## Timespan without precipitation
 
-### Dry-streak source
+Settings for [`Timespan without precipitation`](../entities/dry-streak.md),
+the sensor that counts how long it has not rained.
 
-**Product that resets the dry-streak counter** picks which past-hour total
-`Timespan without precipitation` compares against the threshold:
+### Rain that resets the count {#dry-streak-threshold}
 
-- **Gauge-adjusted hour (RW, every 10 minutes)**, the default for new
-  installs: corrected with rain-gauge data and more accurate. DWD reruns this
-  analysis of the latest 60 minutes every 10 minutes, so a reset shows about
-  30 to 40 minutes after the rain.
-- **Precipitation last 60 min (radar, RS):** radar only and updated every
-  5 minutes. Faster, but noisier, and its rolling hour keeps resetting the
-  counter for up to an hour after the rain stops.
+When at least this much rain falls within one hour, the count starts again
+from zero. The default is `1.0` mm; 1 mm is 1 litre of water per square
+metre. It is an amount within the hour, not a rate.
 
-Installs set up before this option existed keep `Precipitation last 60 min`,
-so upgrading changes nothing; switch here if you prefer RW. The counter keeps
-its value when you switch. See
-[Timespan without precipitation](../entities/dry-streak.md).
+### Measured with {#dry-streak-source}
 
-## Advanced options
+Which measurement of the past hour's rain is compared with that amount:
 
-The **Advanced options** section is collapsed at the bottom of the form. Most
-installations never need it.
+- **Radar and rain gauges (RW)**, the default for new installs: DWD checks
+  the radar against rain gauges on the ground, which makes it more accurate.
+  DWD recalculates this every 10 minutes, so a reset shows about 30 to 40
+  minutes after the rain.
+- **Radar only (RS):** updated every 5 minutes, so it reacts faster, but it
+  is less exact, and it keeps resetting the count for up to an hour after the
+  rain has stopped.
 
-| Option | Default | Affects |
-|--------|---------|---------|
-| [Track rain events](#track-rain-events) | off | adds the Rain events sensor |
-| [Rain event threshold](#rain-event-threshold) | 0.1 mm/h | Rain events, rain warnings |
-| [When "Precipitation end" counts rain as over](#end-algorithm) | first dry gap | Precipitation end |
-| [Include the past hour in the hourly forecast series](#past-hour-in-the-series) | off | an attribute of Peak hourly precipitation next 120 min |
-| [Show sensors as unavailable when the data is out of date](#unavailable-when-out-of-date) | on | availability of the sensors |
+Installs set up before this setting existed keep **Radar only**, so upgrading
+changes nothing; switch here if you prefer the other one. The count keeps its
+value when you switch.
 
-### Track rain events
+## Rain events and rain warnings
 
-**Track rain events** adds the [`Rain events`](../entities/rain-events.md)
-sensor, which follows each burst of rain from the first forecast that shows
-it until it has fallen, for blueprints that warn about or report rain.
+Rain events follow each shower from the first forecast that shows it until
+it has passed. [Rain warnings](../entities/rain-warnings.md) are built on
+them; you add those with **Add rain warning** on the integration's page (see
+[Rain warnings](#rain-warnings) above). The section is open when the
+`Rain events` sensor is on or the location has a rain warning, and collapsed
+otherwise.
 
-With it on, or while the location has a
-[rain warning](../entities/rain-warnings.md), the integration also fetches
-the radar analyses (a small part of each file) and the precipitation types
-it missed, and keeps a small record of recent rain on disk. Turning it off
-removes the sensor; the record is deleted once no rain warning needs it
-either, so turning it on again then starts clean. Rain warnings work with
-this option off.
+### Add the "Rain events" sensor {#track-rain-events}
 
-### Rain event threshold
+Adds the [`Rain events`](../entities/rain-events.md) sensor, for blueprints
+that warn about or report rain. Off by default. Rain warnings work without
+it.
 
-**Rain event threshold (mm per hour)** sets how much rain a 5-minute step
-needs to count towards a rain event, for the `Rain events` sensor and the
-[rain warnings](../entities/rain-warnings.md). `0` means any trace forms an
-event. It is independent of the
-[rain detection threshold](#rain-detection-threshold), so the events and
-`Precipitation start` can disagree when the two differ.
+While the sensor is on, or the location has a rain warning, the integration
+also downloads the parts of the radar data it missed (for example while Home
+Assistant was restarting) and keeps a small record of recent rain on disk.
+Turning the sensor off removes it; the record is deleted once no rain warning
+needs it either, so turning it on again then starts fresh.
 
-### End algorithm
+### Only count rain heavier than {#rain-event-threshold}
 
-**When "Precipitation end" counts rain as over** chooses between:
+Rain lighter than this, in mm per hour, does not count towards a rain event,
+for the `Rain events` sensor and all rain warnings. `0` counts any rain the
+radar sees; the default is `0.1`. This is separate from the setting of the
+same name under [Rain forecast](#rain-detection-threshold), so the two can
+disagree if you set them differently.
 
-- **First dry gap** (default): the end of the current burst. It moves around
-  during showers.
-- **Precipitation clears within 2 h:** when no more rain is forecast within
-  the two-hour horizon. Steadier, but stays `unknown` longer.
+## Advanced {#advanced-options}
 
-DWD forecasts only two hours ahead, so beyond that the sensor is `unknown`
-either way.
+Extra details for templates and charts, and what the sensors show when DWD
+is late. The section is collapsed; most installations never change it.
 
-### Past hour in the series
+### Add technical details to the sensors {#technical-details}
 
-**Include the past hour in the hourly forecast series** makes the
-`forecast_rolling_1h` attribute of `Peak hourly precipitation next 120 min`
-start one hour earlier. The first entries then include rain that has already
-fallen, so a chart shows the past hour and the forecast as one curve. The
-sensor's value does not change.
+Shows which DWD product each value comes from, when it was measured and which
+period it covers, as extra attributes of the sensors. Helpful in templates or
+when you report a problem; otherwise leave it off.
+[Attributes](../entities/attributes.md#technical-details) lists them.
 
-The earlier hour is built from the radar analyses of the past hour, without
-any extra download. After a restart, or a 5-minute release DWD did not
-publish in time, it appears once the integration has seen a full hour of
-releases again. See [RADVOR RV nowcast](../entities/radvor-rv.md#peak-hourly-precipitation).
+### Add the past hour to the hourly rain series {#past-hour-in-the-series}
 
-### Unavailable when out of date
+For charts: the `forecast_rolling_1h` attribute of
+`Peak hourly precipitation next 120 min` then starts one hour earlier. Its
+first entries include rain that has already fallen, so a chart shows the past
+hour and the forecast as one curve. The sensor's value does not change.
 
-**Show sensors as unavailable when the data is out of date:** if DWD does
-not publish a new file in time, the affected sensors report `unavailable`
-instead of keeping the last value. Turn it off to always keep the most recent
-reading, accepting that it may be hours old. Either way the missing file
-keeps being retried in the background. See
-[Availability and staleness](../how-it-works/availability.md) for how long
-"in time" is.
+The past hour is worked out from radar data the integration has already
+downloaded, so it costs no extra download. After a restart, or when DWD was
+late with a 5-minute update, it appears once the integration has seen a full
+hour of updates again. See
+[RADVOR RV nowcast](../entities/radvor-rv.md#peak-hourly-precipitation).
+
+### Show "unavailable" when the data is out of date {#unavailable-when-out-of-date}
+
+If DWD is late with new data, the affected sensors show `unavailable`
+instead of an old value. Turn it off to keep showing the last value, even if
+it is hours old. Either way, the missing data keeps being downloaded in the
+background. [Availability and staleness](../how-it-works/availability.md)
+explains how late is too late.

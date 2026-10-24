@@ -8,18 +8,34 @@ from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType, InvalidData
 
-from custom_components.dwd_precipitation.config_flow import COVERAGE_LAT, COVERAGE_LON
+from custom_components.dwd_precipitation.config_flow import (
+    COVERAGE_LAT,
+    COVERAGE_LON,
+    OPTION_SECTIONS,
+)
 from custom_components.dwd_precipitation.const import (
     CONF_COORDS,
     CONF_DRY_STREAK_SOURCE,
+    DOCS_URL,
     DOMAIN,
     DRY_STREAK_SOURCE_RS,
     DRY_STREAK_SOURCE_RW,
+    SUBENTRY_RAIN_WARNING,
 )
+from custom_components.dwd_precipitation.options import DEFAULT_OPTIONS
 from custom_components.dwd_precipitation.radar import OutsideGrid
 from custom_components.dwd_precipitation.radar.odim import read_odim_grid
 
 RS_FIXTURE = Path(__file__).parents[1] / "fixtures" / "composite_rs_sample.hd5"
+
+# A stored rain-warning subentry, for the options form's sections.
+_WARNING = {
+    "subentry_id": "laundry",
+    "subentry_type": SUBENTRY_RAIN_WARNING,
+    "title": "Laundry",
+    "data": {"lead_time": 30, "combine": "any"},
+    "unique_id": None,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -211,10 +227,26 @@ async def test_new_entry_stores_the_default_dry_streak_source(
 # Options flow
 # ===========================================================================
 
+def _sections(result) -> dict:
+    """Return the options form's sections, by name, in the order shown."""
+    return {str(marker): section for marker, section in result["data_schema"].schema.items()}
+
+
 def _schema_default(result, key: str):
-    """Return the form default the options schema offers for key."""
-    marker = next(m for m in result["data_schema"].schema if m == key)
-    return marker.default()
+    """Return the form default the options schema offers for key, in any section."""
+    for section in _sections(result).values():
+        for marker in section.schema.schema:
+            if marker == key:
+                return marker.default()
+    raise KeyError(key)
+
+
+def _submit(**options) -> dict:
+    """Return the options form's input: every section, holding the given options."""
+    return {
+        name: {key: options[key] for key in keys if key in options}
+        for name, keys in OPTION_SECTIONS.items()
+    }
 
 
 @pytest.mark.parametrize(
@@ -244,7 +276,7 @@ async def test_options_flow_saves_the_dry_streak_source(make_entry, hass: HomeAs
     result = await hass.config_entries.options.async_init(entry.entry_id)
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
-        user_input={CONF_DRY_STREAK_SOURCE: DRY_STREAK_SOURCE_RS, "advanced_options": {}},
+        user_input=_submit(**{CONF_DRY_STREAK_SOURCE: DRY_STREAK_SOURCE_RS}),
     )
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
@@ -262,61 +294,81 @@ async def test_options_flow_rejects_an_unknown_dry_streak_source(
     with pytest.raises(InvalidData):
         await hass.config_entries.options.async_configure(
             result["flow_id"],
-            user_input={CONF_DRY_STREAK_SOURCE: "sf", "advanced_options": {}},
+            user_input=_submit(**{CONF_DRY_STREAK_SOURCE: "sf"}),
         )
 
 
-ADVANCED = (
-    "rain_events",
-    "rain_event_threshold",
-    "precipitation_end_algorithm",
-    "full_rolling_series",
-    "unavailable_when_stale",
-)
+def test_every_option_is_in_exactly_one_section() -> None:
+    """The form offers each option once, and only the options there are."""
+    keys = [key for keys in OPTION_SECTIONS.values() for key in keys]
+    assert sorted(keys) == sorted(DEFAULT_OPTIONS)
 
 
-def _section(result):
-    marker = next(m for m in result["data_schema"].schema if m == "advanced_options")
-    return result["data_schema"].schema[marker]
-
-
-async def test_advanced_options_are_a_collapsed_section(make_entry, hass: HomeAssistant) -> None:
-    """The rarely needed options sit in a collapsed section with flat defaults."""
+async def test_options_form_has_one_section_per_group(make_entry, hass: HomeAssistant) -> None:
+    """Every option sits in its section, pre-filled with the stored value or the default."""
     entry = make_entry({"full_rolling_series": True, "rain_event_threshold": 0.4}, minor_version=2)
 
     result = await hass.config_entries.options.async_init(entry.entry_id)
-    advanced = _section(result)
+    sections = _sections(result)
 
-    assert advanced.options["collapsed"] is True
-    inner = {str(m): m.default() for m in advanced.schema.schema}
-    assert tuple(inner) == ADVANCED
-    assert inner["full_rolling_series"] is True
-    assert inner["rain_event_threshold"] == 0.4
-    assert inner["unavailable_when_stale"] is True
-    assert inner["rain_events"] is False
-    main = {str(m) for m in result["data_schema"].schema}
-    assert main.isdisjoint(ADVANCED)
+    assert tuple(sections) == tuple(OPTION_SECTIONS)
+    for name, section in sections.items():
+        assert tuple(str(m) for m in section.schema.schema) == OPTION_SECTIONS[name]
+    assert _schema_default(result, "full_rolling_series") is True
+    assert _schema_default(result, "rain_event_threshold") == 0.4
+    assert _schema_default(result, "unavailable_when_stale") is True
+    assert _schema_default(result, "rain_events") is False
+    assert result["description_placeholders"] == {"docs_url": DOCS_URL}
 
 
-async def test_advanced_options_are_stored_flat(make_entry, hass: HomeAssistant) -> None:
-    """Saving flattens the section, so every option keeps its key."""
+@pytest.mark.parametrize(
+    ("options", "warnings", "rain_events_collapsed"),
+    [
+        ({}, [], True),
+        ({"rain_events": True}, [], False),
+        ({}, [_WARNING], False),
+    ],
+)
+async def test_options_form_opens_the_sections_that_matter(
+    make_entry,
+    hass: HomeAssistant,
+    options: dict,
+    warnings: list,
+    rain_events_collapsed: bool,
+) -> None:
+    """The rain-events section opens only when the entry tracks rain events."""
+    entry = make_entry(options, minor_version=2, subentries_data=warnings)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    collapsed = {name: s.options["collapsed"] for name, s in _sections(result).items()}
+
+    assert collapsed == {
+        "rain_forecast": False,
+        "dry_streak": False,
+        "rain_event_tracking": rain_events_collapsed,
+        "advanced_options": True,
+    }
+
+
+async def test_options_are_stored_flat(make_entry, hass: HomeAssistant) -> None:
+    """Saving flattens the sections, so every option keeps its key."""
     entry = make_entry({CONF_DRY_STREAK_SOURCE: DRY_STREAK_SOURCE_RS}, minor_version=2)
 
     result = await hass.config_entries.options.async_init(entry.entry_id)
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
-        user_input={
-            CONF_DRY_STREAK_SOURCE: DRY_STREAK_SOURCE_RS,
-            "advanced_options": {
-                "rain_event_threshold": 0.6,
-                "full_rolling_series": True,
-            },
-        },
+        user_input=_submit(
+            rain_event_threshold=0.6,
+            full_rolling_series=True,
+            precipitation_end_algorithm="clearing",
+            **{CONF_DRY_STREAK_SOURCE: DRY_STREAK_SOURCE_RS},
+        ),
     )
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert "advanced_options" not in entry.options
+    assert set(entry.options) == set(DEFAULT_OPTIONS)
     assert entry.options["rain_event_threshold"] == 0.6
     assert entry.options["full_rolling_series"] is True
+    assert entry.options["precipitation_end_algorithm"] == "clearing"
     assert entry.options["unavailable_when_stale"] is True  # its default
     assert entry.options[CONF_DRY_STREAK_SOURCE] == DRY_STREAK_SOURCE_RS

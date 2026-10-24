@@ -77,8 +77,9 @@ history.
 A warning has no rain logic of its own: it reads the rain events the
 integration tracks for the location, the same events the
 [Rain events](rain-events.md) sensor shows. So what counts as rain is the
-advanced option
-[*Rain event threshold*](../getting-started/configuration.md#rain-event-threshold),
+option
+[*Only count rain heavier than*](../getting-started/configuration.md#rain-event-threshold)
+in the *Rain events and rain warnings* section,
 and the forecast reaches two hours ahead.
 
 - The lead time counts from when the radar data arrives in Home Assistant.
@@ -102,10 +103,10 @@ and the forecast reaches two hours ahead.
 ## Good to know
 
 - Rain warnings use the rain-events tracker, but not the `Rain events`
-  sensor: they work with the option *Track rain events* off. While a
+  sensor: they work with the option *Add the "Rain events" sensor* off. While a
   location has a warning, the integration fetches the radar analyses it
   missed (a small part of each file) and keeps a small record of recent rain
-  on disk. Deleting the last warning, with *Track rain events* off, deletes
+  on disk. Deleting the last warning, with that option off, deletes
   that record.
 - The amounts are radar only, like the [Rain events](rain-events.md#good-to-know)
   they come from.

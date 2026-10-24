@@ -37,7 +37,7 @@ sein darf. Die erneuten Versuche laufen die ganze Zeit weiter, siehe
 ### Stattdessen den letzten Wert behalten {#keeping-the-last-value-instead}
 
 Ist die erweiterte Option
-[*Sensoren als nicht verfügbar anzeigen, wenn die Daten veraltet sind*](../getting-started/configuration.md#unavailable-when-out-of-date)
+[*„Nicht verfügbar“ anzeigen, wenn die Daten veraltet sind*](../getting-started/configuration.md#unavailable-when-out-of-date)
 ausgeschaltet, behalten die Sensoren immer ihren neuesten Wert, egal wie alt.
 Das passt zu Dashboards, die nie eine Lücke zeigen sollen, aber der Wert kann
 dann Stunden alt sein, ohne dass man es ihm ansieht. Die Attribute mit den

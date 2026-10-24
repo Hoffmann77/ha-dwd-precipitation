@@ -34,7 +34,7 @@ keep them.
 ## Technical details
 
 With the option
-[*Add technical details to each sensor*](../getting-started/configuration.md#technical-details)
+[*Add technical details to the sensors*](../getting-started/configuration.md#technical-details)
 on, every DWD sensor except `Precipitation expected`, the two running totals,
 `Timespan without precipitation`, `Rain events` and the rain warnings also
 has:

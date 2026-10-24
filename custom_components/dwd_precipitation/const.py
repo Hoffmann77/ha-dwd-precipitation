@@ -11,6 +11,11 @@ from .radar.nowcast import (
 
 DOMAIN = "dwd_precipitation"
 
+# The documentation site, manifest.json's "documentation" without the trailing
+# slash. The options form links into it through the {docs_url} placeholder;
+# the German translations add /de, where the site keeps its German pages.
+DOCS_URL = "https://hoffmann77.github.io/ha-dwd-precipitation"
+
 PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR]
 
 CONF_COORDS = "coordinates"

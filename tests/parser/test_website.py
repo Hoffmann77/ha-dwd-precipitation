@@ -57,10 +57,18 @@ def _slug(heading: str) -> str:
 
 
 def _anchors(headings: list[str]) -> list[str]:
-    """Return the anchors of a page's headings, numbering repeats like Docusaurus."""
+    """Return the anchors of a page's headings, numbering repeats like Docusaurus.
+
+    A heading with an explicit id (``### Measured with {#dry-streak-source}``)
+    has that id, which keeps an anchor stable when the heading changes.
+
+    """
     seen: dict[str, int] = {}
     anchors = []
     for heading in headings:
+        if match := EXPLICIT_ID.search(heading):
+            anchors.append(match.group(1))
+            continue
         slug = _slug(heading)
         anchors.append(f"{slug}-{seen[slug]}" if slug in seen else slug)
         seen[slug] = seen.get(slug, 0) + 1

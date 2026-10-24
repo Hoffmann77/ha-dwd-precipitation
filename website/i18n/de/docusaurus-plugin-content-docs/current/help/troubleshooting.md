@@ -99,8 +99,8 @@ Teildownloads wieder funktionieren.
 
 ## Alte Werte bleiben nach einem DWD-Ausfall stehen {#old-values-persist-after-a-dwd-outage}
 
-Die erweiterte Option *Sensoren als nicht verfügbar anzeigen, wenn die Daten
-veraltet sind* ist aus, daher wird der letzte Wert behalten. Schalte sie ein,
+Die erweiterte Option *„Nicht verfügbar“ anzeigen, wenn die Daten veraltet
+sind* ist aus, daher wird der letzte Wert behalten. Schalte sie ein,
 damit die Sensoren stattdessen `unavailable` melden. Siehe
 [Verfügbarkeit und Aktualität](../how-it-works/availability.md#keeping-the-last-value-instead).
 
@@ -140,7 +140,7 @@ mit:
 - den Versionen der Integration und von Home Assistant,
 - den Log-Meldungen, am besten mit Debug-Protokollierung,
 - bei einem falschen Wert: dem Sensor, seinem Wert und der Uhrzeit sowie den
-  Attributen, die mit *Metadaten als Sensorattribute anzeigen* erscheinen; sie
+  Attributen, die mit *Technische Details zu den Sensoren hinzufügen* erscheinen; sie
   sagen genau, aus welcher DWD-Datei der Wert stammt.
 
 Deinen genauen Standort musst du nicht angeben; der nächste Ort genügt.

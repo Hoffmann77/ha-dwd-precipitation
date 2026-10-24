@@ -39,7 +39,7 @@ precipitation_total.py
                       missed-release walk used by the PrecipitationTotalSensor
                       in sensor.py.
 config_flow.py        UI config flow: collects name + lat/lon; options form
-                      with a collapsed Advanced section, stored flat; the
+                      with one section per group of sensors, stored flat; the
                       rain-warning subentry flow (user + reconfigure).
 options.py            DwdOptions: the entry's options as one typed snapshot,
                       with every option's default in DEFAULT_OPTIONS. Read as
@@ -826,17 +826,34 @@ User-defined warnings ("Laundry, 60 min"), each a config subentry of type
 
 ## Options form
 
-The options form nests rarely needed options in a collapsed `advanced_options`
-section (`data_entry_flow.section`): `rain_events`, `rain_event_threshold`,
-`precipitation_end_algorithm`, `full_rolling_series`, `unavailable_when_stale`.
-Only the *form* is nested: `async_step_init` flattens the section before
-saving, so every key stays flat in `entry.options` and no migration is
-needed. A new option gets its key and default in `DEFAULT_OPTIONS` and a field
-of the same name on `DwdOptions`, which is built from that table (a missing
-field fails the first `from_options`); the form and every consumer take the
-default from there. `DwdOptions` is a snapshot, which is enough because
-saving the options reloads the entry. Translations live under
-`options.step.init.sections.advanced_options`. HA 2026.10 installs `probatio`
+The options form has one `data_entry_flow.section` per group of sensors,
+`OPTION_SECTIONS` in `config_flow.py`, in this order: `rain_forecast`
+(`precipitation_threshold`, `start_end_mode`, `precipitation_end_algorithm`),
+`dry_streak` (`precipitation_reset_threshold`, `dry_streak_source`),
+`rain_event_tracking` (`rain_events`, `rain_event_threshold`; collapsed unless
+`tracks_rain_events`) and `advanced_options` (`extra_state_attributes`,
+`full_rolling_series`, `unavailable_when_stale`; always collapsed). A test
+checks every option is in exactly one section. Only the *form* is nested:
+`async_step_init` flattens every section before saving, so every key stays
+flat in `entry.options` and no migration is needed. A new option gets its key
+and default in `DEFAULT_OPTIONS`, a field of the same name on `DwdOptions`,
+which is built from that table (a missing field fails the first
+`from_options`), and a place in `OPTION_SECTIONS`; the form and every consumer
+take the default from there. `DwdOptions` is a snapshot, which is enough
+because saving the options reloads the entry.
+
+The strings live under `options.step.init.sections.<section>`. They are for
+users without our background: a label says what to choose, in the words of the
+form ("Only count rain heavier than", with the unit from the selector, not in
+the label), and the help text says in a sentence or two what it changes, in
+plain words. The details go to the docs: the step description and the help
+texts (`data_description`, Markdown) link there through the `{docs_url}`
+placeholder (`DOCS_URL` in `const.py`), German ones to `{docs_url}/de/...`. A
+section's description is plain text, so it cannot hold a link. A test checks
+every link finds its page and anchor, and that both languages link the same.
+`website/docs/getting-started/configuration.md` follows the form section by
+section, its headings the form's labels with the anchors they had before
+(`{#rain-detection-threshold}`). HA 2026.10 installs `probatio`
 as `voluptuous` at import time, which is why `vol.Schema` inside `section`
 serializes; a script importing `voluptuous` before `homeassistant` sees the
 real one and cannot serialize the form.

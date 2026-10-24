@@ -79,9 +79,9 @@ aufgezeichnet.
 Eine Warnung hat keine eigene Regenlogik: Sie liest die Regenereignisse, die
 die Integration für den Standort verfolgt, dieselben, die der Sensor
 [Regenereignisse](rain-events.md) zeigt. Was als Regen zählt, legt daher die
-erweiterte Option
-[*Schwelle für Regenereignisse*](../getting-started/configuration.md#rain-event-threshold)
-fest, und die Vorhersage reicht zwei Stunden voraus.
+Option
+[*Nur Regen zählen, der stärker ist als*](../getting-started/configuration.md#rain-event-threshold)
+im Abschnitt *Regenereignisse und Regenwarnungen* fest, und die Vorhersage reicht zwei Stunden voraus.
 
 - Die Vorlaufzeit zählt ab dem Moment, in dem die Radardaten in Home
   Assistant ankommen. Sie kommen alle 5 Minuten, daher kann eine Warnung bis
@@ -108,10 +108,10 @@ fest, und die Vorhersage reicht zwei Stunden voraus.
 
 - Regenwarnungen nutzen die Verfolgung der Regenereignisse, aber nicht den
   Sensor `Regenereignisse`: Sie funktionieren auch mit ausgeschalteter Option
-  *Regenereignisse verfolgen*. Solange ein Standort eine Warnung hat, ruft
+  *Sensor „Regenereignisse“ hinzufügen*. Solange ein Standort eine Warnung hat, ruft
   die Integration verpasste Radaranalysen ab (einen kleinen Teil jeder Datei)
   und speichert eine kleine Aufzeichnung des jüngsten Regens. Löschst du die
-  letzte Warnung bei ausgeschalteter Option *Regenereignisse verfolgen*, wird
+  letzte Warnung bei ausgeschalteter Option, wird
   diese Aufzeichnung gelöscht.
 - Die Mengen kommen nur vom Radar, wie die
   [Regenereignisse](rain-events.md#good-to-know), aus denen sie stammen.

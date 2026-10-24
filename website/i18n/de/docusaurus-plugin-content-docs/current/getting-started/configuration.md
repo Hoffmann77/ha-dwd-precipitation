@@ -42,150 +42,155 @@ Warnung ist ein Gerät mit einer An/Aus- und einer Status-Entität; siehe
 ## Optionen {#options}
 
 Öffne **Einstellungen > Geräte & Dienste > DWD Precipitation >
-Konfigurieren**. Das Speichern der Optionen lädt die Integration neu; die
-Werte sind innerhalb weniger Sekunden wieder da.
+Konfigurieren**. Das Formular hat einen Abschnitt für jede Gruppe von
+Sensoren, und der Hilfetext jeder Einstellung verlinkt auf ihre Beschreibung
+auf dieser Seite. Beim Speichern wird die Integration neu geladen; die
+Sensoren sind nach wenigen Sekunden wieder da.
 
-Keine der Optionen ändert, wie oft Daten abgerufen werden: Jedes Produkt wird
-aktualisiert, sobald der DWD es veröffentlicht, und fehlgeschlagene Abrufe
-werden automatisch wiederholt.
+Keine der Einstellungen ändert, wie oft Daten abgerufen werden: Jedes Produkt
+wird abgerufen, sobald der DWD es veröffentlicht, und ein fehlgeschlagener
+Download wird automatisch wiederholt.
 
-| Option | Standard | Betrifft |
-|--------|----------|----------|
-| [Metadaten als Sensorattribute anzeigen](#technical-details) | aus | Attribute der meisten Sensoren |
-| [Schwelle für Regenerkennung](#rain-detection-threshold) | 0 mm/h | Niederschlagsbeginn, -ende, Niederschlag erwartet |
-| [Anzeige von „Niederschlagsbeginn“ und „Niederschlagsende“](#start-and-end-format) | Uhrzeit | Niederschlagsbeginn, -ende |
-| [Regenmenge, die den Trockenzähler zurücksetzt](#dry-streak-threshold) | 1,0 mm | Zeitraum ohne Niederschlag |
-| [Produkt, das den Trockenzähler zurücksetzt](#dry-streak-source) | angeeichte Stunde (RW) | Zeitraum ohne Niederschlag |
+| Abschnitt | Einstellung | Standard |
+|-----------|-------------|----------|
+| [Regenvorhersage](#rain-forecast) | [Nur Regen zählen, der stärker ist als](#rain-detection-threshold) | 0 mm/h |
+| | [Beginn und Ende anzeigen als](#start-and-end-format) | Uhrzeit |
+| | [„Niederschlagsende“ zeigt](#end-algorithm) | die erste trockene Pause |
+| [Zeitraum ohne Niederschlag](#timespan-without-precipitation) | [Regen, der die Zählung zurücksetzt](#dry-streak-threshold) | 1,0 mm |
+| | [Gemessen mit](#dry-streak-source) | Radar und Regenmessern (RW) |
+| [Regenereignisse und Regenwarnungen](#rain-events-and-rain-warnings) | [Sensor „Regenereignisse“ hinzufügen](#track-rain-events) | aus |
+| | [Nur Regen zählen, der stärker ist als](#rain-event-threshold) | 0,1 mm/h |
+| [Erweitert](#advanced-options) | [Technische Details zu den Sensoren hinzufügen](#technical-details) | aus |
+| | [Vergangene Stunde in die stündliche Regenreihe aufnehmen](#past-hour-in-the-series) | aus |
+| | [„Nicht verfügbar“ anzeigen, wenn die Daten veraltet sind](#unavailable-when-out-of-date) | an |
 
-### Technische Details {#technical-details}
+## Regenvorhersage {#rain-forecast}
 
-**Metadaten als Sensorattribute anzeigen** hängt den Namen des DWD-Produkts,
-die Messzeit und den Zeitraum, den jeder Wert abdeckt, als Attribute an die
-Sensoren an. Das ist nützlich in Templates oder wenn du ein Problem meldest;
-lass es sonst aus. [Attribute](../entities/attributes.md#technical-details)
-listet sie auf.
+Einstellungen für `Niederschlagsbeginn`, `Niederschlagsende` und
+`Niederschlag erwartet`. Die anderen Sensoren melden immer, was der DWD
+meldet, egal was du hier einstellst.
 
-### Schwelle für Regenerkennung {#rain-detection-threshold}
+### Nur Regen zählen, der stärker ist als {#rain-detection-threshold}
 
-**Schwelle für Regenerkennung (mm pro Stunde)** legt fest, ab welcher
-vorhergesagten Regenmenge `Niederschlagsbeginn`, `Niederschlagsende` und
-`Niederschlag erwartet` von Regen ausgehen. `0` bedeutet jede Menge, die der
-DWD erkennt; erhöhe den Wert auf etwa 0,5, um Nieselregen zu ignorieren.
+Schwächerer Regen, in mm pro Stunde, gilt für die drei Sensoren als trocken.
+`0` (der Standard) zählt jeden Regen, den das Radar sieht; mit etwa `0,5`
+wird Nieselregen ignoriert.
 
-Die anderen Sensoren melden immer, was der DWD meldet, unabhängig von diesem
-Schwellwert.
+### Beginn und Ende anzeigen als {#start-and-end-format}
 
-### Format von Beginn und Ende {#start-and-end-format}
+- **Uhrzeit** (Standard): Die Sensoren zeigen eine Uhrzeit, zum Beispiel
+  `14:25`.
+- **Minuten ab jetzt**: Die Sensoren zeigen, wie viele Minuten es noch sind,
+  zum Beispiel `20`.
 
-**Anzeige von „Niederschlagsbeginn“ und „Niederschlagsende“** wählt zwischen:
+Die Form, die du nicht wählst, findest du weiterhin als Attribut am selben
+Sensor (`at` oder `minutes_until`).
 
-- **Uhrzeit** (Standard): Die Sensoren sind Zeitstempel, zum Beispiel `14:25`.
-- **Minuten ab jetzt**: Die Sensoren sind Dauern in Minuten, zum Beispiel
-  `20`.
+### „Niederschlagsende“ zeigt {#end-algorithm}
 
-Die Form, die du nicht wählst, bleibt als Attribut am selben Sensor verfügbar
-(`at` oder `minutes_until`).
+- **Die erste trockene Pause** (Standard): wann der aktuelle Schauer
+  aufhört. Bei Schauerwetter verschiebt sich das, weil der nächste Schauer
+  nicht mitzählt.
+- **Ab wann kein Regen mehr vorhergesagt ist:** wann die Vorhersage
+  überhaupt keinen weiteren Regen mehr zeigt. Das ändert sich seltener,
+  bleibt aber länger `unknown` („Unbekannt“).
 
-### Schwellwert des Trockenzählers {#dry-streak-threshold}
+Die Vorhersage des DWD reicht nur zwei Stunden weit. Dauert der Regen länger,
+ist der Sensor in beiden Fällen `unknown`.
 
-**Regenmenge, die den Trockenzähler zurücksetzt (mm)** legt fest, wie viel
-Regen `Zeitraum ohne Niederschlag` auf null zurücksetzt. Verglichen wird mit
-der Summe der vergangenen Stunde des gewählten Produkts, in Millimetern über
-diese Stunde aufsummiert: `1` bedeutet, dass innerhalb der Stunde 1 mm
-gefallen ist, keine Rate.
+## Zeitraum ohne Niederschlag {#timespan-without-precipitation}
 
-### Quelle des Trockenzählers {#dry-streak-source}
+Einstellungen für [`Zeitraum ohne Niederschlag`](../entities/dry-streak.md),
+den Sensor, der zählt, wie lange es nicht geregnet hat.
 
-**Produkt, das den Trockenzähler zurücksetzt** wählt, welche Summe der
-vergangenen Stunde `Zeitraum ohne Niederschlag` mit dem Schwellwert
-vergleicht:
+### Regen, der die Zählung zurücksetzt {#dry-streak-threshold}
 
-- **Angeeichte Stunde (RW, alle 10 Minuten)**, der Standard für neue
-  Installationen: mit Daten von Niederschlagsmessern angeeicht und genauer.
-  Der DWD rechnet diese Analyse der letzten 60 Minuten alle 10 Minuten neu,
-  daher zeigt sich ein Zurücksetzen etwa 30 bis 40 Minuten nach dem Regen.
-- **Niederschlag letzte 60 min (Radar, RS):** nur Radar und alle 5 Minuten
-  aktualisiert. Schneller, aber unruhiger, und seine gleitende Stunde setzt den
-  Zähler bis zu eine Stunde nach dem Ende des Regens immer wieder zurück.
+Fällt innerhalb einer Stunde mindestens so viel Regen, beginnt die Zählung
+wieder bei null. Der Standard ist `1,0` mm; 1 mm sind 1 Liter Wasser pro
+Quadratmeter. Es ist eine Menge innerhalb der Stunde, keine Rate.
 
-Installationen, die vor dieser Option eingerichtet wurden, behalten
-`Niederschlag letzte 60 min`, ein Update ändert also nichts; stelle hier um,
-wenn du RW bevorzugst. Der Zähler behält beim Umstellen seinen Wert. Siehe
-[Zeitraum ohne Niederschlag](../entities/dry-streak.md).
+### Gemessen mit {#dry-streak-source}
 
-## Erweiterte Optionen {#advanced-options}
+Welche Messung des Regens der vergangenen Stunde mit dieser Menge verglichen
+wird:
 
-Der Abschnitt **Erweiterte Optionen** ist unten im Formular eingeklappt. Die
-meisten Installationen brauchen ihn nie.
+- **Radar und Regenmessern (RW)**, der Standard für neue Installationen: Der
+  DWD gleicht das Radar mit Regenmessern am Boden ab, das macht die Messung
+  genauer. Der DWD rechnet sie alle 10 Minuten neu, daher zeigt sich ein
+  Zurücksetzen etwa 30 bis 40 Minuten nach dem Regen.
+- **Nur Radar (RS):** alle 5 Minuten aktualisiert, reagiert also schneller,
+  ist aber ungenauer und setzt die Zählung bis zu eine Stunde nach dem Ende
+  des Regens immer wieder zurück.
 
-| Option | Standard | Betrifft |
-|--------|----------|----------|
-| [Regenereignisse verfolgen](#track-rain-events) | aus | fügt den Sensor Regenereignisse hinzu |
-| [Schwelle für Regenereignisse](#rain-event-threshold) | 0,1 mm/h | Regenereignisse, Regenwarnungen |
-| [Wann „Niederschlagsende“ den Regen als beendet ansieht](#end-algorithm) | Erste trockene Lücke | Niederschlagsende |
-| [Vergangene Stunde in die stündliche Vorhersagereihe aufnehmen](#past-hour-in-the-series) | aus | ein Attribut von Maximaler Stundenniederschlag nächste 120 min |
-| [Sensoren als nicht verfügbar anzeigen, wenn die Daten veraltet sind](#unavailable-when-out-of-date) | an | Verfügbarkeit der Sensoren |
+Installationen, die vor dieser Einstellung eingerichtet wurden, behalten
+**Nur Radar**, ein Update ändert also nichts; stelle hier um, wenn du die
+andere Messung bevorzugst. Die Zählung behält beim Umstellen ihren Wert.
 
-### Regenereignisse verfolgen {#track-rain-events}
+## Regenereignisse und Regenwarnungen {#rain-events-and-rain-warnings}
 
-**Regenereignisse verfolgen** fügt den Sensor
-[`Regenereignisse`](../entities/rain-events.md) hinzu. Er verfolgt jeden
-Regenschauer von der ersten Vorhersage, die ihn zeigt, bis er gefallen ist,
-für Blueprints, die vor Regen warnen oder über Regen berichten.
+Regenereignisse verfolgen jeden Schauer von der ersten Vorhersage, die ihn
+zeigt, bis er vorbei ist. Darauf bauen die
+[Regenwarnungen](../entities/rain-warnings.md) auf; die fügst du auf der Seite
+der Integration mit **Regenwarnung hinzufügen** hinzu (siehe
+[Regenwarnungen](#rain-warnings) oben). Der Abschnitt ist aufgeklappt, wenn
+der Sensor `Regenereignisse` an ist oder der Standort eine Regenwarnung hat,
+sonst eingeklappt.
 
-Ist die Option an oder hat der Standort eine
-[Regenwarnung](../entities/rain-warnings.md), ruft die Integration auch die
-verpassten Radaranalysen (einen kleinen Teil jeder Datei) und
-Niederschlagsarten ab und speichert eine kleine Aufzeichnung des jüngsten
-Regens auf der Festplatte. Ausschalten entfernt den Sensor; die Aufzeichnung
-wird gelöscht, sobald auch keine Regenwarnung sie mehr braucht, sodass ein
-erneutes Einschalten dann sauber von vorn beginnt. Regenwarnungen
-funktionieren auch bei ausgeschalteter Option.
+### Sensor „Regenereignisse“ hinzufügen {#track-rain-events}
 
-### Schwelle für Regenereignisse {#rain-event-threshold}
+Fügt den Sensor [`Regenereignisse`](../entities/rain-events.md) hinzu, für
+Blueprints, die vor Regen warnen oder darüber berichten. Standardmäßig aus.
+Regenwarnungen funktionieren auch ohne ihn.
 
-**Schwelle für Regenereignisse (mm pro Stunde)** legt fest, wie viel Regen ein
-5-Minuten-Schritt braucht, um zu einem Regenereignis zu zählen, für den
-Sensor `Regenereignisse` und die [Regenwarnungen](../entities/rain-warnings.md).
-`0` bedeutet, dass jede Spur ein Ereignis bildet. Der Wert ist unabhängig von
-der [Schwelle für Regenerkennung](#rain-detection-threshold), daher können die
-Ereignisse und `Niederschlagsbeginn` voneinander abweichen, wenn sich die
-beiden unterscheiden.
+Solange der Sensor an ist oder der Standort eine Regenwarnung hat, lädt die
+Integration auch die Teile der Radardaten nach, die sie verpasst hat (etwa
+während eines Neustarts von Home Assistant), und speichert eine kleine
+Aufzeichnung des jüngsten Regens auf der Festplatte. Ausschalten entfernt den
+Sensor; die Aufzeichnung wird gelöscht, sobald auch keine Regenwarnung sie
+mehr braucht, sodass ein erneutes Einschalten dann frisch beginnt.
 
-### Algorithmus für das Ende {#end-algorithm}
+### Nur Regen zählen, der stärker ist als {#rain-event-threshold}
 
-**Wann „Niederschlagsende“ den Regen als beendet ansieht** wählt zwischen:
+Schwächerer Regen, in mm pro Stunde, zählt nicht zu einem Regenereignis, für
+den Sensor `Regenereignisse` und alle Regenwarnungen. `0` zählt jeden Regen,
+den das Radar sieht; der Standard ist `0,1`. Die Einstellung ist unabhängig
+von der gleichnamigen unter [Regenvorhersage](#rain-detection-threshold),
+daher können die beiden voneinander abweichen, wenn du sie unterschiedlich
+einstellst.
 
-- **Erste trockene Lücke** (Standard): das Ende des aktuellen Schauers. Es
-  verschiebt sich bei Schauerwetter.
-- **Niederschlag endet innerhalb von 2 h:** wenn innerhalb des
-  Zwei-Stunden-Horizonts kein Regen mehr vorhergesagt ist. Stabiler, bleibt
-  aber länger `unknown` („Unbekannt“).
+## Erweitert {#advanced-options}
 
-Der DWD sagt nur zwei Stunden voraus, darüber hinaus ist der Sensor in beiden
-Fällen `unknown`.
+Zusätzliche Angaben für Templates und Diagramme, und was die Sensoren zeigen,
+wenn der DWD sich verspätet. Der Abschnitt ist eingeklappt; die meisten
+Installationen ändern hier nie etwas.
 
-### Vergangene Stunde in der Reihe {#past-hour-in-the-series}
+### Technische Details zu den Sensoren hinzufügen {#technical-details}
 
-**Vergangene Stunde in die stündliche Vorhersagereihe aufnehmen** lässt das
-Attribut `forecast_rolling_1h` von `Maximaler Stundenniederschlag nächste
-120 min` eine Stunde früher beginnen. Die ersten Einträge enthalten dann
-Regen, der schon gefallen ist, sodass ein Diagramm die vergangene Stunde und
-die Vorhersage als eine Kurve zeigt. Der Wert des Sensors ändert sich nicht.
+Zeigt als zusätzliche Attribute der Sensoren, aus welchem DWD-Produkt ein
+Wert stammt, wann er gemessen wurde und welchen Zeitraum er abdeckt.
+Hilfreich in Templates oder wenn du ein Problem meldest; lass es sonst aus.
+[Attribute](../entities/attributes.md#technical-details) listet sie auf.
 
-Die frühere Stunde wird aus den Radaranalysen der vergangenen Stunde gebildet,
-ohne zusätzlichen Download. Nach einem Neustart oder nach einer
-5-Minuten-Veröffentlichung, die der DWD nicht rechtzeitig bereitgestellt hat,
+### Vergangene Stunde in die stündliche Regenreihe aufnehmen {#past-hour-in-the-series}
+
+Für Diagramme: Das Attribut `forecast_rolling_1h` von `Maximaler
+Stundenniederschlag nächste 120 min` beginnt dann eine Stunde früher. Seine
+ersten Einträge enthalten Regen, der schon gefallen ist, sodass ein Diagramm
+die vergangene Stunde und die Vorhersage als eine Kurve zeigt. Der Wert des
+Sensors ändert sich nicht.
+
+Die vergangene Stunde wird aus Radardaten berechnet, die die Integration
+ohnehin schon geladen hat, und kostet keinen zusätzlichen Download. Nach einem
+Neustart, oder wenn der DWD mit einer 5-Minuten-Aktualisierung zu spät war,
 erscheint sie, sobald die Integration wieder eine volle Stunde an
-Veröffentlichungen gesehen hat. Siehe
+Aktualisierungen gesehen hat. Siehe
 [RADVOR-RV-Nowcast](../entities/radvor-rv.md#peak-hourly-precipitation).
 
-### Nicht verfügbar, wenn veraltet {#unavailable-when-out-of-date}
+### „Nicht verfügbar“ anzeigen, wenn die Daten veraltet sind {#unavailable-when-out-of-date}
 
-**Sensoren als nicht verfügbar anzeigen, wenn die Daten veraltet sind:** Wenn
-der DWD nicht rechtzeitig eine neue Datei veröffentlicht, melden die
-betroffenen Sensoren `unavailable` („Nicht verfügbar“), statt den letzten Wert
-zu behalten. Schalte die Option aus, um immer den neuesten Messwert zu
-behalten, auch wenn er dann Stunden alt sein kann. In beiden Fällen wird die
-fehlende Datei im Hintergrund weiter abgerufen. Wie lange „rechtzeitig“ ist,
-steht unter [Verfügbarkeit und Aktualität](../how-it-works/availability.md).
+Verspätet sich der DWD mit neuen Daten, zeigen die betroffenen Sensoren
+`unavailable` („Nicht verfügbar“) statt eines alten Werts. Schalte es aus, um
+weiter den letzten Wert zu zeigen, auch wenn er Stunden alt ist. In beiden
+Fällen werden die fehlenden Daten im Hintergrund weiter abgerufen. Wie spät
+zu spät ist, erklärt
+[Verfügbarkeit und Aktualität](../how-it-works/availability.md).

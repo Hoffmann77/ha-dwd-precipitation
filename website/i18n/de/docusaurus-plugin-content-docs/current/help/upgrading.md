@@ -51,8 +51,8 @@ eine andere Entität vergeben, es gibt also keine Konflikte.
 - **Spitzenintensität nächste 120 min** (mm/h): die stärkste Rate in den
   nächsten zwei Stunden. Siehe
   [RADVOR RV](../entities/radvor-rv.md#peak-intensities).
-- **Regenereignisse**, einzuschalten mit der erweiterten Option
-  *Regenereignisse verfolgen*. Siehe
+- **Regenereignisse**, einzuschalten mit der Option
+  *Sensor „Regenereignisse“ hinzufügen*. Siehe
   [Regenereignisse](../entities/rain-events.md).
 - **Regenwarnungen**: deine eigenen Warnungen, etwa „Wäsche, 60 Minuten
   vorher“, hinzugefügt mit **Regenwarnung hinzufügen** am Eintrag des
@@ -73,8 +73,8 @@ zählen. Siehe [ADR 0002](/development/adr/0002-rw-reads-the-clock-hour).
 
 ### Zeitraum ohne Niederschlag: Wahl der Quelle {#timespan-without-precipitation-choice-of-source}
 
-Die neue Option *Produkt, das den Trockenzähler zurücksetzt* wählt zwischen
-der angeeichten Stunde des DWD (RW) und `Niederschlag letzte 60 min` (RS).
+Die neue Option *Gemessen mit* wählt zwischen Radar und Regenmessern (der
+angeeichten Stunde des DWD, RW) und nur Radar (`Niederschlag letzte 60 min`, RS).
 Neue Installationen nutzen RW; **bestehende Installationen behalten RS**, ein
 Update ändert also nichts. Wenn du RW bevorzugst, stelle es in den Optionen
 um; der Zähler behält dabei seinen Wert. Siehe

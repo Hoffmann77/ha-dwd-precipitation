@@ -64,11 +64,10 @@ genauer. Siehe
 
 ## Warum ändert sich „Niederschlagsende“ ständig? {#why-does-precipitation-end-keep-changing}
 
-Mit dem Standard *Erste trockene Lücke* meldet der Sensor das Ende des
+Mit dem Standard *Die erste trockene Pause* meldet der Sensor das Ende des
 aktuellen Schauers, und das verschiebt sich, wenn Schauer entstehen und sich
-auflösen. Die erweiterte Option *Wann „Niederschlagsende“ den Regen als
-beendet ansieht* lässt sich für eine stabilere Antwort auf *Niederschlag endet
-innerhalb von 2 h* stellen. Siehe
+auflösen. Die Option *„Niederschlagsende“ zeigt* lässt sich für eine
+stabilere Antwort auf *Ab wann kein Regen mehr vorhergesagt ist* stellen. Siehe
 [RADVOR-RV-Nowcast](../entities/radvor-rv.md#precipitation-start-and-end).
 
 ## Warum ist „Niederschlagsbeginn“ unbekannt? {#why-is-precipitation-start-unknown}

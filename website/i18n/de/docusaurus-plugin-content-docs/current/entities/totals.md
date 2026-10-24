@@ -54,8 +54,8 @@ im Frühjahr eine Stunde doppelt gezählt und im Herbst eine ausgelassen.
   wird, und zwei gleich nasse Stunden sind trotzdem zwei Veröffentlichungen.
 - Eine Datei ohne Daten für deine Gitterzelle addiert nichts.
 - Sie **bleiben verfügbar, während der DWD nicht veröffentlicht**, weil die
-  bisher gezählte Summe weiterhin stimmt. Die Option *Sensoren als nicht
-  verfügbar anzeigen, wenn die Daten veraltet sind* gilt für sie nicht.
+  bisher gezählte Summe weiterhin stimmt. Die Option *„Nicht verfügbar“ anzeigen,
+  wenn die Daten veraltet sind* gilt für sie nicht.
 
 | Attribut | Bedeutung |
 |----------|-----------|

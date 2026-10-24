@@ -21,17 +21,17 @@ zählt über Neustarts hinweg weiter.
 
 Zwei Optionen entscheiden das:
 
-- [**Regenmenge, die den Trockenzähler zurücksetzt**](../getting-started/configuration.md#dry-streak-threshold)
+- [**Regen, der die Zählung zurücksetzt**](../getting-started/configuration.md#dry-streak-threshold)
   (Standard 1,0 mm): erreicht oder übersteigt die Summe der vergangenen Stunde
   diesen Wert, wird der Zähler zurückgesetzt. Es ist eine Menge innerhalb der
   Stunde, keine Rate.
-- [**Produkt, das den Trockenzähler zurücksetzt**](../getting-started/configuration.md#dry-streak-source)
+- [**Gemessen mit**](../getting-started/configuration.md#dry-streak-source)
   wählt, welche Summe der vergangenen Stunde verglichen wird:
 
 | Quelle | Aktualisiert | Ein Zurücksetzen zeigt sich | Hinweise |
 |--------|--------------|-----------------------------|----------|
-| **Angeeichte Stunde (RW)** | alle 10 min | 30 bis 40 min nach dem Regen | Mit Niederschlagsmessern korrigiert, genauer. Standard für neue Installationen |
-| **Niederschlag letzte 60 min (RS)** | alle 5 min | wenige Minuten nach dem Regen | Nur Radar, stärker schwankend; seine gleitende Stunde setzt den Zähler noch bis zu eine Stunde nach Regenende immer wieder zurück |
+| **Radar und Regenmessern (RW)** | alle 10 min | 30 bis 40 min nach dem Regen | Mit Niederschlagsmessern korrigiert, genauer. Standard für neue Installationen |
+| **Nur Radar (RS)**, die Stunde von `Niederschlag letzte 60 min` | alle 5 min | wenige Minuten nach dem Regen | Nur Radar, stärker schwankend; seine gleitende Stunde setzt den Zähler noch bis zu eine Stunde nach Regenende immer wieder zurück |
 
 Mit RW folgt der Zähler den Neuberechnungen der Analyse, die der DWD alle
 10 Minuten macht, jede für die Stunde, die dann endet. Ein Zurücksetzen

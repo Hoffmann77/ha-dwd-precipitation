@@ -64,8 +64,8 @@ hour from its `start` to its `end` (in mm); `lead` is the minutes from the
 release time to `end`. At 14:00 the entries run from 14:00–15:00 to
 15:00–16:00, 13 entries, and the sensor shows the largest.
 
-With the advanced option
-[*Include the past hour in the hourly forecast series*](../getting-started/configuration.md#past-hour-in-the-series)
+With the option
+[*Add the past hour to the hourly rain series*](../getting-started/configuration.md#past-hour-in-the-series)
 on, the series starts one hour earlier, at 13:00–14:00 (25 entries), so a
 chart shows the past hour and the forecast as one curve. The first entry is
 then the same hour as `Precipitation last 60 min`, added up from DWD's
@@ -84,11 +84,11 @@ stops, within the two-hour forecast.
   means "still raining in two hours", not "never".
 
 What counts as rain is set by the
-[*Rain detection threshold*](../getting-started/configuration.md#rain-detection-threshold)
-option. By default, any amount DWD detects counts.
+option [*Only count rain heavier than*](../getting-started/configuration.md#rain-detection-threshold)
+in the *Rain forecast* section. By default, any amount DWD detects counts.
 
 **Format.** The option
-[*How "Precipitation start" and "Precipitation end" report*](../getting-started/configuration.md#start-and-end-format)
+[*Show start and end as*](../getting-started/configuration.md#start-and-end-format)
 makes both sensors either timestamps (the default) or durations in minutes.
 The other form is always available as an attribute:
 
@@ -97,13 +97,13 @@ The other form is always available as an attribute:
 | `at` | The time of the event, ISO-8601 UTC (when the state is minutes) |
 | `minutes_until` | Whole minutes until the event (when the state is a time) |
 
-**When rain counts as over.** The advanced option
-[*When "Precipitation end" counts rain as over*](../getting-started/configuration.md#end-algorithm)
+**When rain counts as over.** The option
+[*"Precipitation end" shows*](../getting-started/configuration.md#end-algorithm)
 picks one of two answers:
 
-- **First dry gap** (default): the end of the current burst. During showers
+- **The first dry break** (default): the end of the current burst. During showers
   it moves around, since each gap between two cells is an end.
-- **Precipitation clears within 2 h:** the end of the last rain in the
+- **When no more rain is forecast:** the end of the last rain in the
   forecast, after which nothing more is expected within the horizon.
   Steadier, but it stays `unknown` longer.
 
@@ -111,8 +111,8 @@ picks one of two answers:
 
 **Precipitation expected** is a binary sensor: `on` if rain is forecast
 within the next two hours, using the same
-[*Rain detection threshold*](../getting-started/configuration.md#rain-detection-threshold)
-as `Precipitation start`.
+[*Only count rain heavier than*](../getting-started/configuration.md#rain-detection-threshold)
+setting as `Precipitation start`.
 
 | Attribute | Meaning |
 |-----------|---------|

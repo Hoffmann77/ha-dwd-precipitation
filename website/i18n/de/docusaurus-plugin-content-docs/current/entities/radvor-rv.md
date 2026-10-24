@@ -72,8 +72,8 @@ in der Stunde von `start` bis `end` (in mm); `lead` sind die Minuten vom
 Termin der Veröffentlichung bis `end`. Um 14:00 reichen die Einträge von
 14:00–15:00 bis 15:00–16:00, 13 Einträge, und der Sensor zeigt den größten.
 
-Mit der erweiterten Option
-[*Vergangene Stunde in die stündliche Vorhersagereihe aufnehmen*](../getting-started/configuration.md#past-hour-in-the-series)
+Mit der Option
+[*Vergangene Stunde in die stündliche Regenreihe aufnehmen*](../getting-started/configuration.md#past-hour-in-the-series)
 beginnt die Reihe eine Stunde früher, bei 13:00–14:00 (25 Einträge), sodass
 ein Diagramm die vergangene Stunde und die Vorhersage als eine Kurve zeigt.
 Der erste Eintrag ist dann dieselbe Stunde wie `Niederschlag letzte 60 min`,
@@ -94,11 +94,11 @@ Zwei-Stunden-Vorhersage.
   anhält. Das heißt „regnet in zwei Stunden immer noch“, nicht „nie“.
 
 Was als Regen zählt, legt die Option
-[*Schwelle für Regenerkennung*](../getting-started/configuration.md#rain-detection-threshold)
-fest. Standardmäßig zählt jede Menge, die der DWD erkennt.
+[*Nur Regen zählen, der stärker ist als*](../getting-started/configuration.md#rain-detection-threshold)
+im Abschnitt *Regenvorhersage* fest. Standardmäßig zählt jede Menge, die der DWD erkennt.
 
 **Format.** Die Option
-[*Anzeige von „Niederschlagsbeginn“ und „Niederschlagsende“*](../getting-started/configuration.md#start-and-end-format)
+[*Beginn und Ende anzeigen als*](../getting-started/configuration.md#start-and-end-format)
 macht beide Sensoren entweder zu Zeitstempeln (Standard) oder zu Dauern in
 Minuten. Die jeweils andere Form ist immer als Attribut verfügbar:
 
@@ -107,22 +107,22 @@ Minuten. Die jeweils andere Form ist immer als Attribut verfügbar:
 | `at` | Der Zeitpunkt des Ereignisses, ISO-8601 UTC (wenn der Zustand Minuten sind) |
 | `minutes_until` | Ganze Minuten bis zum Ereignis (wenn der Zustand eine Uhrzeit ist) |
 
-**Wann der Regen als beendet gilt.** Die erweiterte Option
-[*Wann „Niederschlagsende“ den Regen als beendet ansieht*](../getting-started/configuration.md#end-algorithm)
+**Wann der Regen als beendet gilt.** Die Option
+[*„Niederschlagsende“ zeigt*](../getting-started/configuration.md#end-algorithm)
 wählt eine von zwei Antworten:
 
-- **Erste trockene Lücke** (Standard): das Ende des aktuellen Schauers. Bei
+- **Die erste trockene Pause** (Standard): das Ende des aktuellen Schauers. Bei
   Schauerwetter springt der Wert, da jede Lücke zwischen zwei Zellen ein Ende
   ist.
-- **Niederschlag endet innerhalb von 2 h:** das Ende des letzten Regens in der
+- **Ab wann kein Regen mehr vorhergesagt ist:** das Ende des letzten Regens in der
   Vorhersage, nach dem innerhalb des Horizonts nichts mehr erwartet wird.
   Ruhiger, bleibt aber länger `unknown`.
 
 ## Niederschlag erwartet {#precipitation-expected}
 
 **Niederschlag erwartet** ist ein Binärsensor: `on`, wenn innerhalb der
-nächsten zwei Stunden Regen vorhergesagt ist, mit derselben
-[*Schwelle für Regenerkennung*](../getting-started/configuration.md#rain-detection-threshold)
+nächsten zwei Stunden Regen vorhergesagt ist, mit derselben Einstellung
+[*Nur Regen zählen, der stärker ist als*](../getting-started/configuration.md#rain-detection-threshold)
 wie `Niederschlagsbeginn`.
 
 | Attribut | Bedeutung |

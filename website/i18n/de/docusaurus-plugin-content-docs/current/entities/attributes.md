@@ -34,7 +34,7 @@ der Verlaufsgraph speichert sie nicht.
 ## Technische Details {#technical-details}
 
 Mit eingeschalteter Option
-[*Metadaten als Sensorattribute anzeigen*](../getting-started/configuration.md#technical-details)
+[*Technische Details zu den Sensoren hinzufügen*](../getting-started/configuration.md#technical-details)
 hat jeder DWD-Sensor außer `Niederschlag erwartet`, den beiden laufenden
 Summen, `Zeitraum ohne Niederschlag`, `Regenereignisse` und den
 Regenwarnungen zusätzlich:

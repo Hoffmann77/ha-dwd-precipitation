@@ -45,7 +45,7 @@ version gave another entity, so nothing clashes.
   [RADVOR RS](../entities/radvor-rs.md#precipitation-next-120-min).
 - **Peak intensity next 120 min** (mm/h): the heaviest rate in the next two
   hours. See [RADVOR RV](../entities/radvor-rv.md#peak-intensities).
-- **Rain events**, opt-in with the advanced option *Track rain events*. See
+- **Rain events**, opt-in with the option *Add the "Rain events" sensor*. See
   [Rain events](../entities/rain-events.md).
 - **Rain warnings**: your own warnings, such as "Laundry, 60 minutes ahead",
   added with **Add rain warning** on the location's entry. They need Home
@@ -65,8 +65,8 @@ between out once, rather than counting 50 minutes twice. See
 
 ### Timespan without precipitation: choice of source
 
-The new option *Product that resets the dry-streak counter* chooses between
-DWD's gauge-adjusted hour (RW) and `Precipitation last 60 min` (RS). New
+The new option *Measured with* chooses between radar and rain gauges
+(DWD's gauge-adjusted hour, RW) and radar only (`Precipitation last 60 min`, RS). New
 installs use RW; **existing installs keep RS**, so upgrading changes nothing.
 Switch in the options if you prefer RW; the counter keeps its value. See
 [Timespan without precipitation](../entities/dry-streak.md).

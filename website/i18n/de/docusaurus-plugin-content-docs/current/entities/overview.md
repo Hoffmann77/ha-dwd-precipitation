@@ -71,7 +71,7 @@ erscheint, ist dieses Fenster schon etwa 3 bis 10 Minuten vorbei. Siehe
 
 ¹ Bei Installationen, die ab 2026.11.0 eingerichtet wurden, standardmäßig
 deaktiviert.
-² Nur mit eingeschalteter Option *Regenereignisse verfolgen*.
+² Nur mit eingeschalteter Option *Sensor „Regenereignisse“ hinzufügen*.
 ³ Ein Paar pro Regenwarnung, die du hinzufügst, auf einem eigenen Gerät.
 
 ## Nur Radar oder angeeicht {#radar-only-or-gauge-adjusted}
