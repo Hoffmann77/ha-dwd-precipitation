@@ -1,7 +1,6 @@
 {
   "domain": "dwd_precipitation",
   "name": "DWD Precipitation",
-  "categories": ["weather_alerts"],
   "codeowners": ["@Hoffmann77"],
   "config_flow": true,
   "dependencies": [],

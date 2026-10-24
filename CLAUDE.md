@@ -498,9 +498,12 @@ HACS itself and moves its installs over on its own. What either needs:
 `hacs.json` in the root (no install or update without it; its
 `homeassistant` is the minimum HA version per release), a `version` in
 `manifest.json` equal to the release tag, published GitHub releases, and the
-brand icon (in `home-assistant/brands` for now). `categories` in the manifest
-(`weather_alerts`) feeds the catalog's browsing; hassfest and the HACS action
-(`validate.yaml`) check both files. The install buttons pass the lowercase
+brand icon (in `home-assistant/brands` for now). hassfest and the HACS action
+(`validate.yaml`) check both files. The manifest has no `categories` yet: the
+catalog passes them to the Marketplace for browsing (`weather_alerts` fits),
+but the hassfest action's image still rejects the key ("not a valid option at
+'categories'", October 2026), although core's `dev` accepts it. Add it once
+hassfest passes with it; until then the HACS action only warns. The install buttons pass the lowercase
 category (`category=integration`): `marketplace_repository` for 2026.11 and
 newer, `hacs_repository` for older versions, where it opens HACS.
 
