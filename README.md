@@ -3,7 +3,7 @@
 **English** | [Deutsch](https://github.com/Hoffmann77/ha-dwd-precipitation/blob/main/README.de.md)
 
 [![Documentation](https://img.shields.io/badge/docs-read%20online-blue.svg)](https://hoffmann77.github.io/ha-dwd-precipitation/)
-[![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://hacs.xyz)
+[![Marketplace and HACS](https://img.shields.io/badge/Marketplace%20%26%20HACS-default%20catalog-41BDF5.svg)](https://hoffmann77.github.io/ha-dwd-precipitation/getting-started/installation)
 [![GitHub Release](https://img.shields.io/github/v/release/Hoffmann77/ha-dwd-precipitation)](https://github.com/Hoffmann77/ha-dwd-precipitation/releases/latest)
 [![Tests](https://github.com/Hoffmann77/ha-dwd-precipitation/actions/workflows/tests.yml/badge.svg)](https://github.com/Hoffmann77/ha-dwd-precipitation/actions/workflows/tests.yml)
 [![HACS Validate](https://github.com/Hoffmann77/ha-dwd-precipitation/actions/workflows/validate.yaml/badge.svg)](https://github.com/Hoffmann77/ha-dwd-precipitation/actions/workflows/validate.yaml)
@@ -54,17 +54,21 @@ The [entity overview](https://hoffmann77.github.io/ha-dwd-precipitation/entities
 
 ## Installation
 
-If you do not have HACS installed yet, visit https://hacs.xyz for installation instructions.
+**Home Assistant 2026.11 and newer:** DWD Precipitation is in the built-in Marketplace. Go to **Settings > Marketplace**, search for *DWD Precipitation* and select **Install**, or use this button:
 
-To add this repository to HACS in your Home Assistant instance, use this button:
+[![Open your Home Assistant instance and open a repository in the Marketplace.](https://my.home-assistant.io/badges/marketplace_repository.svg)](https://my.home-assistant.io/redirect/marketplace_repository/?owner=Hoffmann77&repository=ha-dwd-precipitation&category=integration)
 
-[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Hoffmann77&repository=ha-dwd-precipitation&category=Integration)
+Installed with HACS before? Nothing to do: the Marketplace takes it over when Home Assistant 2026.11 first starts.
 
-After installation, restart Home Assistant. To add DWD Precipitation to your Home Assistant instance, use this button:
+**Home Assistant 2026.10 and older:** install it with [HACS](https://hacs.xyz), then restart Home Assistant:
+
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Hoffmann77&repository=ha-dwd-precipitation&category=integration)
+
+Then add DWD Precipitation to Home Assistant with this button:
 
 [![Open your Home Assistant instance and start setting up a new integration.](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=dwd_precipitation)
 
-Enter a name and pick the location; the [configuration guide](https://hoffmann77.github.io/ha-dwd-precipitation/getting-started/configuration) explains every option. Manual installation is described in the [installation guide](https://hoffmann77.github.io/ha-dwd-precipitation/getting-started/installation).
+Enter a name and pick the location; the [configuration guide](https://hoffmann77.github.io/ha-dwd-precipitation/getting-started/configuration) explains every option. Manual installation, updates and removal are described in the [installation guide](https://hoffmann77.github.io/ha-dwd-precipitation/getting-started/installation).
 
 ## Data source
 
