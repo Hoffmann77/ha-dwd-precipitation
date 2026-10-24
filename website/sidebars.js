@@ -24,6 +24,7 @@ const sidebars = {
         'entities/totals',
         'entities/dry-streak',
         'entities/rain-events',
+        'entities/rain-warnings',
         'entities/attributes',
       ],
     },

@@ -47,3 +47,11 @@ NEW_SINCE_2026_10_0 = {
     "radvor_rs_000_120": "precipitation_next_120_min",
     "radvor_rv_max_intensity_000_120": "peak_intensity_next_120_min",
 }
+
+# Added since 2026.10.0: one pair per rain-warning subentry, on the warning's
+# own device ("<location> <warning>"), so the object id after ``<device>_`` is
+# the warning's slug plus this, by domain. No released id ends like these.
+RAIN_WARNING_IDS = {
+    "binary_sensor": "{warning}_rain_warning",
+    "sensor": "{warning}_rain_warning_status",
+}

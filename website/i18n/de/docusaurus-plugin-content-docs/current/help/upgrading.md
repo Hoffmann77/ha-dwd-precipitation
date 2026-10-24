@@ -54,6 +54,10 @@ eine andere Entität vergeben, es gibt also keine Konflikte.
 - **Regenereignisse**, einzuschalten mit der erweiterten Option
   *Regenereignisse verfolgen*. Siehe
   [Regenereignisse](../entities/rain-events.md).
+- **Regenwarnungen**: deine eigenen Warnungen, etwa „Wäsche, 60 Minuten
+  vorher“, hinzugefügt mit **Regenwarnung hinzufügen** am Eintrag des
+  Standorts. Sie brauchen Home Assistant 2025.4 oder neuer. Siehe
+  [Regenwarnungen](../entities/rain-warnings.md).
 
 ### Niederschlag vorige Stunde ist eine volle Stunde {#precipitation-previous-hour-is-a-clock-hour}
 

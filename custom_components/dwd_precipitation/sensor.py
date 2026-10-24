@@ -21,7 +21,7 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.util import dt as dt_util
 
@@ -46,9 +46,16 @@ from .dry_streak import (
     release_reading,
     unwatched_hours,
 )
-from .entity import DwdCoordinatorEntity, DwdEntityDescriptionMixin, unique_id_for
+from .entity import (
+    DwdCoordinatorEntity,
+    DwdEntityDescriptionMixin,
+    RainWarningEntity,
+    unique_id_for,
+)
+from .options import rain_warning_subentries
 from .radar.isotime import iso
 from .radar.rain_events import NO_EVENT, ONGOING, UPCOMING, VIEW_KEYS, overall_status
+from .radar import rain_warning
 from .precipitation_total import (
     PrecipitationTotalExtraData,
     counted_on_grid,
@@ -279,6 +286,18 @@ RAIN_EVENTS_SENSOR = SensorEntityDescription(
 )
 
 
+# A rain warning's status, one per rain-warning subentry: dry, soon or rain,
+# with the event it is about as attributes. Its unique-id suffix is
+# "<subentry_id>_rain_warning_status".
+RAIN_WARNING_STATUS_SENSOR = SensorEntityDescription(
+    key="rain_warning_status",
+    translation_key="rain_warning_status",
+    icon="mdi:umbrella",
+    device_class=SensorDeviceClass.ENUM,
+    options=rain_warning.STATES,
+)
+
+
 def _rv_timing_sensors(
     mode: str,
 ) -> tuple[PrecipitationSensorEntityDescription, ...]:
@@ -338,15 +357,16 @@ def _rv_timing_sensors(
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Create the entry's sensors from its coordinators and options.
 
     Home Assistant calls this once per entry after the integration's setup.
     Most sensors are descriptions on one product's coordinator. The totals, the
     rain events (only with that option; otherwise the entity is removed from
-    the registry) and the dry streak (bound to the product its option picks)
-    have their own classes.
+    the registry), the dry streak (bound to the product its option picks) and
+    the status of every rain warning (added to its subentry) have their own
+    classes.
 
     """
     coordinators = entry.runtime_data.coordinators
@@ -404,6 +424,19 @@ async def async_setup_entry(
     )
 
     async_add_entities(entities)
+
+    for subentry in rain_warning_subentries(entry):
+        async_add_entities(
+            [
+                RainWarningStatusSensor(
+                    coordinators["rv"],
+                    RAIN_WARNING_STATUS_SENSOR,
+                    subentry,
+                    entry.runtime_data.rain_warnings[subentry.subentry_id],
+                )
+            ],
+            config_subentry_id=subentry.subentry_id,
+        )
 
 
 class PrecipitationSensorEntity(DwdCoordinatorEntity, SensorEntity):
@@ -511,6 +544,37 @@ class RainEventsSensor(DwdCoordinatorEntity, SensorEntity):
 
         """
         return dict(self._view() or {})
+
+
+class RainWarningStatusSensor(RainWarningEntity, SensorEntity):
+    """Rain warning status: dry, soon or rain, and the event it is about."""
+
+    # The event's id, start and amounts change with every release.
+    _unrecorded_attributes = frozenset(rain_warning.ATTRIBUTES)
+
+    @property
+    def native_value(self) -> str | None:
+        """Return dry, soon or rain; unknown while there is no view to judge.
+
+        rain: an ongoing event passes the warning's filter. soon: an upcoming
+        one that passes it starts within the lead time. dry: neither.
+
+        """
+        verdict = self._verdict()
+        return None if verdict is None else verdict.state
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return the event the warning is about; all None while dry.
+
+        ``event_id`` (the Rain events id), ``start``, and from the event's
+        total ``mm``, ``peak_1h`` and ``peak_10min`` (mm), and its measured
+        ``type`` (None while upcoming). Empty while there is no view. None of
+        it is recorded.
+
+        """
+        verdict = self._verdict()
+        return {} if verdict is None else verdict.attributes()
 
 
 class PrecipitationTotalSensor(DwdCoordinatorEntity, RestoreEntity, SensorEntity):

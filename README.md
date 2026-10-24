@@ -23,17 +23,19 @@ Radar-based precipitation measurements and forecasts from the German Weather Ser
 - **Precipitation type:** rain, drizzle, snow, sleet, graupel, hail, freezing rain
 - **Measured totals:** past hour, past 24 hours, yesterday, and a days-without-rain counter
 - **Long-term totals:** running rain totals for Home Assistant's statistics, so weekly, monthly and yearly sums work out of the box
+- **Rain warnings:** your own warnings, such as "Laundry, 60 minutes ahead", each an on/off entity for automations, optionally only for rain above a minimum
 - **Rain events for blueprints** (optional): each burst of rain followed under one id from forecast to measurement, with forecast and measured amounts side by side
 - **Customizable thresholds** for rain events to use as input for automations.
 
 ## Entities
 
-All entities belong to one **DWD Precipitation** device per configured location:
+All entities belong to one **DWD Precipitation** device per configured location (rain warnings are a device each):
 
 - **Radar nowcast, every 5 minutes:** Precipitation last 60 min, next 60 min, next 60–120 min and next 120 min; Precipitation intensity now; Peak intensity next 60 min, next 60–120 min and next 120 min; Peak hourly precipitation next 120 min; Precipitation start and end; Precipitation expected; Precipitation type now
 - **Gauge-adjusted analyses, hourly and daily:** Precipitation previous hour, last 24h and yesterday
 - **For statistics:** Precipitation total and Precipitation total daily
 - **Timespan without precipitation**, and the optional **Rain events** sensor for blueprints
+- **Rain warnings** you add yourself, each a device of its own with an on/off and a status entity
 
 The [entity overview](https://hoffmann77.github.io/ha-dwd-precipitation/entities/overview) lists every entity with its id, unit and update interval.
 

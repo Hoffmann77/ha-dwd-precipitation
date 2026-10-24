@@ -16,13 +16,13 @@ rules, and the [ADRs](/development/adr) the reasoning behind them.
 | `coordinator.py` | `BaseProductUpdateCoordinator`, the per-product `DataUpdateCoordinator`: release timing, the fetch/stale/retry lifecycle, the backoff |
 | `products.py` | One coordinator subclass per DWD product: URL, fetch, parse, grid lookup |
 | `entity.py` | `DwdCoordinatorEntity`, the base of every entity: unique id, device, availability, the description mechanism |
-| `sensor.py`, `binary_sensor.py` | The entity descriptions and the special sensors (totals, dry streak, rain events) |
+| `sensor.py`, `binary_sensor.py` | The entity descriptions and the special sensors (totals, dry streak, rain events, rain warnings) |
 | `dry_streak.py`, `precipitation_total.py` | Pure logic of the dry streak and the running totals |
 | `rain_events_tracker.py` | The rain events of one entry in Home Assistant: store, background fill, save policy |
 | `release_grid.py` | `ReleaseGrid`: a product's release times on its own clock |
-| `config_flow.py`, `options.py` | Setup and options form; `DwdOptions`, the options as one typed snapshot |
+| `config_flow.py`, `options.py` | Setup and options form, and the rain-warning subentry flow; `DwdOptions`, the options as one typed snapshot, and `rain_warning_rule()` for a warning's data |
 | `utils.py` | The HTTP helper, a per-entry download cache, a failure latch |
-| `radar/` | The Home-Assistant-free core: ODIM_H5 readers, the grid, range reads of tar archives, nowcast and rain-event logic |
+| `radar/` | The Home-Assistant-free core: ODIM_H5 readers, the grid, range reads of tar archives, nowcast, rain-event and rain-warning logic |
 
 `radar/` and `release_grid.py` import nothing from Home Assistant, so the
 parser and reference test tiers can test them without it.
@@ -128,6 +128,10 @@ whole archive, with one warning per run of fallbacks.
   ([ADR 0006](/development/adr/0006-rain-events-opt-in-entity)); HymecNG
   gives each measured step its type, and no type is estimated
   ([ADR 0012](/development/adr/0012-rain-event-types-are-measured-only)).
+- **Rain warnings** are config subentries, each a device with two entities,
+  that filter the rain-events view once per release
+  ([ADR 0013](/development/adr/0013-rain-warnings-as-subentries)). The
+  tracker runs for the option or for any warning.
 
 ## Entity naming
 

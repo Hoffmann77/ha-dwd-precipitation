@@ -20,7 +20,7 @@ from .coordinator import (
 )
 from .radar.isotime import iso
 from .radar.urls import radvor_prefix
-from .options import DwdOptions
+from .options import DwdOptions, tracks_rain_events
 from .utils import DownloadCache, FailureLatch, async_get
 from .radar.tar_range import fetch_tar_members, member_names, members_from_archive
 from .radar import read_odim_classification_at, read_odim_composite_at
@@ -672,14 +672,15 @@ class RadvorRV(RadvorProduct):
 
         Also starts the buffer of recent analyses that the full rolling-hour
         series needs (empty after every start or reload). The rain-events
-        tracker is built only with the rain_events option on.
+        tracker is built only when the entry uses it: the rain_events option
+        or a rain warning (tracks_rain_events).
 
         """
         super().__init__(hass, entry, async_client, lat, lon)
         # The analysis (mm, None for no data) of each release adopted in the
         # past hour, by release time; kept for the full rolling-hour series.
         self._analyses: dict[datetime, float | None] = {}
-        if self.options.rain_events:
+        if tracks_rain_events(entry, self.options):
             self._rain_tracker = RainEventsTracker(
                 hass,
                 entry,
@@ -690,7 +691,7 @@ class RadvorRV(RadvorProduct):
 
     @property
     def rain_tracker(self) -> RainEventsTracker | None:
-        """Return the entry's rain-events tracker; None with the option off."""
+        """Return the entry's rain-events tracker; None if it tracks none."""
         return self._rain_tracker
 
     async def _async_on_new_release(
@@ -824,8 +825,8 @@ class HymecNG(WholeFileProduct):
     rather than an amount.
 
     data[``precipitation_type``] is the class label (None outside coverage).
-    With rain events on, every adopted release's label also goes to the
-    entry's rain-events tracker, as the type of the measured step ending then.
+    When the entry tracks rain events, every adopted release's label also goes
+    to its rain-events tracker, as the type of the measured step ending then.
 
     """
 
@@ -849,7 +850,7 @@ class HymecNG(WholeFileProduct):
     OVERDUE_GRACE = DEFAULT_OVERDUE_GRACE
 
     # The entry's rain-events tracker (RV's), set by attach_rain_tracker; None
-    # when the rain_events option is off.
+    # when the entry tracks no rain events (no option, no rain warning).
     _rain_tracker: RainEventsTracker | None = None
 
     def attach_rain_tracker(self, tracker: RainEventsTracker) -> None:
