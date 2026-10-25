@@ -1,6 +1,6 @@
 [project]
 name = "ha-dwd-precipitation"
-version = "2026.10.0"
+version = "2026.10.1"
 requires-python = ">=3.14.2,<3.15"
 
 [tool.uv]
@@ -28,7 +28,10 @@ conflicts = [
 # numpy/aiohttp are pulled so radar/* and utils.py import without HA installed.
 unit-test = [
     "pytest",
-    "numpy",
+    # HA's own pin, so the parser tier decodes with the numpy users run.
+    # Renovate leaves it alone; tests/integration/test_dependencies.py fails
+    # when a HA bump moves numpy, which is the cue to update it here.
+    "numpy==2.3.2",
     "aiohttp",
     "requests==2.34.2",
     "h5py==3.16.0",
@@ -37,7 +40,7 @@ unit-test = [
 # Installs only HA-compatible packages — validates the component runs in the
 # same environment HA uses (same Python version, same numpy/h5py pins).
 ha-test = [
-    "pytest-homeassistant-custom-component==0.13.372",
+    "pytest-homeassistant-custom-component==0.13.373",
     "h5py==3.16.0",
 ]
 
@@ -50,13 +53,33 @@ wradlib-comparison = [
     "h5py==3.16.0",
 ]
 
+# Lint only: ruff, nothing imported. Not in the conflicts list above, so it
+# can be synced on its own (`uv run --only-group lint ruff check`).
+lint = [
+    "ruff==0.17.1",
+]
+
+[tool.ruff]
+target-version = "py314"
+
+[tool.ruff.lint]
+# Pyflakes only for now: undefined and unused names. Broader rule sets later.
+select = ["F"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # "." allows `from custom_components... import` (used in ha-test job, where HA is installed).
 # "custom_components/dwd_precipitation" allows `from radar.odim import` without triggering
 # the HA-importing custom_components/dwd_precipitation/__init__.py (used in wradlib job).
 pythonpath = [".", "custom_components/dwd_precipitation"]
+# Network tests only when asked for (`-m live`, as the scheduled workflows
+# do); a mistyped marker is an error, not a silent no-op.
+addopts = "-m 'not live' --strict-markers"
 asyncio_mode = "auto"
+# asyncio_mode is pytest-asyncio's, which only the ha-test group installs.
+filterwarnings = [
+    "ignore:Unknown config option. asyncio_mode:pytest.PytestConfigWarning",
+]
 markers = [
     "live: requires network access to DWD OpenData (scheduled, not on PRs)",
     "wradlib: requires wradlib installed",

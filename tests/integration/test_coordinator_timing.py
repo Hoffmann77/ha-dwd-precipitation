@@ -6,6 +6,7 @@ standing up a full HomeAssistant / DataUpdateCoordinator.
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -28,6 +29,52 @@ from custom_components.dwd_precipitation.products import (
 )
 
 UTC = timezone.utc
+
+
+async def test_overlapping_refreshes_fetch_once(hass) -> None:
+    """The release timer and a fast-poll retry can both start a refresh.
+
+    Both go through async_refresh, whose lock makes the second wait and then
+    find the release already fetched. Calling the unlocked _async_refresh
+    instead would fetch twice.
+    """
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    entry = MockConfigEntry(
+        domain="dwd_precipitation",
+        data={"name": "Home", "latitude": 51.05, "longitude": 13.73},
+    )
+    entry.add_to_hass(hass)
+    coordinator = RadolanRW(hass, entry, object(), 51.05, 13.73)
+    gate = asyncio.Event()
+    fetches = 0
+
+    async def fetch(ts):
+        nonlocal fetches
+        fetches += 1
+        await gate.wait()
+        return 1.0, coordinator_mod.ProductMetadata(
+            source_product="RW", source_timestamp=ts
+        )
+
+    with patch.object(coordinator, "_fetch_and_parse", side_effect=fetch):
+        first = hass.async_create_task(coordinator.async_refresh())
+        second = hass.async_create_task(coordinator.async_refresh())
+        await asyncio.sleep(0)
+        gate.set()
+        await asyncio.gather(first, second)
+
+    assert fetches == 1
+    assert coordinator.data.data == 1.0
+    coordinator._cancel_stale_check()
+
+    # Every trigger of ours must take that lock.
+    import inspect
+
+    import custom_components.dwd_precipitation as integration
+
+    for module in (coordinator_mod, integration):
+        assert "._async_refresh(" not in inspect.getsource(module)
 
 
 def test_rs_track_time_change_args():
@@ -357,6 +404,33 @@ async def test_first_ever_failure_starts_fast_polling():
     assert coord._fast_poll_unsub is not None
 
 
+@pytest.mark.asyncio
+async def test_a_file_that_cannot_be_read_leaves_its_traceback_once(caplog):
+    """Debug traceback on the first failure of a run; none for a late file."""
+    now = datetime(2025, 6, 1, 13, 0, tzinfo=UTC)
+    coord = _make_coordinator(RadolanRW)
+    caplog.set_level("DEBUG", logger=coordinator_mod.__name__)
+
+    with (
+        patch.object(coordinator_mod.dt_util, "utcnow", return_value=now),
+        _capture_scheduled_delays(),
+    ):
+        coord._fetch_and_parse = AsyncMock(side_effect=ValueError("bad grid"))
+        for _ in range(3):
+            with pytest.raises(UpdateFailed):
+                await coord._async_update_data()
+        traces = [r for r in caplog.records if r.exc_info]
+        assert len(traces) == 1
+        assert "ValueError: bad grid" in caplog.text
+
+        coord._stop_fast_polling()  # a new run of failures
+        caplog.clear()
+        coord._fetch_and_parse = AsyncMock(side_effect=_response_error(404, "Not Found"))
+        with pytest.raises(UpdateFailed):
+            await coord._async_update_data()
+        assert not [r for r in caplog.records if r.exc_info]
+
+
 
 # ----------------------------------------------------------------------
 # Fetch-error messages
@@ -406,7 +480,7 @@ def test_not_found_message_does_not_blame_the_user():
     [
         (_response_error(503, "Service Unavailable"), "HTTP 503"),
         (aiohttp.ClientConnectionError("DNS failure"), "internet access"),
-        (ValueError("Unexpected RADOLAN grid shape"), "Could not read"),
+        (ValueError("Unexpected RADOLAN grid shape"), "please report it"),
     ],
 )
 def test_every_message_states_the_retry(err, expected):
@@ -450,7 +524,8 @@ def test_daily_deadline_follows_the_local_release_grid():
         deadline = coord._stale_deadline()
 
     next_release = datetime(2025, 10, 26, 23, 50, tzinfo=berlin).astimezone(UTC)
-    assert deadline == next_release + timedelta(minutes=28) + timedelta(minutes=30)
+    # RELEASE_DELAY (31 min, the HDF5 edition) + OVERDUE_GRACE (30 min).
+    assert deadline == next_release + timedelta(minutes=31) + timedelta(minutes=30)
     # 25 h later in absolute terms, not 24.
     assert next_release - coord.curr_release == timedelta(hours=25)
 

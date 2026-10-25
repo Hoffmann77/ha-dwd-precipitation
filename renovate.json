@@ -1,10 +1,31 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:recommended", "schedule:weekly"],
+  "customManagers": [
+    {
+      "description": "The h5py floor users install, kept equal to the tested pin",
+      "customType": "regex",
+      "managerFilePatterns": ["/(^|/)manifest\\.json$/"],
+      "matchStrings": ["\"(?<depName>h5py)>=(?<currentValue>[^\"]+)\""],
+      "datasourceTemplate": "pypi",
+      "versioningTemplate": "pep440"
+    }
+  ],
   "packageRules": [
     {
       "matchManagers": ["pep621"],
       "extends": ["schedule:daily"]
+    },
+    {
+      "description": "One PR moves the manifest floor and the pyproject pins together",
+      "matchPackageNames": ["h5py"],
+      "groupName": "h5py"
+    },
+    {
+      "description": "numpy follows HA's pin, not PyPI (see pyproject unit-test)",
+      "matchManagers": ["pep621"],
+      "matchPackageNames": ["numpy"],
+      "enabled": false
     },
     {
       "matchManagers": ["github-actions"],
