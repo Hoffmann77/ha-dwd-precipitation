@@ -3,15 +3,18 @@
 For every product the integration reads, download the newest available file and
 decode it twice:
 
-* **ours** — the exact ``radar/`` calls production makes: ``get_rs_grid_index``
-  to find the cell, then ``read_odim_composite_cell`` (RS, RV, and RW/SF in
-  their HDF5 edition) or ``read_odim_classification`` (HymecNG) to read it;
+* **ours** — the exact ``radar/`` calls production makes:
+  ``read_odim_composite_at`` (RS, RV, and RW/SF in their HDF5 edition) or
+  ``read_odim_classification_at`` (HymecNG), which find the location's cell on
+  the grid the file describes in /where;
 * **reference** — wradlib alone (``tests/wradlib_ref.py``): its own readers
   and its own DWD grids, none of our code.
 
 Then require, for a fixed set of locations, the same cell and the same value,
 plus an identical full grid per member. The committed-fixture reference tier
-proves this once; this tier proves it keeps holding as DWD's files change.
+proves this once; this tier proves it keeps holding as DWD's files change. If
+DWD moves a grid, the integration follows its files, and the cell check here
+is what reports it.
 
 Network + wradlib, so it is scheduled (``live-wradlib.yml``), never gates PRs,
 and opens a tracking issue on failure. Run locally with:
@@ -23,23 +26,25 @@ from __future__ import annotations
 
 import io
 import tarfile
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from functools import lru_cache
 
 import numpy as np
 import pytest
-import requests
 
 pytest.importorskip("wradlib")
 
+from radar.grid import OutsideGrid  # noqa: E402
 from radar.odim import (  # noqa: E402
-    RS_GRID_SHAPE,
-    get_rs_grid_index,
     read_odim_classification,
+    read_odim_classification_at,
     read_odim_composite,
-    read_odim_composite_cell,
-    rs_grid_contains,
+    read_odim_composite_at,
+    read_odim_grid,
 )
+from radar import nowcast  # noqa: E402
+from radar.urls import radvor_prefix  # noqa: E402
+from tests.live_common import download_newest  # noqa: E402
 from tests.live_wradlib import report  # noqa: E402
 from tests.wradlib_ref import (  # noqa: E402
     de1200_cell,
@@ -49,8 +54,6 @@ from tests.wradlib_ref import (  # noqa: E402
 
 pytestmark = [pytest.mark.live, pytest.mark.wradlib]
 
-_COMPOSITE = "https://opendata.dwd.de/weather/radar/composite"
-_RADOLAN = "https://opendata.dwd.de/weather/radar/radolan"
 
 # Spread over the whole of Germany, including the grid-edge regions where a
 # projection or orientation error shows most. Keep them fixed: a failure
@@ -73,65 +76,26 @@ FIXED_LOCATIONS = {
 LOCATIONS = report.custom_locations() or FIXED_LOCATIONS
 
 # All RADVOR leads (RS rolling hours / RV 5-minute steps).
-LEADS = tuple(range(0, 121, 5))
+LEADS = tuple(nowcast.LEADS)
 
 
 # ---------------------------------------------------------------------------
 # Download (walk back from the newest likely release until one is up)
 # ---------------------------------------------------------------------------
 
-def _five_minute_candidates() -> list[datetime]:
-    ts = datetime.now(timezone.utc).replace(second=0, microsecond=0)
-    ts -= timedelta(minutes=ts.minute % 5 + 10)
-    return [ts - timedelta(minutes=5 * i) for i in range(18)]
-
-
-def _hourly_candidates() -> list[datetime]:
-    """RW/SF as the integration reads them: the HH:50 releases."""
-    now = datetime.now(timezone.utc)
-    ts = now.replace(minute=50, second=0, microsecond=0)
-    if ts > now - timedelta(minutes=35):
-        ts -= timedelta(hours=1)
-    return [ts - timedelta(hours=i) for i in range(6)]
-
-
-_URLS = {
-    "rs": (_five_minute_candidates,
-           lambda ts: f"{_COMPOSITE}/rs/composite_rs_{ts:%Y%m%d_%H%M}.tar"),
-    "rv": (_five_minute_candidates,
-           lambda ts: f"{_COMPOSITE}/rv/composite_rv_{ts:%Y%m%d_%H%M}.tar"),
-    "hymecng": (_five_minute_candidates,
-                lambda ts: f"{_COMPOSITE}/hymecng/composite_HymecNG_{ts:%Y%m%d_%H%M}_000-hd5"),
-    "rw": (_hourly_candidates,
-           lambda ts: f"{_RADOLAN}/rw/raa01-rw_10000-{ts:%y%m%d%H%M}-dwd---bin.hdf5"),
-    "sf": (_hourly_candidates,
-           lambda ts: f"{_RADOLAN}/sf/raa01-sf_10000-{ts:%y%m%d%H%M}-dwd---bin.hdf5"),
-}
-
-
 @lru_cache(maxsize=None)
 def _download(product: str) -> tuple[bytes, datetime, str]:
     """Return (content, release, url) of the newest downloadable release."""
-    candidates, url_for = _URLS[product]
-    tried = []
-    for ts in candidates():
-        url = url_for(ts)
-        tried.append(url)
-        try:
-            resp = requests.get(url, timeout=120)
-            resp.raise_for_status()
-        except requests.RequestException:
-            continue
-        report.SOURCES[product] = url
-        return resp.content, ts, url
-    pytest.fail(f"No downloadable {product} release found. Tried:\n" + "\n".join(tried))
+    content, ts, url = download_newest(product, timeout=120)
+    report.SOURCES[product] = url
+    return content, ts, url
 
 
 @lru_cache(maxsize=None)
 def _tar_members(product: str) -> dict[int, bytes]:
     """{lead: hd5 bytes} for a RADVOR tar; every lead must be present."""
     content, ts, url = _download(product)
-    prefix = f"composite_{product}_{ts:%Y%m%d_%H%M}"
+    prefix = radvor_prefix(product, ts)
     with tarfile.open(fileobj=io.BytesIO(content)) as tf:
         names = set(tf.getnames())
         missing = [f"{prefix}_{lead:03d}-hd5" for lead in LEADS
@@ -150,16 +114,27 @@ def _same(ours: float, ref: float) -> bool:
     return (np.isnan(ours) and np.isnan(ref)) or ours == ref
 
 
-def _de1200_cell_or_skip(place: str) -> tuple[int, int]:
-    """Our DE1200 cell after checking it against wradlib; skip if off the grid."""
+def _cell_or_skip(place: str, payload: bytes, product: str) -> tuple[int, int]:
+    """The cell the file's own grid gives, checked against wradlib's DE1200 one.
+
+    Skips a location off the grid. A mismatch means DWD moved or resized the
+    grid: the integration follows the file, so this is where it shows.
+    """
     lat, lon = LOCATIONS[place]
-    if not rs_grid_contains(lat, lon):
+    try:
+        cell = read_odim_grid(io.BytesIO(payload)).cell(lat, lon)
+    except OutsideGrid:
         report.record(place, cell="outside grid")
-        pytest.skip(f"{place} ({lat}, {lon}) is outside the RS/RV/HymecNG grid")
-    cell = get_rs_grid_index(lat, lon)
+        pytest.skip(f"{place} ({lat}, {lon}) is outside the {product} grid")
     report.record(place, cell=f"{cell[0]}, {cell[1]}")
-    assert cell == de1200_cell(lat, lon), f"{place}: cell differs from wradlib"
+    assert cell == de1200_cell(lat, lon), f"{product} {place}: the file's grid is not wradlib's DE1200"
     return cell
+
+
+def _cells(payload: bytes) -> list[tuple[int, int]]:
+    """The fixed locations' cells on the file's own grid."""
+    grid = read_odim_grid(io.BytesIO(payload))
+    return [grid.cell(*loc) for loc in FIXED_LOCATIONS.values()]
 
 
 # ---------------------------------------------------------------------------
@@ -170,14 +145,13 @@ def _de1200_cell_or_skip(place: str) -> tuple[int, int]:
 @pytest.mark.parametrize("place", LOCATIONS)
 def test_radvor_location_matches_wradlib(product, place):
     """RS/RV: every lead at the location, as production reads it."""
-    cell = _de1200_cell_or_skip(place)
+    members = _tar_members(product)
+    cell = _cell_or_skip(place, members[0], product)
 
     diffs, values = [], {}
     ref_grids = _ref_grids(product)
-    for lead, hd5 in _tar_members(product).items():
-        ours, _ = read_odim_composite_cell(
-            io.BytesIO(hd5), *cell, expected_shape=RS_GRID_SHAPE
-        )
+    for lead, hd5 in members.items():
+        ours, _ = read_odim_composite_at(io.BytesIO(hd5), *LOCATIONS[place])
         values[lead] = float(ours)
         ref = ref_grids[lead][cell]
         if not _same(float(ours), float(ref)):
@@ -199,14 +173,12 @@ def test_radvor_location_matches_wradlib(product, place):
 
 @pytest.mark.parametrize("place", LOCATIONS)
 def test_hymecng_location_matches_wradlib(place):
-    cell = _de1200_cell_or_skip(place)
-
     content, _, url = _download("hymecng")
-    raw_ours, _, what = read_odim_classification(
-        io.BytesIO(content), expected_shape=RS_GRID_SHAPE
-    )
+    cell = _cell_or_skip(place, content, "hymecng")
+
+    ours, _, what = read_odim_classification_at(io.BytesIO(content), *LOCATIONS[place])
     raw_ref, _ = read_odim(content)
-    ours, ref = int(raw_ours[cell]), int(raw_ref[cell])
+    ref = int(raw_ref[cell])
     if ours == int(what["nodata"]):
         label = "no data"
     elif ours == int(what["undetect"]):
@@ -224,10 +196,10 @@ def test_hymecng_location_matches_wradlib(place):
 @pytest.mark.parametrize("place", LOCATIONS)
 def test_radolan_location_matches_wradlib(product, place):
     """RW/SF in their HDF5 edition: the DE1200 cell, as production reads it."""
-    cell = _de1200_cell_or_skip(place)
-
     content, _, url = _download(product)
-    ours, _ = read_odim_composite_cell(io.BytesIO(content), *cell, expected_shape=RS_GRID_SHAPE)
+    cell = _cell_or_skip(place, content, product)
+
+    ours, _ = read_odim_composite_at(io.BytesIO(content), *LOCATIONS[place])
     ref = scale_odim(*read_odim(content))[cell]
     ours, ref = float(ours), float(ref)
     report.record(place, **{product: report.fmt(None if np.isnan(ours) else ours, 1)})
@@ -258,10 +230,11 @@ def _assert_locations_covered(grid: np.ndarray, cells: list, label: str) -> None
 
 @pytest.mark.parametrize("product", ["rs", "rv"])
 def test_radvor_full_grids_match_wradlib(product):
-    cells = [get_rs_grid_index(*loc) for loc in FIXED_LOCATIONS.values()]
+    members = _tar_members(product)
+    cells = _cells(members[0])
     ref_grids = _ref_grids(product)
-    for lead, hd5 in _tar_members(product).items():
-        ours, _ = read_odim_composite(io.BytesIO(hd5), expected_shape=RS_GRID_SHAPE)
+    for lead, hd5 in members.items():
+        ours, _ = read_odim_composite(io.BytesIO(hd5))
         ref = ref_grids[lead]
         _assert_grids_equal(ours, ref, f"{product} lead {lead}")
         _assert_locations_covered(ours, cells, f"{product} lead {lead}")
@@ -269,23 +242,19 @@ def test_radvor_full_grids_match_wradlib(product):
 
 def test_hymecng_full_grid_matches_wradlib():
     content, _, _ = _download("hymecng")
-    ours, _, what = read_odim_classification(io.BytesIO(content), expected_shape=RS_GRID_SHAPE)
+    ours, _, what = read_odim_classification(io.BytesIO(content))
     ref, _ = read_odim(content)
     np.testing.assert_array_equal(ours, ref)
     nodata = int(what["nodata"])
     as_float = np.where(ours == nodata, np.nan, 0.0)
-    _assert_locations_covered(
-        as_float, [get_rs_grid_index(*loc) for loc in FIXED_LOCATIONS.values()], "hymecng"
-    )
+    _assert_locations_covered(as_float, _cells(content), "hymecng")
 
 
 @pytest.mark.parametrize("product", ["rw", "sf"])
 def test_radolan_full_grid_matches_wradlib(product):
     content, _, _ = _download(product)
-    ours, what_ours = read_odim_composite(io.BytesIO(content), expected_shape=RS_GRID_SHAPE)
+    ours, what_ours = read_odim_composite(io.BytesIO(content))
     ref = scale_odim(*read_odim(content))
     assert what_ours.get("prodname") == product.upper()
     _assert_grids_equal(ours, ref, product)
-    _assert_locations_covered(
-        ours, [get_rs_grid_index(*loc) for loc in FIXED_LOCATIONS.values()], product
-    )
+    _assert_locations_covered(ours, _cells(content), product)

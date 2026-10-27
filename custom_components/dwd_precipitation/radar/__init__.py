@@ -1,26 +1,16 @@
-"""Readers for DWD radar data (ODIM_H5) and the DE1200 grid lookup.
+"""Readers for DWD radar data (ODIM_H5), each on the grid its own file describes.
 
-Exports what the integration uses. read_odim_classification (whole grid) is
-needed for the optional neighbourhood scan; odim.read_odim_composite is the
-oracle for the test tiers and scripts/, which import it from radar.odim.
+Exports what the integration uses. The whole-grid readers and read_odim_grid
+(radar.odim) are for the test tiers and scripts/, which import them from there.
+
 """
 
-from .odim import (
-    read_odim_composite_cell,
-    read_odim_composite_window,
-    read_odim_classification,
-    read_odim_classification_cell,
-    get_rs_grid_index,
-    rs_grid_contains,
-    RS_GRID_SHAPE,
-)
+from .grid import OutsideGrid, UnsupportedGrid
+from .odim import read_odim_classification_at, read_odim_composite_at
 
 __all__ = [
-    "read_odim_composite_cell",
-    "read_odim_composite_window",
-    "read_odim_classification",
-    "read_odim_classification_cell",
-    "get_rs_grid_index",
-    "rs_grid_contains",
-    "RS_GRID_SHAPE",
+    "OutsideGrid",
+    "UnsupportedGrid",
+    "read_odim_classification_at",
+    "read_odim_composite_at",
 ]

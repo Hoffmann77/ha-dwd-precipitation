@@ -8,7 +8,7 @@ import random
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from functools import cached_property
 from http import HTTPStatus
 from itertools import product as cartesian_product
@@ -28,13 +28,10 @@ from homeassistant.helpers.event import (
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
-from .const import (
-    CONF_NEIGHBOURHOOD,
-    CONF_UNAVAILABLE_WHEN_STALE,
-    DEFAULT_NEIGHBOURHOOD,
-    DEFAULT_UNAVAILABLE_WHEN_STALE,
-)
-from .utils import get_previous_multiple
+from .options import DwdOptions
+from .radar import OutsideGrid
+from .radar.urls import product_url
+from .release_grid import ReleaseGrid
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -65,18 +62,15 @@ RETRY_JITTER = 0.15
 
 
 def fetch_jitter_for(entry_id: str, product_key: str) -> timedelta:
-    """Return the stable fetch offset for one product of one config entry.
+    """Return the fixed fetch offset of one product of one config entry.
 
-    Derived from the entry id rather than drawn at random, so an install keeps
-    the same offset across restarts and reloads: the schedule a user observes
-    in their logs stays the one they observed last week, and changing an
-    unrelated option does not quietly move their fetch times. Spread across the
-    population is just as uniform either way.
+    A whole number of seconds between 0 and MAX_FETCH_JITTER (30 s), added to
+    the product's publication delay so that not every install fetches on the
+    same second. Derived from the entry id and the product key instead of drawn
+    at random, so an install keeps its fetch times across restarts and reloads,
+    while installs (and one install's products) still spread out. A sha256
+    digest, because Python's str hash() changes from process to process.
 
-    hashlib rather than hash() or random.seed(): str hashing is salted per
-    process, and only a digest is contractually stable across interpreter runs.
-    The product key is mixed in so one install's products do not all sit at the
-    same offset.
     """
     digest = hashlib.sha256(f"{entry_id}:{product_key}".encode()).digest()
     steps = int(MAX_FETCH_JITTER.total_seconds()) + 1
@@ -85,12 +79,24 @@ def fetch_jitter_for(entry_id: str, product_key: str) -> timedelta:
 
 
 def _apply_retry_jitter(delay: timedelta) -> timedelta:
-    """Return the retry delay spread by +/-RETRY_JITTER."""
+    """Return the retry delay spread by +/-RETRY_JITTER.
+
+    ``delay`` is the backoff ramp's next delay; the result is that delay times
+    a random factor between 0.85 and 1.15. A fresh draw on every attempt, so
+    installs that failed together during a shared DWD outage do not keep
+    retrying together.
+
+    """
     return delay * random.uniform(1 - RETRY_JITTER, 1 + RETRY_JITTER)
 
 
 def _format_duration(delta: timedelta) -> str:
-    """Return a short human-readable duration: "60 s", "5 min", "1 h 10 min"."""
+    """Return a short human-readable duration: "60 s", "5 min", "1 h 10 min".
+
+    For the retry time in the error message a user reads in their log. Seconds
+    are shown only below a minute; a negative duration shows as "0 s".
+
+    """
     seconds = max(int(delta.total_seconds()), 0)
 
     if seconds < 60:
@@ -105,24 +111,26 @@ def _format_duration(delta: timedelta) -> str:
     return f"{hours} h" if minutes == 0 else f"{hours} h {minutes} min"
 
 
+def _format_release(release: datetime) -> str:
+    """Return a release time as the log messages state it: "2026-10-14 07:15 UTC"."""
+    return release.astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC")
+
+
 def _describe_fetch_error(
     err: Exception, release: datetime, next_retry: timedelta
 ) -> str:
-    """Return a human-readable explanation of a failed product update.
+    """Return the message a user sees in their log for a failed update.
 
-    Home Assistant logs this as ``Error fetching <name> data: <message>``, where
-    ``<name>`` already identifies the location and product (e.g. "Zuhause RS
-    precipitation nowcast" — see PRODUCT_LABEL),
-    and only logs it once per run of failures — so this one message is all the
-    reader gets. That reader is someone scanning their log wondering what they
-    broke, so it answers three things: what DWD did, whether it is their fault,
-    and what happens next, in as few words as will carry that. Almost every
-    occurrence is DWD publishing late, so it must not read like a user error.
+    ``err`` is what the fetch raised, ``release`` the release it tried and
+    ``next_retry`` the delay until the next attempt. Home Assistant logs the
+    message once per run of failures, so it is the only explanation the user
+    gets: it says what DWD did (not published yet, an HTTP error, unreachable,
+    a file this version cannot read, or a location off the grid), whether their
+    setup is to blame (almost never: usually DWD is publishing late) and when
+    the next retry is. Plain ASCII, so every log viewer shows it correctly.
 
-    Kept to plain ASCII: log viewers and Windows consoles mangle typographic
-    punctuation.
     """
-    release_str = release.strftime("%Y-%m-%d %H:%M UTC")
+    release_str = _format_release(release)
 
     if isinstance(err, aiohttp.ClientResponseError):
         if err.status == HTTPStatus.NOT_FOUND:
@@ -140,6 +148,14 @@ def _describe_fetch_error(
             f"Could not reach DWD OpenData for the {release_str} release ({err}). "
             "Check this machine's internet access."
         )
+    elif isinstance(err, OutsideGrid):
+        # The setup check is a coarse box, so a location near its edge can
+        # pass it and still be off the grid DWD's file describes.
+        cause = (
+            f"The configured location is not on the grid of the {release_str} "
+            f"release ({err}): DWD's radar does not cover it. Set the "
+            "integration up again with a location inside Germany."
+        )
     else:
         # Not a transport error: DWD served something this version cannot
         # read. That is a format change or a bug, not a late file, and only a
@@ -152,6 +168,53 @@ def _describe_fetch_error(
         )
 
     return f"{cause} Retrying in {_format_duration(next_retry)}."
+
+
+def _describe_coverage_loss(
+    label: str,
+    release: datetime,
+    missing: list[str] | None,
+) -> str:
+    """Return the warning for a location whose cell has just lost its data.
+
+    ``label`` names the product (and entry), ``release`` is the first release
+    without data, ``missing`` the radars that have dropped out of DWD's
+    composite since the last release with data (None or empty when that cannot
+    be told). Every fetch still succeeds in this case, so without it the
+    sensors would turn "unknown" with nothing in the log. Plain ASCII, like
+    every message a user reads.
+
+    """
+    radars = (
+        f" (radar(s) missing from the DWD composite: {', '.join(missing)})"
+        if missing
+        else ""
+    )
+    return (
+        f"{label}: no radar data for your location in the "
+        f"{_format_release(release)} release{radars}. The location is currently "
+        "outside DWD's radar coverage; this is a DWD outage, not a configuration "
+        'problem. The affected sensors show "unknown" until DWD restores '
+        "coverage, and recover on their own."
+    )
+
+
+def _describe_no_coverage_at_start(label: str, release: datetime) -> str:
+    """Return the warning for a location without data in the first release read.
+
+    ``label`` names the product (and entry), ``release`` is the release. With
+    nothing read before it, a location that this product never covers cannot be
+    told from a radar outage, so the message names both and is not repeated
+    until data arrives.
+
+    """
+    return (
+        f"{label}: no radar data for your location in the "
+        f"{_format_release(release)} release, the first one read. Either the "
+        "location is outside the area this product covers, or a DWD radar is "
+        'out. The affected sensors show "unknown" while this lasts; this is '
+        "logged again only when data arrives."
+    )
 
 
 @dataclass
@@ -167,29 +230,45 @@ class ProductMetadata:
     # of {"lead", "start", "end", "value", "intensity"} — surfaced as an entity
     # state attribute.
     samples: list[dict[str, Any]] | None = None
-    # Optional RS rolling-hour series: one point per 5-minute lead, each a dict
-    # of {"lead", "start", "end", "value"} where value is a 60-minute total (mm).
+    # Optional rolling-hour series (RV's 5-minute steps summed by the hour): one
+    # point per 5-minute lead, each a dict of {"lead", "start", "end", "value"}
+    # where value is a 60-minute total (mm).
     rolling_1h: list[dict[str, Any]] | None = None
+    # The radars the composite was built from (its ODIM /how nodes, e.g.
+    # ("deasb", "deboo", ...)), or None when the file does not say. Not shown
+    # to the user: it names the radars missing when the location loses data.
+    radars: tuple[str, ...] | None = None
 
 
 @dataclass
 class CoordinatorData:
-    """Single-product coordinator payload.
+    """One release of a product: its values and their metadata, by sub-key.
 
-    ``data``/``metadata`` are a scalar+``ProductMetadata`` for RADOLAN products,
-    parallel lists for RS, or parallel dicts keyed by entity sub-key for RV.
+    Every product keys both dicts the same way (const.KEY_*: RS ``last_60``,
+    ``next_60``, ...; RADOLAN ``amount``; HymecNG ``precipitation_type``; RV's
+    own keys), and every entity description names the sub-key it shows. A
+    value may come without metadata (RV's ``rain_events``), and either may be
+    None (no data for the cell).
+
     """
 
-    data: float | None | list[float | None] | dict[str, Any]
-    metadata: ProductMetadata | list[ProductMetadata] | dict[str, ProductMetadata]
+    data: dict[str, Any]
+    metadata: dict[str, ProductMetadata | None]
+
+
+# What a product's fetch returns: CoordinatorData's two dicts.
+type Payload = tuple[dict[str, Any], dict[str, ProductMetadata | None]]
 
 
 class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
     """Abstract per-product data update coordinator.
 
     Each concrete subclass represents one DWD product and owns its own
-    update schedule. Subclasses must define PRODUCT_KEY, timing ClassVars,
-    and implement index() and _fetch_and_parse().
+    update schedule. Subclasses must define PRODUCT_KEY and the timing
+    ClassVars, and implement _fetch_and_parse() (products.py has bases for
+    one-file-per-release products and for RADVOR tars). The URL defaults to
+    the product key's pattern in radar/urls.py; the cell holding ``coords``
+    is found on the grid each file describes (radar/grid.py).
 
     """
 
@@ -220,8 +299,26 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
 
     USE_LOCAL_TIME: ClassVar[bool] = False
 
+    @classmethod
+    def is_needed(cls, options: DwdOptions) -> bool:
+        """Return whether an entry with these options uses this product at all.
+
+        Asked by async_setup_entry before the coordinator is built. True for
+        every product except one that exists for a single option (RW's
+        10-minute runs, for a dry streak counting RW); setup does not build the
+        others, which saves their requests.
+
+        """
+        return True
+
     # Upper bound for the fast-poll retry interval (see _fast_poll_delay).
     MAX_FAST_POLL_INTERVAL: ClassVar[timedelta] = timedelta(minutes=5)
+
+    # The sub-keys whose value is None when the file has no data for the
+    # location's cell (a radar outage, or a location outside coverage). A
+    # release where any of them is None has no data; _track_coverage logs the
+    # change. Empty: the product is not watched.
+    COVERAGE_KEYS: ClassVar[tuple[str, ...]] = ()
 
     def __init__(
         self,
@@ -231,7 +328,16 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
         lat: float,
         lon: float,
     ) -> None:
-        """Initialize the coordinator."""
+        """Set up the coordinator of one product for one entry's location.
+
+        ``async_client`` is Home Assistant's shared aiohttp session,
+        ``lat``/``lon`` the configured location. Home Assistant's own polling
+        is off: fetches are triggered by the release schedule
+        (async_track_releases) and the retry ramp. Nothing is fetched here;
+        setup calls async_refresh. Unloading the entry cancels the pending
+        timers.
+
+        """
         super().__init__(
             hass,
             _LOGGER,
@@ -246,6 +352,10 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
         self._fast_poll_failures = 0
         self._stale_unsub = None
         self._fetch_jitter = fetch_jitter_for(entry.entry_id, self.PRODUCT_KEY)
+        # Whether the last adopted release had data for the location (None
+        # before the first), and the radars of the last one that had.
+        self._has_data: bool | None = None
+        self._radars: tuple[str, ...] | None = None
         entry.async_on_unload(self._stop_fast_polling)
         entry.async_on_unload(self._cancel_stale_check)
 
@@ -257,109 +367,117 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
     def release_delay(self) -> timedelta:
         """Return RELEASE_DELAY plus this instance's fetch jitter.
 
-        RELEASE_DELAY is what DWD does — the calibrated lag between a product's
-        nominal time and the file appearing, checked by
-        scripts/check_release_delay.py. This is what *we* do, and everything
-        that has to agree on when a release is ours to fetch uses it: the
-        schedule, the release lookup, and the staleness deadline alike.
+        RELEASE_DELAY is how long after a release's nominal time DWD has the
+        file on OpenData (scripts/check_release_delay.py checks it); this is
+        when we fetch. The schedule, the release lookup and the staleness
+        deadline all use it, so the jitter moves them together and keeps the
+        margins between them.
+
         """
         return self.RELEASE_DELAY + self._fetch_jitter
 
     def _now(self) -> datetime:
         """Return the current time in this product's own time reference.
 
-        USE_LOCAL_TIME products sit on a local wall-clock release grid, so
-        everything that asks "which release is ours by now" has to ask in the
-        same reference. One helper rather than the ternary at each site: the
-        cost of getting this wrong is a product fetched hours off its schedule
-        (see _next_release_after), and a missed branch is the way that happens.
+        Local time for a USE_LOCAL_TIME product (sf_2350, released at 23:50
+        local time), UTC for the others. Every "which release is ours by now"
+        question goes through here: asked in the wrong reference, it fetches a
+        product hours off its schedule.
+
         """
         return dt_util.now() if self.USE_LOCAL_TIME else dt_util.utcnow()
 
-    def _get_latest_release(self, now: datetime) -> datetime:
-        """Return the most recent valid release timestamp."""
-        prev = get_previous_multiple(
-            now - self.release_delay,
+    @property
+    def grid(self) -> ReleaseGrid:
+        """Return this product's release grid, in its own time reference.
+
+        The grid knows when releases are due: every RELEASE_INTERVAL, at
+        RELEASE_OFFSET past. A USE_LOCAL_TIME product's grid is on Home
+        Assistant's local clock, so its releases are 23 or 25 hours apart on
+        DST changeover days (see ReleaseGrid). Built on each use, so a change
+        of HA's time zone applies.
+
+        """
+        return ReleaseGrid(
             self.RELEASE_INTERVAL,
             self.RELEASE_OFFSET,
+            dt_util.get_default_time_zone() if self.USE_LOCAL_TIME else UTC,
         )
 
-        return dt_util.as_utc(prev)
+    def _get_latest_release(self, now: datetime) -> datetime:
+        """Return the newest release that is ours to fetch by ``now``.
+
+        The newest release on the grid that is at least release_delay old, i.e.
+        whose file DWD should have published by now. It comes back in UTC.
+
+        """
+        return self.grid.at_or_before(now - self.release_delay)
 
     def _stale_deadline(self) -> datetime | None:
-        """Return when the cached value is written off, or None if it is fresh.
+        """Return when the cached value is written off (None: nothing cached).
 
-        The clock starts when the release *after* the cached one should have
-        been on OpenData, and runs for OVERDUE_GRACE. So the question the
-        deadline answers is "how long may we go on trying for a release that is
-        already due", which is a property of the retrying and has nothing to do
-        with how often the product is published.
+        The clock starts when the release after the cached one should have been
+        on OpenData, and runs for OVERDUE_GRACE: how long DWD is given to
+        publish a release that is due. Past the deadline the entities turn
+        unavailable if the user chose that (unavailable_when_stale). Anchored
+        there, the deadline never falls on a scheduled fetch, which a deadline
+        counted from the cached release would (ADR 0007).
 
-        That framing is what keeps the deadline away from the fetch schedule.
-        Anchor the tolerance on the cached release instead and it has to be
-        expressed in release intervals, so it expires exactly when some later
-        fetch is due — and the value is written off at the very instant of the
-        attempt that might have restored it, with event-loop latency deciding
-        which of the two happens first. Anchored here, the deadline only lands
-        on a fetch instant if OVERDUE_GRACE is a whole multiple of
-        RELEASE_INTERVAL, which is a rule a test can hold us to.
         """
         if self.curr_release is None:
             return None
 
+        # On the product's own clock (see grid): adding 24 h to a UTC
+        # timestamp would put the autumn deadline before the file it waits
+        # for can exist.
         return (
-            self._next_release_after(self.curr_release)
+            self.grid.next_after(self.curr_release)
             + self.release_delay
             + self.OVERDUE_GRACE
         )
 
-    def _next_release_after(self, release: datetime) -> datetime:
-        """Return the first scheduled release after the given one.
-
-        Done in the product's own time reference rather than by adding
-        RELEASE_INTERVAL to a UTC timestamp: for USE_LOCAL_TIME products the
-        release grid is a local wall-clock one, so consecutive releases are 23
-        or 25 hours apart on the two DST changeover days. Adding 24 h there
-        would put the deadline an hour off — on the autumn one, before the file
-        it is waiting for could even exist.
-        """
-        reference = dt_util.as_local(release) if self.USE_LOCAL_TIME else release
-
-        return dt_util.as_utc(reference + self.RELEASE_INTERVAL)
-
     def _data_is_stale(self, now: datetime) -> bool:
-        """Return True if the overdue release has gone unfetched for too long."""
+        """Return True if the overdue release has gone unfetched for too long.
+
+        That is, ``now`` is past _stale_deadline. Also True when nothing is
+        cached yet.
+
+        """
         deadline = self._stale_deadline()
 
         return deadline is None or now > deadline
 
-    @property
-    def data_is_stale(self) -> bool:
-        """Return True if the cached value is past its deadline right now.
+    @cached_property
+    def options(self) -> DwdOptions:
+        """Return the entry's options.
 
-        "Stale" is a fact about the clock rather than the outcome of the last
-        fetch, so it stays true even if no further fetch is ever attempted.
-        Entities do not read this directly -- they ask data_is_reportable,
-        which weighs it against the user's unavailable_when_stale option.
+        A typed snapshot (DwdOptions) with the defaults filled in. A snapshot
+        is enough: saving the options reloads the entry, which builds new
+        coordinators.
+
         """
-        return self._data_is_stale(self._now())
+        return DwdOptions.from_options(self.config_entry.options)
 
     @property
     def unavailable_when_stale(self) -> bool:
-        """Return whether a value past its deadline should be hidden."""
-        return self.config_entry.options.get(
-            CONF_UNAVAILABLE_WHEN_STALE, DEFAULT_UNAVAILABLE_WHEN_STALE
-        )
+        """Return whether a value past its deadline should be hidden.
+
+        The user's choice (Advanced options). When off, an old value stays
+        shown until a new release arrives; when on, the entities turn
+        unavailable at the staleness deadline.
+
+        """
+        return self.options.unavailable_when_stale
 
     def _data_is_reportable(self, now: datetime) -> bool:
         """Return True if what we hold may still be shown to the user.
 
-        The one place the "do we still report this" policy lives. Both sides of
-        it read from here: entities for their availability, and the failure path
-        of _async_update_data to decide whether a failed fetch is worth an
-        UpdateFailed. They are exact complements, so writing them out separately
-        is an invitation for the entity to report a value the coordinator has
-        already given up on.
+        False when nothing is held, or when the value is past its deadline and
+        the user wants stale values hidden. This is the one place it is
+        decided. Entities read it for their availability, and a failed fetch
+        raises UpdateFailed only when it is False, so an entity never shows a
+        value the coordinator has given up on.
+
         """
         if self.data is None:
             return False
@@ -368,26 +486,35 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
 
     @property
     def data_is_reportable(self) -> bool:
-        """Return whether the cached value may be shown right now."""
+        """Return whether the cached value may be shown right now.
+
+        _data_is_reportable at the current time, in the product's own time
+        reference. What every entity's availability is based on.
+
+        """
         return self._data_is_reportable(self._now())
 
     @callback
     def _cancel_stale_check(self) -> None:
-        """Cancel the pending deadline callback."""
+        """Cancel the pending deadline callback.
+
+        Called before arming a new one, and when the entry is unloaded. Does
+        nothing when none is pending.
+
+        """
         if self._stale_unsub is not None:
             self._stale_unsub()
             self._stale_unsub = None
 
     @callback
     def _schedule_stale_check(self) -> None:
-        """Wake the entities up when the cached value falls due.
+        """Arm a callback at the cached value's deadline.
 
-        Availability is derived from the clock, but Home Assistant only re-reads
-        it when the entity writes state. During an outage the fast-poll ramp
-        provides that on its own; after a success nothing else would, so arm one
-        callback on the deadline. It never competes with a fetch: the deadline
-        cannot fall on a fetch instant (see _stale_deadline), and any fetch that
-        happens first re-arms it.
+        Home Assistant reads availability only when an entity writes its state.
+        During an outage the retries make it do so; after a success nothing
+        else would, so this callback makes the entities look again when the
+        value falls due. Re-armed after every successful fetch.
+
         """
         self._cancel_stale_check()
 
@@ -401,21 +528,28 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
 
     @callback
     def _stale_reached(self, _now) -> None:
-        """Make the entities look at the clock again once the deadline passes."""
+        """Make the entities look at the clock again once the deadline passes.
+
+        Notifies the coordinator's listeners without fetching anything; their
+        availability then turns off if unavailable_when_stale is set.
+
+        """
         self._stale_unsub = None
         _LOGGER.debug("%s: cached value reached its deadline", self.PRODUCT_KEY)
         self.async_update_listeners()
 
     @callback
     def async_track_releases(self) -> list[CALLBACK_TYPE]:
-        """Register the time-change trackers that drive this product's fetches.
+        """Register the timers that fetch each release when it is due.
 
-        The coordinator registers its own schedule rather than handing the
-        pieces to async_setup_entry, because both halves of it — the release
-        grid, and the time reference that grid is expressed in — are knowledge
-        this class already owns. Splitting them apart is what once had sf_2350
-        registered in UTC while its grid was local wall-clock, fetching it an
-        offset's worth of hours late every day.
+        Called once by async_setup_entry, after the first refresh. Each timer
+        fires at a release time plus release_delay and refreshes the
+        coordinator. Local-time timers for a USE_LOCAL_TIME product, UTC timers
+        for the others. The coordinator registers them itself because it owns
+        both the grid and the clock it is read in: registered apart, sf_2350
+        was once fetched hours late (ADR 0007). Returns the unsubscribe
+        callbacks, which the entry also calls on unload.
+
         """
         track = (
             async_track_time_change
@@ -433,23 +567,25 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
         return unsubs
 
     async def _async_release_due(self, _now) -> None:
-        """Refresh because a new release should now be on OpenData."""
+        """Refresh because a new release should now be on OpenData.
+
+        Called by the timers async_track_releases registers; the refresh
+        fetches it (see _async_update_data).
+
+        """
         await self.async_refresh()
 
     @cached_property
     def track_time_change_args(self) -> list[dict]:
-        """Return minimal UTC time-change args covering every release timestamp.
+        """Return the fewest time-change arguments that fire at every release.
 
-        Each entry is passed as **kwargs to async_track_utc_time_change so
-        that the coordinator is refreshed exactly when new data becomes available.
-
-        Grouping strategy — fewest tracker registrations with no spurious firings:
-          1. Group by second, express hour and minute as lists. Valid whenever
-             all releases sharing a second form a full cartesian product of their
-             hours x minutes (true for any whole-minute interval).
-          2. Fall back to grouping by (minute, second) with hour as a list —
-             always correct since timestamps in a group share identical
-             (minute, second).
+        Each dict (``hour``, ``minute``, ``second``, as values or lists) is
+        passed to Home Assistant's time-change tracker, which fires whenever
+        the clock matches it. The fetch times of a day (each release plus
+        release_delay) are grouped by second, with hours and minutes as lists,
+        when every combination is a fetch time (true for any whole-minute
+        interval); otherwise by minute and second, with the hours as a list.
+        Either way no tracker fires off schedule.
 
         """
         release_interval = self.RELEASE_INTERVAL
@@ -504,18 +640,26 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
     # ------------------------------------------------------------------
 
     def _fast_poll_delay(self) -> timedelta:
-        """Return the retry delay for the next fast-poll attempt."""
+        """Return the retry delay for the next fast-poll attempt.
+
+        FAST_POLL_START (60 s) plus FAST_POLL_STEP (10 s) per consecutive
+        failure, capped at MAX_FAST_POLL_INTERVAL; before the jitter is
+        applied.
+
+        """
         delay = FAST_POLL_START + self._fast_poll_failures * FAST_POLL_STEP
 
         return min(delay, self.MAX_FAST_POLL_INTERVAL)
 
     @callback
     def _schedule_fast_poll(self) -> timedelta:
-        """Arm the next fast-poll retry, backing off on consecutive failures.
+        """Arm the next retry after a failed fetch, backing off each time.
 
-        The ramp spans release boundaries: only a successful fetch resets it, so
-        a prolonged outage settles at MAX_FAST_POLL_INTERVAL instead of being
-        pulled back to FAST_POLL_START every time a new release falls due.
+        Called on every failed fetch; returns the delay it chose, for the error
+        message. Only a successful fetch resets the ramp, not a new release
+        falling due, so a long DWD outage settles at MAX_FAST_POLL_INTERVAL
+        instead of retrying every minute.
+
         """
         delay = _apply_retry_jitter(self._fast_poll_delay())
         self._fast_poll_failures += 1
@@ -535,7 +679,12 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
         return delay
 
     async def _async_fast_poll_due(self, _now) -> None:
-        """Re-attempt the fetch a failure armed this retry for."""
+        """Retry the fetch that failed.
+
+        Called by the timer _schedule_fast_poll arms. The refresh fetches the
+        newest due release, which may be newer than the one that failed.
+
+        """
         self._fast_poll_unsub = None
         _LOGGER.debug("%s: fast-poll retry firing", self.PRODUCT_KEY)
         await self.async_refresh()
@@ -544,8 +693,9 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
     def _cancel_fast_poll(self) -> None:
         """Cancel the pending retry, leaving the backoff ramp where it is.
 
-        Separate from _stop_fast_polling because re-arming must not reset the
-        ramp: only a success does that.
+        Separate from _stop_fast_polling because re-arming a retry must not
+        reset the ramp: only a success does that.
+
         """
         if self._fast_poll_unsub is not None:
             self._fast_poll_unsub()
@@ -553,55 +703,145 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
 
     @callback
     def _stop_fast_polling(self) -> None:
-        """Cancel fast polling and reset the backoff ramp."""
+        """Cancel fast polling and reset the backoff ramp.
+
+        After a success, and when the entry is unloaded; the next failure
+        starts again at FAST_POLL_START.
+
+        """
         self._cancel_fast_poll()
         self._fast_poll_failures = 0
-
-    @property
-    def neighbourhood(self) -> bool:
-        """Whether the cells around the location are evaluated too (radar.area)."""
-        return self.config_entry.options.get(CONF_NEIGHBOURHOOD, DEFAULT_NEIGHBOURHOOD)
 
     # ------------------------------------------------------------------
     # Abstract interface — subclasses implement these
     # ------------------------------------------------------------------
 
-    @abstractmethod
-    def index(self):
-        """Grid cell index for this location. Override with @cached_property."""
+    def _get_url(self, ts: datetime) -> str:
+        """Return the URL of release ``ts`` (see radar/urls.py).
 
-    @abstractmethod
-    async def _fetch_and_parse(self, ts: datetime) -> tuple[Any, Any]:
-        """Fetch and parse the product for release timestamp ts.
+        Derived from PRODUCT_KEY, so a product only needs a pattern there.
 
-        Return (precipitation, metadata). Must raise on any failure — the
-        base class owns the stale/retry logic in _async_update_data.
-
-        Only the download belongs on the event loop: hand the decoding to
-        ``hass.async_add_executor_job``. Decompressing a radar grid takes
-        milliseconds per file even on a fast machine, which every other
-        integration and automation would otherwise wait out.
         """
+        return product_url(self.PRODUCT_KEY, ts)
+
+    @abstractmethod
+    async def _fetch_and_parse(self, ts: datetime) -> Payload:
+        """Fetch and decode one release; return (data, metadata).
+
+        Every product implements it. ``ts`` is the release's nominal time
+        (UTC). The result is two dicts keyed by the same sub-keys (see
+        CoordinatorData): the values for the location and their
+        ProductMetadata. It raises on any failure; the base class handles
+        retries. It is free of side effects, so the totals' backfill can fetch
+        past releases through it. Decoding runs in the executor, never on the
+        event loop.
+
+        """
+
+    async def _async_on_new_release(
+        self, release: datetime, data: Any, metadata: Any
+    ) -> None:
+        """React to a release this coordinator is about to adopt.
+
+        Called once per release, after a successful fetch and before the data
+        is published; may add to ``data``. Must not raise: a failure here must
+        not cost the product its update. Nothing by default; RV keeps its
+        analysis for the rolling-hour series and feeds the rain-events tracker
+        here.
+
+        """
+
+    async def async_fetch_release(self, release: datetime) -> CoordinatorData:
+        """Fetch and decode any ``release`` without adopting it.
+
+        For the totals' backfill, which adds releases missed during a downtime.
+        The coordinator's own state, schedule and retry ramp are untouched, and
+        _async_on_new_release is not called. Raises like _fetch_and_parse.
+
+        """
+        data, metadata = await self._fetch_and_parse(release)
+        return CoordinatorData(data, metadata)
 
     # ------------------------------------------------------------------
     # Template method — do not override in subclasses
     # ------------------------------------------------------------------
 
     @callback
+    def _track_coverage(
+        self,
+        release: datetime,
+        data: dict[str, Any],
+        metadata: dict[str, ProductMetadata | None],
+    ) -> None:
+        """Log when the location loses its data, and when it gets it back.
+
+        Called for every adopted release. A cell without data (a COVERAGE_KEYS
+        value of None) does not fail the fetch, so the sensors would turn
+        "unknown" with nothing in the log. Logged on the change only: one
+        WARNING when the data goes, naming the radars that left the composite
+        since the last release with data, and one INFO when it is back. A
+        location without data in the first release read gets its own WARNING,
+        since nothing before it tells an outage from a location this product
+        never covers.
+
+        """
+        if not self.COVERAGE_KEYS:
+            return
+
+        has_data = all(data.get(key) is not None for key in self.COVERAGE_KEYS)
+        radars = next(
+            (
+                meta.radars
+                for key in self.COVERAGE_KEYS
+                if (meta := metadata.get(key)) is not None and meta.radars is not None
+            ),
+            None,
+        )
+        had_data, self._has_data = self._has_data, has_data
+
+        if has_data:
+            self._radars = radars
+            if had_data is False:
+                _LOGGER.info(
+                    "%s: radar data for your location again from the %s "
+                    "release; the affected sensors report values again",
+                    self.name,
+                    _format_release(release),
+                )
+        elif had_data is None:
+            _LOGGER.warning("%s", _describe_no_coverage_at_start(self.name, release))
+        elif had_data:
+            missing = (
+                sorted(set(self._radars) - set(radars))
+                if self._radars is not None and radars is not None
+                else None
+            )
+            _LOGGER.warning("%s", _describe_coverage_loss(self.name, release, missing))
+
+    @callback
     def _record_success(self, release: datetime) -> None:
         """Adopt a freshly fetched release as the cached one.
 
-        One method rather than three statements at each success site: the
-        deadline callback is derived from curr_release, so it can only be armed
-        after the assignment, and that ordering is easier to hold in one place
-        than to remember at every caller.
+        Resets the retry ramp, records the release, then arms the deadline
+        callback, which can only come after the release is recorded, since it
+        is computed from it.
+
         """
         self._stop_fast_polling()
         self.curr_release = release
         self._schedule_stale_check()
 
     async def _async_update_data(self) -> CoordinatorData:
-        """HA coordinator hook — owns the full update lifecycle."""
+        """Fetch the latest release if it is new; Home Assistant's update hook.
+
+        Home Assistant calls it on every refresh (the release timers, the
+        retries, setup) and publishes what it returns to the entities. A
+        release already held is returned as it is. A new one is fetched and
+        decoded; on success it is adopted. A failed fetch arms a retry and
+        keeps the old value while it may still be shown; once it may not, it
+        raises UpdateFailed with a message for the user.
+
+        """
         now = self._now()
         latest_release = self._get_latest_release(now)
 
@@ -635,6 +875,8 @@ class BaseProductUpdateCoordinator(DataUpdateCoordinator[CoordinatorData], ABC):
             # Data is still fresh enough — retry silently
             return self.data
 
+        self._track_coverage(latest_release, data, metadata)
+        await self._async_on_new_release(latest_release, data, metadata)
         self._record_success(latest_release)
 
         return CoordinatorData(data, metadata)

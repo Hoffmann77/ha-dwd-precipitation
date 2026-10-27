@@ -1,7 +1,8 @@
-"""Coordinator timing-logic tests — needs HA installed to import.
+"""Coordinator timing-logic tests.
 
-Instances are built via __new__ to exercise the pure timing helpers without
-standing up a full HomeAssistant / DataUpdateCoordinator.
+Coordinators come from the make_coordinator factory (tests/integration/
+conftest.py): the real constructor on the real hass, with the fetch jitter
+pinned to 0 unless a test is about the jitter.
 """
 
 from __future__ import annotations
@@ -9,19 +10,21 @@ from __future__ import annotations
 import asyncio
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 from zoneinfo import ZoneInfo
 
 import aiohttp
 import pytest
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.helpers.update_coordinator import UpdateFailed
+from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
 from custom_components.dwd_precipitation import (
     PRODUCT_CLASSES,
     coordinator as coordinator_mod,
 )
 from custom_components.dwd_precipitation.coordinator import CoordinatorData
+from custom_components.dwd_precipitation.radar import OutsideGrid, UnsupportedGrid
+from custom_components.dwd_precipitation.release_grid import ReleaseGrid
 from custom_components.dwd_precipitation.products import (
     RadolanRW,
     RadolanSFLastYesterday,
@@ -31,21 +34,14 @@ from custom_components.dwd_precipitation.products import (
 UTC = timezone.utc
 
 
-async def test_overlapping_refreshes_fetch_once(hass) -> None:
+async def test_overlapping_refreshes_fetch_once(make_coordinator, hass) -> None:
     """The release timer and a fast-poll retry can both start a refresh.
 
     Both go through async_refresh, whose lock makes the second wait and then
     find the release already fetched. Calling the unlocked _async_refresh
     instead would fetch twice.
     """
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
-
-    entry = MockConfigEntry(
-        domain="dwd_precipitation",
-        data={"name": "Home", "latitude": 51.05, "longitude": 13.73},
-    )
-    entry.add_to_hass(hass)
-    coordinator = RadolanRW(hass, entry, object(), 51.05, 13.73)
+    coordinator = make_coordinator(RadolanRW)
     gate = asyncio.Event()
     fetches = 0
 
@@ -53,9 +49,11 @@ async def test_overlapping_refreshes_fetch_once(hass) -> None:
         nonlocal fetches
         fetches += 1
         await gate.wait()
-        return 1.0, coordinator_mod.ProductMetadata(
-            source_product="RW", source_timestamp=ts
-        )
+        return {"amount": 1.0}, {
+            "amount": coordinator_mod.ProductMetadata(
+                source_product="RW", source_timestamp=ts
+            )
+        }
 
     with patch.object(coordinator, "_fetch_and_parse", side_effect=fetch):
         first = hass.async_create_task(coordinator.async_refresh())
@@ -65,7 +63,7 @@ async def test_overlapping_refreshes_fetch_once(hass) -> None:
         await asyncio.gather(first, second)
 
     assert fetches == 1
-    assert coordinator.data.data == 1.0
+    assert coordinator.data.data == {"amount": 1.0}
     coordinator._cancel_stale_check()
 
     # Every trigger of ours must take that lock.
@@ -77,9 +75,9 @@ async def test_overlapping_refreshes_fetch_once(hass) -> None:
         assert "._async_refresh(" not in inspect.getsource(module)
 
 
-def test_rs_track_time_change_args():
+async def test_rs_track_time_change_args(make_coordinator):
     """RS: 5-min cadence, +4m10s availability → all hours, minutes {4,9,…,59}, sec 10."""
-    coord = RadvorRS.__new__(RadvorRS)
+    coord = make_coordinator(RadvorRS)
     args = coord.track_time_change_args
     assert len(args) == 1
     entry = args[0]
@@ -88,43 +86,56 @@ def test_rs_track_time_change_args():
     assert entry["minute"] == [4, 9, 14, 19, 24, 29, 34, 39, 44, 49, 54, 59]
 
 
-def test_rw_track_time_change_args():
-    """RW: hourly at :50 + 28m delay → all hours at minute 18, second 0."""
-    coord = RadolanRW.__new__(RadolanRW)
+async def test_rw_track_time_change_args(make_coordinator):
+    """RW: hourly at :00 + 28m delay → all hours at minute 28, second 0."""
+    coord = make_coordinator(RadolanRW)
     args = coord.track_time_change_args
     assert len(args) == 1
     entry = args[0]
     assert entry["second"] == 0
-    assert entry["minute"] == [18]
+    assert entry["minute"] == [28]
     assert entry["hour"] == list(range(24))
 
 
-def test_rw_get_latest_release():
-    """13:00 − 28m delay = 12:32 → previous :50 release is 11:50."""
-    coord = RadolanRW.__new__(RadolanRW)
+async def test_rw_get_latest_release(make_coordinator):
+    """13:00 − 28m delay = 12:32 → previous :00 release is 12:00."""
+    coord = make_coordinator(RadolanRW)
     now = datetime(2025, 6, 1, 13, 0, tzinfo=UTC)
-    assert coord._get_latest_release(now) == datetime(2025, 6, 1, 11, 50, tzinfo=UTC)
+    assert coord._get_latest_release(now) == datetime(2025, 6, 1, 12, 0, tzinfo=UTC)
+    # 12:27 − 28m = 11:59 → still 11:00.
+    now = datetime(2025, 6, 1, 12, 27, tzinfo=UTC)
+    assert coord._get_latest_release(now) == datetime(2025, 6, 1, 11, 0, tzinfo=UTC)
 
 
-def test_stale_deadline_runs_from_the_overdue_release():
+async def test_release_at_or_before_maps_the_grid(make_coordinator):
+    """A release maps to itself; anything off the grid to the release before it."""
+    grid = make_coordinator(RadolanRW).grid
+    release = datetime(2025, 6, 1, 12, 0, tzinfo=UTC)
+    assert grid.at_or_before(release) == release
+    # A timestamp from RW's old HH:50 grid is off it.
+    old = datetime(2025, 6, 1, 12, 50, tzinfo=UTC)
+    assert grid.at_or_before(old) == release
+
+
+async def test_stale_deadline_runs_from_the_overdue_release(make_coordinator):
     """The clock starts when the *next* release should have been published."""
-    coord = RadolanRW.__new__(RadolanRW)
+    coord = make_coordinator(RadolanRW)
 
     coord.curr_release = None
     assert coord._stale_deadline() is None
     assert coord._data_is_stale(datetime(2025, 6, 1, 13, 0, tzinfo=UTC)) is True
 
-    # cached 11:50; the 12:50 release is due at 13:18, and we give it 6 more min
-    coord.curr_release = datetime(2025, 6, 1, 11, 50, tzinfo=UTC)
-    assert coord._stale_deadline() == datetime(2025, 6, 1, 13, 24, tzinfo=UTC)
-    assert coord._data_is_stale(datetime(2025, 6, 1, 13, 18, tzinfo=UTC)) is False
-    assert coord._data_is_stale(datetime(2025, 6, 1, 13, 24, tzinfo=UTC)) is False
-    assert coord._data_is_stale(datetime(2025, 6, 1, 13, 25, tzinfo=UTC)) is True
+    # cached 11:00; the 12:00 release is due at 12:28, and we give it 6 more min
+    coord.curr_release = datetime(2025, 6, 1, 11, 0, tzinfo=UTC)
+    assert coord._stale_deadline() == datetime(2025, 6, 1, 12, 34, tzinfo=UTC)
+    assert coord._data_is_stale(datetime(2025, 6, 1, 12, 28, tzinfo=UTC)) is False
+    assert coord._data_is_stale(datetime(2025, 6, 1, 12, 34, tzinfo=UTC)) is False
+    assert coord._data_is_stale(datetime(2025, 6, 1, 12, 35, tzinfo=UTC)) is True
 
 
-def test_rs_rides_out_one_late_release():
+async def test_rs_rides_out_one_late_release(make_coordinator):
     """The reported scenario: a late 06:40 file must not blank the sensors."""
-    coord = RadvorRS.__new__(RadvorRS)
+    coord = make_coordinator(RadvorRS)
     coord.curr_release = datetime(2026, 9, 17, 6, 35, tzinfo=UTC)
 
     # 06:40 is due at 06:44:10; RS keeps trying for it until 06:50:10.
@@ -138,7 +149,7 @@ def test_rs_rides_out_one_late_release():
 
 
 @pytest.mark.parametrize("cls", PRODUCT_CLASSES)
-def test_stale_deadline_never_lands_on_a_fetch(cls):
+async def test_stale_deadline_never_lands_on_a_fetch(make_coordinator, cls):
     """The deadline must not coincide with a scheduled fetch.
 
     If it does, the value is written off at the very instant of the attempt
@@ -149,9 +160,8 @@ def test_stale_deadline_never_lands_on_a_fetch(cls):
     """
     assert cls.OVERDUE_GRACE % cls.RELEASE_INTERVAL != timedelta()
 
-    coord = cls.__new__(cls)
     release = datetime(2025, 6, 1, 0, 0, tzinfo=UTC)
-    coord.curr_release = release
+    coord = make_coordinator(cls, curr_release=release)
     deadline = coord._stale_deadline()
 
     fetches = {
@@ -165,14 +175,14 @@ def test_stale_deadline_never_lands_on_a_fetch(cls):
         assert coord._data_is_stale(deadline + timedelta(minutes=minutes)) is True
 
 
-def test_stale_check_is_armed_on_success():
+async def test_stale_check_is_armed_on_success(make_coordinator):
     """A successful fetch arms a callback on the new deadline.
 
     Availability is derived from the clock, so something has to make the
     entities look again when nothing else is happening.
     """
-    coord = _make_coordinator(RadolanRW)
-    coord.curr_release = datetime(2025, 6, 1, 11, 50, tzinfo=UTC)
+    coord = make_coordinator(RadolanRW)
+    coord.curr_release = datetime(2025, 6, 1, 11, 0, tzinfo=UTC)
     fired_at = []
 
     def _fake_track(_hass, _action, point_in_time):
@@ -182,7 +192,7 @@ def test_stale_check_is_armed_on_success():
     with patch.object(coordinator_mod, "async_track_point_in_time", _fake_track):
         coord._schedule_stale_check()
 
-    assert fired_at == [datetime(2025, 6, 1, 13, 24, tzinfo=UTC)]
+    assert fired_at == [datetime(2025, 6, 1, 12, 34, tzinfo=UTC)]
 
     unsub = coord._stale_unsub
     coord._cancel_stale_check()
@@ -195,28 +205,12 @@ def test_stale_check_is_armed_on_success():
 # ----------------------------------------------------------------------
 
 
-def _make_coordinator(cls, *, data=None, curr_release=None):
-    """Build a bare coordinator with just the fast-poll/update state populated."""
-    coord = cls.__new__(cls)
-    coord.hass = object()
-    coord.config_entry = SimpleNamespace(options={})
-    coord.async_client = None
-    coord.coords = (51.05, 13.73)
-    coord.curr_release = curr_release
-    coord.data = data
-    coord._fast_poll_unsub = None
-    coord._fast_poll_failures = 0
-    coord._stale_unsub = None
-
-    return coord
-
-
 @contextmanager
 def _capture_scheduled_delays():
     """Patch the timers, yielding the retry delays they were asked for.
 
-    The deadline callback is stubbed out too, so a success inside the block does
-    not try to arm a real timer on the fake hass.
+    The deadline callback is stubbed out too, so a success inside the block
+    leaves no timer behind.
     """
     delays: list[float] = []
 
@@ -244,9 +238,9 @@ class _TolerantRW(RadolanRW):
     OVERDUE_GRACE = timedelta(hours=1, minutes=30)
 
 
-def test_fast_poll_ramps_by_ten_seconds_then_pins_at_cap():
+async def test_fast_poll_ramps_by_ten_seconds_then_pins_at_cap(make_coordinator):
     """RW: 60, 70, 80, … capped at MAX_FAST_POLL_INTERVAL (5 min)."""
-    coord = _make_coordinator(RadolanRW)
+    coord = make_coordinator(RadolanRW)
 
     with _capture_scheduled_delays() as delays:
         for _ in range(30):
@@ -257,9 +251,9 @@ def test_fast_poll_ramps_by_ten_seconds_then_pins_at_cap():
     assert delays[25:] == [300] * 5
 
 
-def test_fast_poll_cap_is_per_product():
+async def test_fast_poll_cap_is_per_product(make_coordinator):
     """The daily product backs off to 15 min instead of 5."""
-    coord = _make_coordinator(RadolanSFLastYesterday)
+    coord = make_coordinator(RadolanSFLastYesterday)
 
     with _capture_scheduled_delays() as delays:
         for _ in range(120):
@@ -270,11 +264,11 @@ def test_fast_poll_cap_is_per_product():
 
 
 @pytest.mark.asyncio
-async def test_fast_poll_ramp_spans_release_boundaries():
+async def test_fast_poll_ramp_spans_release_boundaries(make_coordinator):
     """Only success resets the ramp — a newly-due release does not."""
-    coord = _make_coordinator(
+    coord = make_coordinator(
         _TolerantRW,
-        data=CoordinatorData(3.2, {}),
+        data=CoordinatorData({"amount": 3.2}, {}),
         curr_release=datetime(2025, 6, 1, 11, 50, tzinfo=UTC),
     )
     coord._fetch_and_parse = AsyncMock(side_effect=OSError("boom"))
@@ -292,9 +286,9 @@ async def test_fast_poll_ramp_spans_release_boundaries():
     assert delays == [60, 70, 80]
 
 
-def test_stop_fast_polling_cancels_and_resets():
+async def test_stop_fast_polling_cancels_and_resets(make_coordinator):
     """Stopping cancels the pending timer and clears the ramp state."""
-    coord = _make_coordinator(RadolanRW)
+    coord = make_coordinator(RadolanRW)
 
     with _capture_scheduled_delays():
         coord._schedule_fast_poll()
@@ -308,30 +302,75 @@ def test_stop_fast_polling_cancels_and_resets():
     assert coord._fast_poll_failures == 0
 
 
-def test_timers_are_registered_for_entry_unload():
+async def test_timers_are_registered_for_entry_unload(make_coordinator, make_entry):
     """Both timers are hooked to unload once, at construction."""
-    entry = SimpleNamespace(
-        entry_id="01JABCDEF0123456789XYZ",
-        data={"name": "Home"},
-        options={},
-        unload_callbacks=[],
-    )
-    entry.async_on_unload = entry.unload_callbacks.append
+    entry = make_entry()
+    with patch.object(entry, "async_on_unload") as on_unload:
+        coord = make_coordinator(RadolanRW, entry=entry)
 
-    with patch.object(DataUpdateCoordinator, "__init__", return_value=None):
-        coord = RadolanRW(object(), entry, None, 51.05, 13.73)
-
-    assert entry.unload_callbacks == [
+    assert [c.args[0] for c in on_unload.call_args_list] == [
         coord._stop_fast_polling,
         coord._cancel_stale_check,
     ]
 
 
 @pytest.mark.asyncio
-async def test_successful_update_stops_fast_polling():
+async def test_a_release_already_fetched_is_not_fetched_again(make_coordinator):
+    """Nothing new is due: the cached payload comes back untouched, no fetch.
+
+    A pending retry ends too: whatever it was for has been fetched since.
+    """
+    now = datetime(2025, 6, 1, 13, 0, tzinfo=UTC)  # 12:00 is the latest RW release
+    cached = CoordinatorData({"amount": 3.2}, {})
+    coord = make_coordinator(
+        RadolanRW, data=cached, curr_release=datetime(2025, 6, 1, 12, 0, tzinfo=UTC)
+    )
+    coord._fetch_and_parse = AsyncMock(side_effect=AssertionError("fetched again"))
+
+    with (
+        patch.object(coordinator_mod.dt_util, "utcnow", return_value=now),
+        _capture_scheduled_delays(),
+    ):
+        coord._schedule_fast_poll()
+        unsub = coord._fast_poll_unsub
+        assert await coord._async_update_data() is cached
+
+    coord._fetch_and_parse.assert_not_awaited()
+    unsub.assert_called_once_with()
+    assert coord._fast_poll_failures == 0
+
+
+@pytest.mark.asyncio
+async def test_fast_poll_retry_fetches_when_it_fires(hass, make_coordinator, freezer):
+    """End to end on real timers: a failure arms the retry, and it refreshes."""
+    freezer.move_to("2025-06-01 13:00:00+00:00")
+    coord = make_coordinator(RadolanRW)
+    coord._fetch_and_parse = AsyncMock(
+        side_effect=[OSError("not there yet"), ({"amount": 3.2}, {})]
+    )
+
+    with patch.object(coordinator_mod, "_apply_retry_jitter", lambda delay: delay):
+        await coord.async_refresh()
+    assert not coord.last_update_success
+    assert coord._fast_poll_unsub is not None
+
+    freezer.tick(timedelta(seconds=61))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+
+    assert coord._fetch_and_parse.await_count == 2
+    assert coord.last_update_success
+    assert coord.data.data == {"amount": 3.2}
+    assert coord.curr_release == datetime(2025, 6, 1, 12, 0, tzinfo=UTC)
+    assert coord._fast_poll_unsub is None
+    coord._cancel_stale_check()
+
+
+@pytest.mark.asyncio
+async def test_successful_update_stops_fast_polling(make_coordinator):
     """A successful fetch cancels the retry timer and resets the ramp."""
     now = datetime(2025, 6, 1, 13, 0, tzinfo=UTC)
-    coord = _make_coordinator(RadolanRW)
+    coord = make_coordinator(RadolanRW)
     coord._fetch_and_parse = AsyncMock(side_effect=OSError("boom"))
 
     with (
@@ -344,22 +383,22 @@ async def test_successful_update_stops_fast_polling():
         assert delays == [60]
         unsub = coord._fast_poll_unsub
 
-        coord._fetch_and_parse = AsyncMock(return_value=(3.2, {}))
+        coord._fetch_and_parse = AsyncMock(return_value=({"amount": 3.2}, {}))
         result = await coord._async_update_data()
 
-    assert result.data == 3.2
-    assert coord.curr_release == datetime(2025, 6, 1, 11, 50, tzinfo=UTC)
+    assert result.data == {"amount": 3.2}
+    assert coord.curr_release == datetime(2025, 6, 1, 12, 0, tzinfo=UTC)
     unsub.assert_called_once_with()
     assert coord._fast_poll_unsub is None
     assert coord._fast_poll_failures == 0
 
 
 @pytest.mark.asyncio
-async def test_fast_poll_survives_the_transition_to_stale():
+async def test_fast_poll_survives_the_transition_to_stale(make_coordinator):
     """Fast-poll keeps running across the fresh → stale → UpdateFailed boundary."""
-    coord = _make_coordinator(
+    coord = make_coordinator(
         _TolerantRW,
-        data=CoordinatorData(3.2, {}),
+        data=CoordinatorData({"amount": 3.2}, {}),
         curr_release=datetime(2025, 6, 1, 11, 50, tzinfo=UTC),
     )
     coord._fetch_and_parse = AsyncMock(side_effect=OSError("boom"))
@@ -387,10 +426,10 @@ async def test_fast_poll_survives_the_transition_to_stale():
 
 
 @pytest.mark.asyncio
-async def test_first_ever_failure_starts_fast_polling():
+async def test_first_ever_failure_starts_fast_polling(make_coordinator):
     """With no cached data at all, the retry timer is armed before UpdateFailed."""
     now = datetime(2025, 6, 1, 13, 0, tzinfo=UTC)
-    coord = _make_coordinator(RadolanRW)
+    coord = make_coordinator(RadolanRW)
     coord._fetch_and_parse = AsyncMock(side_effect=OSError("boom"))
 
     with (
@@ -405,10 +444,10 @@ async def test_first_ever_failure_starts_fast_polling():
 
 
 @pytest.mark.asyncio
-async def test_a_file_that_cannot_be_read_leaves_its_traceback_once(caplog):
+async def test_a_file_that_cannot_be_read_leaves_its_traceback_once(make_coordinator, caplog):
     """Debug traceback on the first failure of a run; none for a late file."""
     now = datetime(2025, 6, 1, 13, 0, tzinfo=UTC)
-    coord = _make_coordinator(RadolanRW)
+    coord = make_coordinator(RadolanRW)
     caplog.set_level("DEBUG", logger=coordinator_mod.__name__)
 
     with (
@@ -481,6 +520,8 @@ def test_not_found_message_does_not_blame_the_user():
         (_response_error(503, "Service Unavailable"), "HTTP 503"),
         (aiohttp.ClientConnectionError("DNS failure"), "internet access"),
         (ValueError("Unexpected RADOLAN grid shape"), "please report it"),
+        (UnsupportedGrid("PROJ parameters ['k_0']"), "please report it"),
+        (OutsideGrid("(60.0, 25.0) is outside the 1200 x 1100 grid"), "location inside Germany"),
     ],
 )
 def test_every_message_states_the_retry(err, expected):
@@ -507,19 +548,19 @@ def test_every_product_has_a_readable_log_label():
     assert len(set(labels)) == len(labels), "labels must identify the product"
 
 
-def test_daily_deadline_follows_the_local_release_grid():
+async def test_daily_deadline_follows_the_local_release_grid(make_coordinator):
     """sf_2350's releases are 23 or 25 h apart across a DST changeover.
 
     Adding RELEASE_INTERVAL to the UTC timestamp would put the deadline an hour
     out on those two days — in autumn, before the file it waits for can exist.
     """
     berlin = ZoneInfo("Europe/Berlin")
-    coord = RadolanSFLastYesterday.__new__(RadolanSFLastYesterday)
+    coord = make_coordinator(RadolanSFLastYesterday)
     # Last success: the 23:50 release on the day the clocks go back.
     coord.curr_release = datetime(2025, 10, 25, 23, 50, tzinfo=berlin).astimezone(UTC)
 
     with patch.object(
-        coordinator_mod.dt_util, "as_local", lambda d: d.astimezone(berlin)
+        coordinator_mod.dt_util, "get_default_time_zone", lambda: berlin
     ):
         deadline = coord._stale_deadline()
 
@@ -528,6 +569,34 @@ def test_daily_deadline_follows_the_local_release_grid():
     assert deadline == next_release + timedelta(minutes=31) + timedelta(minutes=30)
     # 25 h later in absolute terms, not 24.
     assert next_release - coord.curr_release == timedelta(hours=25)
+
+
+def test_local_grid_steps_over_both_changeovers():
+    """A 23:50-local grid: 23 h across spring, 25 h across autumn, both ways."""
+    berlin = ZoneInfo("Europe/Berlin")
+    grid = ReleaseGrid(timedelta(hours=24), timedelta(hours=23, minutes=50), berlin)
+
+    def local(day: str) -> datetime:
+        y, m, d = (int(x) for x in day.split("-"))
+        return datetime(y, m, d, 23, 50, tzinfo=berlin).astimezone(UTC)
+
+    for before, after, hours in (
+        ("2026-03-28", "2026-03-29", 23),
+        ("2026-10-24", "2026-10-25", 25),
+    ):
+        assert grid.next_after(local(before)) == local(after)
+        assert local(after) - local(before) == timedelta(hours=hours)
+        assert grid.previous(local(after)) == local(before)
+        assert grid.at_or_before(local(after) + timedelta(hours=3)) == local(after)
+    assert grid.back(local("2026-10-26"), 3) == local("2026-10-23")
+
+
+def test_a_wall_time_that_occurs_twice_means_its_first_occurrence():
+    """As before ReleaseGrid: the autumn hour 02:00-03:00 floors onto its first pass."""
+    berlin = ZoneInfo("Europe/Berlin")
+    grid = ReleaseGrid(timedelta(hours=24), timedelta(hours=2, minutes=30), berlin)
+    second_pass = datetime(2026, 10, 25, 1, 55, tzinfo=UTC)  # 02:55 CET
+    assert grid.at_or_before(second_pass) == datetime(2026, 10, 25, 0, 30, tzinfo=UTC)
 
 
 def test_every_product_states_its_own_grace():
@@ -547,7 +616,7 @@ def test_every_product_states_its_own_grace():
 
 
 @pytest.mark.parametrize("cls", PRODUCT_CLASSES)
-def test_fetch_jitter_shifts_the_schedule_and_the_deadline_together(cls):
+async def test_fetch_jitter_shifts_the_schedule_and_the_deadline_together(make_coordinator, cls):
     """Jitter lives in the delay, so it must not eat into the deadline margin.
 
     Everything that decides when a release is ours to fetch derives from
@@ -559,9 +628,9 @@ def test_fetch_jitter_shifts_the_schedule_and_the_deadline_together(cls):
     margins = set()
 
     for seconds in (0, 7, 15, 23, 30):
-        coord = cls.__new__(cls)
-        coord._fetch_jitter = timedelta(seconds=seconds)
-        coord.curr_release = release
+        coord = make_coordinator(
+            cls, jitter=timedelta(seconds=seconds), curr_release=release
+        )
 
         assert coord.release_delay == cls.RELEASE_DELAY + timedelta(seconds=seconds)
 
@@ -618,11 +687,10 @@ def test_fetch_jitter_stays_well_inside_one_release():
         assert coordinator_mod.MAX_FETCH_JITTER < cls.RELEASE_INTERVAL
 
 
-def test_fetch_jitter_keeps_the_schedule_on_whole_seconds():
+async def test_fetch_jitter_keeps_the_schedule_on_whole_seconds(make_coordinator):
     """track_time_change_args is built from whole seconds; jitter must be too."""
     for seconds in (0, 17, 30):
-        coord = RadvorRS.__new__(RadvorRS)
-        coord._fetch_jitter = timedelta(seconds=seconds)
+        coord = make_coordinator(RadvorRS, jitter=timedelta(seconds=seconds))
         args = coord.track_time_change_args
 
         assert len(args) == 1

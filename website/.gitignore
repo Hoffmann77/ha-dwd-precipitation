@@ -1,0 +1,5 @@
+# Dependencies and build output of the documentation site
+/node_modules
+/build
+/.docusaurus
+/.cache-loader

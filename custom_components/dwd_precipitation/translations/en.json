@@ -23,51 +23,155 @@
     "step": {
       "init": {
         "title": "DWD Precipitation options",
-        "description": "These settings change how the sensors present DWD's data. None of them affect how often it is fetched — each product is refreshed as soon as DWD publishes it, and failed fetches are retried automatically.",
-        "data": {
-          "extra_state_attributes": "Add technical details to each sensor",
-          "unavailable_when_stale": "Show sensors as unavailable when the data is out of date",
-          "precipitation_threshold": "Rain detection threshold (mm per hour)",
-          "start_end_mode": "How “Precipitation start” and “Precipitation end” report",
-          "precipitation_end_algorithm": "When “Precipitation end” counts rain as over",
-          "precipitation_reset_threshold": "Rain needed to reset the dry-streak counter (mm)",
-          "full_rolling_series": "Include the past hour in the hourly forecast series",
-          "neighbourhood_evaluation": "Evaluate the area around the location"
-        },
-        "data_description": {
-          "extra_state_attributes": "Attaches the DWD product name, the measurement time and the period each value covers to every sensor as attributes. Useful in templates or when reporting a problem; leave it off otherwise.",
-          "unavailable_when_stale": "If DWD does not publish a new file in time, the affected sensors report “unavailable” instead of keeping the last value. Turn this off to always keep the most recent reading, accepting that it may be hours old. Either way the missing file keeps being retried in the background.",
-          "precipitation_threshold": "How much forecast rain counts as precipitation for the “Precipitation start”, “Precipitation end” and “Precipitation expected” sensors. 0 means any amount DWD detects; raise it to around 0.5 to ignore drizzle.",
-          "start_end_mode": "Whether those two sensors show a clock time (“14:25”) or the minutes until the event (“20”). Whichever you do not pick stays available as an attribute on the same sensor.",
-          "precipitation_end_algorithm": "“First dry gap” reports the end of the current burst, so it moves around during showers. “Precipitation clears within 2 h” waits until no further rain is forecast, which is steadier but stays unknown longer. DWD forecasts only two hours ahead, so beyond that the sensor is “unknown” either way.",
-          "precipitation_reset_threshold": "How much rain resets “Timespan without precipitation” to zero. It is compared against “Precipitation now”, which is millimetres accumulated over the past hour — so 1 mm means 1 mm fell in the last hour, not a rate.",
-          "full_rolling_series": "Makes the “forecast_rolling_1h” attribute of “Peak hourly precipitation next 2h” start one hour earlier. Each entry is the rain in the hour starting at that time, so the first entries also include rain that has already fallen, and a chart shows the past hour and the forecast as one curve. The sensor's value is the same either way, as it only looks at the hours ahead. Turning this on roughly doubles the processing time per update, which can matter on small devices.",
-          "neighbourhood_evaluation": "Also looks at the radar cells around your location: rain within about 1 km counts for the rain warning, and the nearest precipitation within 5 km is reported with distance and direction (“Nearest precipitation”, “Precipitation start nearby”). Turn it off to use only your own 1 km cell; those two sensors are then removed."
+        "description": "The settings are grouped by the sensors they change. Saving reloads the integration; the sensors are back after a few seconds. [What each setting does]({docs_url}/getting-started/configuration#options)",
+        "sections": {
+          "rain_forecast": {
+            "name": "Rain forecast",
+            "description": "For “Precipitation start”, “Precipitation end” and “Precipitation expected”.",
+            "data": {
+              "precipitation_threshold": "Only count rain heavier than",
+              "start_end_mode": "Show start and end as",
+              "precipitation_end_algorithm": "“Precipitation end” shows"
+            },
+            "data_description": {
+              "precipitation_threshold": "Lighter rain counts as dry for these three sensors. 0 counts any rain the radar sees; about 0.5 ignores drizzle.",
+              "start_end_mode": "Whichever you do not pick is still shown as an attribute of the two sensors.",
+              "precipitation_end_algorithm": "“The first dry break” is when the current shower stops, so in showery weather it can change often. “When no more rain is forecast” changes less often, but stays “unknown” for longer. The forecast reaches 2 hours ahead. [More about both]({docs_url}/getting-started/configuration#end-algorithm)"
+            }
+          },
+          "dry_streak": {
+            "name": "Timespan without precipitation",
+            "description": "For the sensor that counts how long it has not rained.",
+            "data": {
+              "precipitation_reset_threshold": "Rain that resets the count",
+              "dry_streak_source": "Measured with"
+            },
+            "data_description": {
+              "precipitation_reset_threshold": "When at least this much rain falls within one hour, the count starts again from zero. 1 mm is 1 litre per square metre.",
+              "dry_streak_source": "With radar and rain gauges the count is more accurate, but a reset shows about 30 to 40 minutes after the rain. Radar only reacts within a few minutes, but is less exact. [More about both]({docs_url}/getting-started/configuration#dry-streak-source)"
+            }
+          },
+          "rain_event_tracking": {
+            "name": "Rain events and rain warnings",
+            "description": "Rain events follow each shower from the first forecast that shows it until it has passed. Rain warnings are built on them; you add those with “Add rain warning” on this integration's page.",
+            "data": {
+              "rain_events": "Add the “Rain events” sensor",
+              "rain_event_threshold": "Only count rain heavier than"
+            },
+            "data_description": {
+              "rain_events": "For blueprints that warn about or report rain. Rain warnings work without it. While the sensor or a rain warning is in use, the integration keeps a small record of recent rain. [About the sensor]({docs_url}/entities/rain-events)",
+              "rain_event_threshold": "Applies to the “Rain events” sensor and to all rain warnings. 0 counts any rain the radar sees. Separate from the setting of the same name under “Rain forecast”."
+            }
+          },
+          "advanced_options": {
+            "name": "Advanced",
+            "description": "Extra details for templates and charts, and what the sensors show when DWD is late. Most installations never change these.",
+            "data": {
+              "extra_state_attributes": "Add technical details to the sensors",
+              "full_rolling_series": "Add the past hour to the hourly rain series",
+              "unavailable_when_stale": "Show “unavailable” when the data is out of date"
+            },
+            "data_description": {
+              "extra_state_attributes": "Shows which DWD product each value comes from, when it was measured and which period it covers, as extra attributes. Helpful when you report a problem; otherwise leave it off. [List of the details]({docs_url}/entities/attributes#technical-details)",
+              "full_rolling_series": "For charts: the “forecast_rolling_1h” attribute of “Peak hourly precipitation next 120 min” then starts an hour earlier, so rain that has already fallen and the forecast form one curve. The sensor's value does not change. After a restart, the past hour fills in over the first hour. [More]({docs_url}/entities/radvor-rv#peak-hourly-precipitation)",
+              "unavailable_when_stale": "When DWD is late with new data, the affected sensors show “unavailable” instead of an old value. Turn this off to keep showing the last value, even if it is hours old. Either way, new data is fetched as soon as DWD publishes it. [When data counts as out of date]({docs_url}/how-it-works/availability)"
+            }
+          }
         }
+      }
+    }
+  },
+  "config_subentries": {
+    "rain_warning": {
+      "initiate_flow": {
+        "user": "Add rain warning",
+        "reconfigure": "Change rain warning"
+      },
+      "entry_type": "Rain warning",
+      "step": {
+        "user": {
+          "title": "Add a rain warning",
+          "description": "A rain warning turns on shortly before rain reaches this location, and stays on while it rains. Each warning is a device of its own, named after the location and the warning (“Home Laundry”), with two entities: “Rain warning” (on/off) and “Rain warning status” (dry, soon or rain, with the details of the rain event). It works on the rain events the integration tracks, so the advanced option “Rain event threshold” decides what counts as rain.",
+          "data": {
+            "name": "Name",
+            "lead_time": "Lead time",
+            "min_mm": "Minimum rain in total (mm)",
+            "min_peak_1h": "Minimum rain in the wettest hour (mm)",
+            "min_peak_10min": "Minimum rain in the wettest 10 minutes (mm)",
+            "combine": "With several minimums"
+          },
+          "data_description": {
+            "name": "What the warning is for, such as “Laundry” or “Windows”. At a location named “Home”, “Laundry” gives the device “Home Laundry” and binary_sensor.home_laundry_rain_warning.",
+            "lead_time": "How many minutes before the rain the warning turns on. The forecast reaches two hours ahead and arrives a few minutes after DWD's release, so the warning can come up to 5 minutes later than this.",
+            "min_mm": "Only warn about a rain event that brings at least this much in total, measured and forecast. Leave empty to warn about every rain event.",
+            "min_peak_1h": "Only warn about a rain event whose wettest hour brings at least this much. Leave empty to ignore it.",
+            "min_peak_10min": "Only warn about a rain event whose wettest 10 minutes bring at least this much, for short heavy bursts. Leave empty to ignore it.",
+            "combine": "Whether an event has to reach one of the minimums you set, or all of them. Without a minimum it does not matter."
+          }
+        },
+        "reconfigure": {
+          "title": "Change the rain warning",
+          "description": "A new name renames the warning's device and entities; their entity ids stay as they are.",
+          "data": {
+            "name": "Name",
+            "lead_time": "Lead time",
+            "min_mm": "Minimum rain in total (mm)",
+            "min_peak_1h": "Minimum rain in the wettest hour (mm)",
+            "min_peak_10min": "Minimum rain in the wettest 10 minutes (mm)",
+            "combine": "With several minimums"
+          },
+          "data_description": {
+            "name": "What the warning is for, such as “Laundry” or “Windows”. At a location named “Home”, “Laundry” gives the device “Home Laundry” and binary_sensor.home_laundry_rain_warning.",
+            "lead_time": "How many minutes before the rain the warning turns on. The forecast reaches two hours ahead and arrives a few minutes after DWD's release, so the warning can come up to 5 minutes later than this.",
+            "min_mm": "Only warn about a rain event that brings at least this much in total, measured and forecast. Leave empty to warn about every rain event.",
+            "min_peak_1h": "Only warn about a rain event whose wettest hour brings at least this much. Leave empty to ignore it.",
+            "min_peak_10min": "Only warn about a rain event whose wettest 10 minutes bring at least this much, for short heavy bursts. Leave empty to ignore it.",
+            "combine": "Whether an event has to reach one of the minimums you set, or all of them. Without a minimum it does not matter."
+          }
+        }
+      },
+      "error": {
+        "invalid_name": "Please enter a name.",
+        "name_already_exists": "This location already has a rain warning with this name. Please choose a different name."
+      },
+      "abort": {
+        "reconfigure_successful": "The rain warning was changed."
       }
     }
   },
   "selector": {
     "start_end_mode": {
       "options": {
-        "timestamp": "Clock time",
-        "duration": "Minutes from now"
+        "timestamp": "Clock time, e.g. 14:25",
+        "duration": "Minutes from now, e.g. 20"
       }
     },
     "precipitation_end_algorithm": {
       "options": {
-        "episode": "First dry gap",
-        "clearing": "Precipitation clears within 2 h"
+        "episode": "The first dry break",
+        "clearing": "When no more rain is forecast"
+      }
+    },
+    "dry_streak_source": {
+      "options": {
+        "rw": "Radar and rain gauges (RW)",
+        "rs": "Radar only (RS)"
+      }
+    },
+    "combine": {
+      "options": {
+        "any": "One of them is enough",
+        "all": "All of them must be reached"
       }
     }
   },
   "entity": {
     "sensor": {
-      "precipitation_now": {
-        "name": "Precipitation now"
+      "precipitation_last_60_min": {
+        "name": "Precipitation last 60 min"
       },
-      "precipitation_last_1h": {
-        "name": "Precipitation last 1h"
+      "precipitation_previous_hour": {
+        "name": "Precipitation previous hour"
       },
       "precipitation_last_24h": {
         "name": "Precipitation last 24h"
@@ -75,26 +179,35 @@
       "precipitation_yesterday": {
         "name": "Precipitation yesterday"
       },
-      "precipitation_total_hourly": {
-        "name": "Precipitation total (hourly)"
+      "precipitation_total": {
+        "name": "Precipitation total"
       },
       "precipitation_total_daily": {
-        "name": "Precipitation total (daily)"
+        "name": "Precipitation total daily"
       },
-      "precipitation_next_1h": {
-        "name": "Precipitation next 1h"
+      "precipitation_next_60_min": {
+        "name": "Precipitation next 60 min"
       },
-      "precipitation_next_1_2h": {
-        "name": "Precipitation next 1–2h"
+      "precipitation_next_60_120_min": {
+        "name": "Precipitation next 60–120 min"
       },
-      "peak_hourly_precipitation_next_2h": {
-        "name": "Peak hourly precipitation next 2h"
+      "precipitation_next_120_min": {
+        "name": "Precipitation next 120 min"
       },
-      "peak_intensity_next_1h": {
-        "name": "Peak intensity next 1h"
+      "peak_hourly_precipitation_next_120_min": {
+        "name": "Peak hourly precipitation next 120 min"
       },
-      "peak_intensity_next_1_2h": {
-        "name": "Peak intensity next 1–2h"
+      "precipitation_intensity_now": {
+        "name": "Precipitation intensity now"
+      },
+      "peak_intensity_next_60_min": {
+        "name": "Peak intensity next 60 min"
+      },
+      "peak_intensity_next_60_120_min": {
+        "name": "Peak intensity next 60–120 min"
+      },
+      "peak_intensity_next_120_min": {
+        "name": "Peak intensity next 120 min"
       },
       "precipitation_start": {
         "name": "Precipitation start"
@@ -105,8 +218,8 @@
       "timespan_without_precipitation": {
         "name": "Timespan without precipitation"
       },
-      "precipitation_type": {
-        "name": "Precipitation type",
+      "precipitation_type_now": {
+        "name": "Precipitation type now",
         "state": {
           "no_precipitation": "No precipitation",
           "not_classified": "Not classified",
@@ -121,29 +234,29 @@
           "large_hail": "Large hail"
         }
       },
-      "nearest_precipitation": {
-        "name": "Nearest precipitation"
+      "rain_events": {
+        "name": "Rain events",
+        "state": {
+          "none": "None",
+          "upcoming": "Upcoming",
+          "ongoing": "Ongoing"
+        }
       },
-      "area_precipitation_start": {
-        "name": "Precipitation start nearby"
-      },
-      "rain_warning": {
-        "name": "Rain warning",
+      "rain_warning_status": {
+        "name": "Rain warning status",
         "state": {
           "dry": "Dry",
-          "soon": "Rain soon",
-          "rain": "Raining"
+          "soon": "Soon",
+          "rain": "Rain"
         }
       }
     },
     "binary_sensor": {
       "precipitation_expected": {
         "name": "Precipitation expected"
-      }
-    },
-    "number": {
-      "warning_lead_time": {
-        "name": "Rain warning lead time"
+      },
+      "rain_warning": {
+        "name": "Rain warning"
       }
     }
   }

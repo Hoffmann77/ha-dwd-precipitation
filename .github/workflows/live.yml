@@ -31,7 +31,7 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           TITLE="Live DWD source check failing"
-          BODY="The scheduled live download/parse check failed — a DWD file may be unavailable or its URL/archive/binary format changed. Run: $RUN_URL"
+          BODY="The scheduled live download/parse check failed — a DWD file may be unavailable or its URL/archive/binary format changed, or RS may no longer be the sum of RV's 5-minute steps (see docs/adr/0009). Run: $RUN_URL"
           num=$(gh issue list --state open --search "$TITLE in:title" --json number --jq '.[0].number // empty')
           if [ -n "$num" ]; then
             gh issue comment "$num" --body "$BODY"
