@@ -2,15 +2,18 @@ blueprint:
   name: DWD Regenwarnung
   description: >-
     Meldet Niederschlag inklusive Art nur einmal pro Niederschlagsereignis.
-    Nutzt den Sensor „Regenwarnung“ der DWD-Precipitation-Integration.
-    Die Vorwarnzeit stellst man am Regler „Vorwarnzeit Regenwarnung“ derselben Integration ein.
+    Nutzt den Sensor „Rain warning status“ einer Regenwarnung der
+    DWD-Precipitation-Integration (ab Version 2026.11). Die Vorwarnzeit stellst
+    du an der Warnung selbst ein, am Regler „Lead time“ oder unter „Neu konfigurieren“.
     In den Aktionen steht der fertige Meldungstext als {{ message_text }} zur Verfügung,
     die Texte selbst lassen sich unter „Meldungstexte“ anpassen.
   domain: automation
   input:
     warning_sensor:
-      name: Regenwarnung-Sensor
-      description: Sensor „Regenwarnung“ der DWD-Precipitation-Integration.
+      name: Regenwarnung-Status
+      description: >-
+        Sensor „Rain warning status“ einer Regenwarnung der DWD-Precipitation-Integration,
+        z. B. sensor.home_waesche_rain_warning_status.
       selector:
         entity:
           filter:
@@ -142,9 +145,9 @@ blueprint:
         {{ laeuft }} („Es regnet bereits“, „Es schneit bereits“ …),
         {{ beginnt }} („zu regnen“, „zu schneien“ … oder die Phrase),
         {{ current_remaining }} (Minuten bis Ende, wenn es schon regnet),
-        {{ horizon }} (Vorhersagehorizont in Minuten),
-        {{ art }} (Rohwert wie rain, snow, hail),
-        {{ peak }} (Spitzenintensität in mm/h),
+        {{ horizon }} (Minuten bis zum Ende des Vorhersagehorizonts, bei offenem Ende),
+        {{ art }} (Rohwert wie rain, snow, hail; vor dem Regen geschätzt aus dem Umkreis),
+        {{ peak }} (Spitzenintensität in mm/h, aus den nassesten 10 Minuten),
         {{ amount }} (Menge in mm).
       input:
         text_soon:
@@ -211,7 +214,8 @@ actions:
       - sequence:
           - wait_template: >-
               {{ states(warning_sensor) == 'dry'
-                 or state_attr(warning_sensor, 'next_peak_intensity') | float(0) >= push_min_intensity | float(0) }}
+                 or [(state_attr(warning_sensor, 'peak_10min') | float(0)) * 6,
+                     state_attr(warning_sensor, 'peak_1h') | float(0)] | max >= push_min_intensity | float(0) }}
           - if:
               - condition: template
                 value_template: "{{ states(warning_sensor) in ['soon', 'rain'] }}"
@@ -224,16 +228,31 @@ actions:
               - &bausteine
                 variables:
                   sensor_state: "{{ states(warning_sensor) }}"
-                  starts_in: "{{ state_attr(warning_sensor, 'rain_starts_in_min') | int(0) }}"
-                  next_length: "{{ state_attr(warning_sensor, 'next_length') | int(0) }}"
-                  next_open_end: "{{ state_attr(warning_sensor, 'next_open_end') | bool(false) }}"
-                  current_open_end: "{{ state_attr(warning_sensor, 'current_open_end') | bool(false) }}"
-                  current_remaining: "{{ state_attr(warning_sensor, 'current_remaining_min') | int(0) }}"
-                  horizon: "{{ state_attr(warning_sensor, 'forecast_remaining_horizon_min') | int(60) }}"
-                  peak: "{{ state_attr(warning_sensor, 'next_peak_intensity') | float(0) }}"
-                  amount: "{{ state_attr(warning_sensor, 'next_amount_mm') | float(0) }}"
-                  art: "{{ state_attr(warning_sensor, 'precipitation_type') | default('', true) }}"
-                  stufe: "{{ state_attr(warning_sensor, 'next_intensity_level') | default('leicht', true) }}"
+                  # Beginn und Ende des Ereignisses (ISO-Zeiten der Warnung) in Minuten ab jetzt
+                  t_start: "{{ state_attr(warning_sensor, 'start') or '' }}"
+                  t_end: "{{ state_attr(warning_sensor, 'end') or '' }}"
+                  starts_in: >-
+                    {{ [((as_datetime(t_start) - now()).total_seconds() / 60) | round(0) | int, 0] | max
+                       if t_start else 0 }}
+                  current_remaining: >-
+                    {{ [((as_datetime(t_end) - now()).total_seconds() / 60) | round(0) | int, 0] | max
+                       if t_end else 0 }}
+                  next_length: >-
+                    {{ ((as_datetime(t_end) - as_datetime(t_start)).total_seconds() / 60) | round(0) | int
+                       if t_start and t_end else 0 }}
+                  # Ende offen: das Ereignis reicht über den Vorhersagehorizont hinaus
+                  next_open_end: "{{ state_attr(warning_sensor, 'beyond_horizon') | bool(false) }}"
+                  current_open_end: "{{ next_open_end }}"
+                  horizon: "{{ current_remaining }}"
+                  # Spitzenintensität in mm/h aus den nassesten 10 Minuten (bzw. der nassesten Stunde)
+                  peak: >-
+                    {{ [(state_attr(warning_sensor, 'peak_10min') | float(0)) * 6,
+                        state_attr(warning_sensor, 'peak_1h') | float(0)] | max | round(1) }}
+                  amount: "{{ state_attr(warning_sensor, 'mm') | float(0) }}"
+                  # Gemessene Art, solange es noch nicht regnet die Art des nächsten Niederschlags im Umkreis
+                  art: "{{ state_attr(warning_sensor, 'expected_type') | default('', true) }}"
+                  stufe: >-
+                    {{ 'leicht' if peak < 2.5 else 'mäßig' if peak < 10 else 'stark' if peak < 50 else 'sehr stark' }}
                   wort: >-
                     {{ {'rain': 'Regen', 'drizzle': 'Nieselregen', 'freezing_drizzle': 'gefrierender Nieselregen',
                         'freezing_rain': 'gefrierender Regen', 'sleet': 'Schneeregen', 'snow': 'Schneefall',
@@ -277,7 +296,8 @@ actions:
       - sequence:
           - wait_template: >-
               {{ states(warning_sensor) == 'dry'
-                 or state_attr(warning_sensor, 'next_peak_intensity') | float(0) >= announce_min_intensity | float(0) }}
+                 or [(state_attr(warning_sensor, 'peak_10min') | float(0)) * 6,
+                     state_attr(warning_sensor, 'peak_1h') | float(0)] | max >= announce_min_intensity | float(0) }}
           - if:
               - condition: template
                 value_template: "{{ states(warning_sensor) in ['soon', 'rain'] }}"
