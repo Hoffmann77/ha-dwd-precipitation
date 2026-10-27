@@ -290,6 +290,36 @@ async def test_ongoing_rain_is_rain(make_entry, hass: HomeAssistant) -> None:
     assert hass.states.get("binary_sensor.home_laundry_rain_warning").state == "on"
 
 
+async def test_expected_type_is_the_measured_one_or_the_nearest(
+    make_entry, hass: HomeAssistant
+) -> None:
+    """Upcoming: HymecNG's nearest precipitation; measured: the event's type."""
+    entry = await _set_up(hass, make_entry, [_warning(LAUNDRY, "Laundry")], view=_view(20))
+    coordinators = entry.runtime_data.coordinators
+    status = "sensor.home_laundry_rain_warning_status"
+    assert hass.states.get(status).state == "soon"
+    assert hass.states.get(status).attributes["expected_type"] is None
+
+    coordinators["hymecng"].data.data["precipitation_type_nearby"] = "snow"
+    coordinators["rv"].async_update_listeners()
+    await hass.async_block_till_done()
+    state = hass.states.get(status)
+    assert state.state == "soon"
+    assert state.attributes["type"] is None
+    assert state.attributes["expected_type"] == "snow"
+
+
+async def test_expected_type_prefers_the_measured_type(make_entry, hass: HomeAssistant) -> None:
+    entry = await _set_up(
+        hass, make_entry, [_warning(LAUNDRY, "Laundry")], view=_view(-10, "ongoing", type_="graupel")
+    )
+    entry.runtime_data.coordinators["hymecng"].data.data["precipitation_type_nearby"] = "snow"
+    entry.runtime_data.coordinators["rv"].async_update_listeners()
+    await hass.async_block_till_done()
+
+    assert hass.states.get("sensor.home_laundry_rain_warning_status").attributes["expected_type"] == "graupel"
+
+
 async def test_an_event_below_the_minimum_is_dry(make_entry, hass: HomeAssistant) -> None:
     await _set_up(
         hass, make_entry, [_warning(LAUNDRY, "Laundry", min_mm=5.0)], view=_view(-10, "ongoing")

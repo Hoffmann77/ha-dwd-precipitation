@@ -70,6 +70,7 @@ is out of date, like the other forecast sensors.
 | `peak_1h` | The rain in its wettest hour, in mm |
 | `peak_10min` | The rain in its wettest 10 minutes, in mm |
 | `type` | The measured precipitation type of the event, such as `rain` or `snow`, as in [Rain events](rain-events.md); `null` while it is only forecast, since DWD forecasts no type |
+| `expected_type` | The measured `type` once there is one; before that an estimate: the type of the nearest precipitation the radar sees within 5 km of the location, such as `snow` when snow is approaching. `null` when there is none |
 
 All of them are `null` while the status is `dry`, and none is recorded in
 history.

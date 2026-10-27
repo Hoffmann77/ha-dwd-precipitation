@@ -32,6 +32,7 @@ from .const import (
     KEY_NEXT_60_120,
     KEY_NEXT_120,
     KEY_PRECIPITATION_TYPE,
+    KEY_PRECIPITATION_TYPE_NEARBY,
     RW_SLIDING_KEY,
     START_END_MODE_DURATION,
     PRECIP_TYPE_OPTIONS,
@@ -550,7 +551,7 @@ class RainWarningStatusSensor(RainWarningEntity, SensorEntity):
     """Rain warning status: dry, soon or rain, and the event it is about."""
 
     # The event's id, start and amounts change with every release.
-    _unrecorded_attributes = frozenset(rain_warning.ATTRIBUTES)
+    _unrecorded_attributes = frozenset((*rain_warning.ATTRIBUTES, "expected_type"))
 
     @property
     def native_value(self) -> str | None:
@@ -567,14 +568,36 @@ class RainWarningStatusSensor(RainWarningEntity, SensorEntity):
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return the event the warning is about; all None while dry.
 
-        ``event_id`` (the Rain events id), ``start``, and from the event's
-        total ``mm``, ``peak_1h`` and ``peak_10min`` (mm), and its measured
-        ``type`` (None while upcoming). Empty while there is no view. None of
-        it is recorded.
+        ``event_id`` (the Rain events id), ``start``, ``end`` and
+        ``beyond_horizon``, and from the event's total ``mm``, ``peak_1h`` and
+        ``peak_10min`` (mm), and its measured ``type`` (None while upcoming).
+        ``expected_type`` is the measured type when there is one, otherwise
+        HymecNG's estimate: the type of the nearest precipitation within 5 km
+        (None while dry). Empty while there is no view. None of it is
+        recorded.
 
         """
         verdict = self._verdict()
-        return {} if verdict is None else verdict.attributes()
+        if verdict is None:
+            return {}
+        attrs = verdict.attributes()
+        attrs["expected_type"] = (
+            None if verdict.state == rain_warning.DRY else attrs["type"] or self._nearby_type()
+        )
+        return attrs
+
+    def _nearby_type(self) -> str | None:
+        """Return HymecNG's type of the nearest precipitation, None without one.
+
+        From the entry's HymecNG coordinator, which reads it while the entry
+        tracks rain events, as it does whenever it has a rain warning. None
+        while HymecNG has no recent enough data.
+
+        """
+        hymecng = self.coordinator.config_entry.runtime_data.coordinators.get("hymecng")
+        if hymecng is None or hymecng.data is None or not hymecng.data_is_reportable:
+            return None
+        return hymecng.data.data.get(KEY_PRECIPITATION_TYPE_NEARBY)
 
 
 class PrecipitationTotalSensor(DwdCoordinatorEntity, RestoreEntity, SensorEntity):

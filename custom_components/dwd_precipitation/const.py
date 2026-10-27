@@ -142,3 +142,10 @@ KEY_NEXT_60_120 = "next_60_120"  # RS _120
 KEY_NEXT_120 = "next_120"        # RS _060 + _120
 KEY_AMOUNT = "amount"            # RADOLAN: mm in the analysis window
 KEY_PRECIPITATION_TYPE = "precipitation_type"  # HymecNG
+# HymecNG: the type of the nearest precipitation within NEARBY_RADIUS_M,
+# read only when the entry tracks rain events (for the warnings'
+# expected_type). An estimate, never the measured type (radar/nearby.py).
+KEY_PRECIPITATION_TYPE_NEARBY = "precipitation_type_nearby"
+NEARBY_RADIUS_M = 5000.0
+# HymecNG classes that are actual precipitation (drizzle .. large_hail).
+NEARBY_CLASSES = range(2, len(PRECIP_TYPE_BY_INDEX))

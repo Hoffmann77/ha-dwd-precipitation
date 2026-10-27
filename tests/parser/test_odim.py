@@ -14,6 +14,7 @@ from radar.odim import (
     _parse_nodes,
     read_odim_classification,
     read_odim_classification_at,
+    read_odim_classification_near,
     read_odim_composite,
     read_odim_composite_at,
     read_odim_grid,
@@ -302,6 +303,27 @@ def test_real_hymecng_cell(kind):
         io.BytesIO(content), cell["lat"], cell["lon"]
     )
     assert value == cell["value"]
+    assert (int(moment_what["undetect"]), int(moment_what["nodata"])) == (254, 255)
+
+
+@pytest.mark.parametrize("kind", ["wet", "undetect", "nodata"])
+def test_real_hymecng_window_matches_the_whole_grid(kind):
+    """The window around a location is the whole grid's square there, clipped."""
+    content, _ = real_member("hymecng")
+    cell = real_cells("hymecng")[kind]
+    whole, _, _ = read_odim_classification(io.BytesIO(content))
+
+    value, window, center, cell_m, _, moment_what = read_odim_classification_near(
+        io.BytesIO(content), cell["lat"], cell["lon"], 5000
+    )
+
+    assert value == cell["value"]
+    assert cell_m == (1000.0, 1000.0)
+    row, col = cell["row"], cell["col"]
+    r0, c0 = row - center[0], col - center[1]
+    assert (r0, c0) == (max(row - 5, 0), max(col - 5, 0))
+    assert window.shape == (min(row + 6, whole.shape[0]) - r0, min(col + 6, whole.shape[1]) - c0)
+    np.testing.assert_array_equal(window, whole[r0:r0 + window.shape[0], c0:c0 + window.shape[1]])
     assert (int(moment_what["undetect"]), int(moment_what["nodata"])) == (254, 255)
 
 

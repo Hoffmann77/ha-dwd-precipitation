@@ -6,6 +6,8 @@ readers are the oracle for the test tiers and scripts/.
 
 """
 
+import math
+
 import numpy as np
 import h5py
 
@@ -268,3 +270,44 @@ def read_odim_classification_at(
         raw, dataset_what, moment_what = _cell_of(hf, lat, lon, dataset, moment)
 
     return int(raw[0, 0]), dataset_what, moment_what
+
+
+def read_odim_classification_near(
+    fileobj,
+    lat: float,
+    lon: float,
+    radius_m: float,
+    dataset: str = "dataset1",
+    moment: str = "data1",
+):
+    """Read the class index at (lat, lon) and the cells within ``radius_m``.
+
+    Like read_odim_classification_at, plus the square of cells around the
+    location that reaches ``radius_m`` (clipped at the grid's edges), for the
+    type of precipitation approaching it (radar/nearby.py). Returns the index
+    as an int, the window of class indices as stored, the location's (row, col)
+    in the window, the cell size (y, x) in metres, the dataset's ``what`` and
+    the moment's ``what``.
+
+    """
+    with h5py.File(fileobj, "r") as hf:
+        grid = _file_grid(hf)
+        row, col = grid.cell(lat, lon)
+        dset, dataset_what, moment_what = _open_composite(hf, dataset, moment, grid.shape)
+        reach_rows = math.ceil(radius_m / grid.yscale)
+        reach_cols = math.ceil(radius_m / grid.xscale)
+        r0, c0 = max(row - reach_rows, 0), max(col - reach_cols, 0)
+        window = dset[
+            r0:min(row + reach_rows + 1, grid.ysize),
+            c0:min(col + reach_cols + 1, grid.xsize),
+        ]
+
+    center = (row - r0, col - c0)
+    return (
+        int(window[center]),
+        window,
+        center,
+        (grid.yscale, grid.xscale),
+        dataset_what,
+        moment_what,
+    )

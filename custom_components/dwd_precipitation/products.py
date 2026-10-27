@@ -23,7 +23,12 @@ from .radar.urls import radvor_prefix
 from .options import DwdOptions, tracks_rain_events
 from .utils import DownloadCache, FailureLatch, async_get
 from .radar.tar_range import fetch_tar_members, member_names, members_from_archive
-from .radar import read_odim_classification_at, read_odim_composite_at
+from .radar import (
+    nearest_class,
+    read_odim_classification_at,
+    read_odim_classification_near,
+    read_odim_composite_at,
+)
 from .radar.nowcast import (
     FUTURE_HOUR_LEADS,
     HOUR1_LEADS,
@@ -47,6 +52,9 @@ from .const import (
     KEY_NEXT_60_120,
     KEY_NEXT_120,
     KEY_PRECIPITATION_TYPE,
+    KEY_PRECIPITATION_TYPE_NEARBY,
+    NEARBY_CLASSES,
+    NEARBY_RADIUS_M,
     PRECIP_TYPE_BY_INDEX,
     RW_SLIDING_KEY,
 )
@@ -901,10 +909,28 @@ class HymecNG(WholeFileProduct):
         there) gives no_precipitation; an unknown class index is logged and
         gives None.
 
+        When the entry tracks rain events, the cells within NEARBY_RADIUS_M
+        are read too, and data[``precipitation_type_nearby``] is the type of
+        the nearest precipitation among them (None when there is none): the
+        rain warnings' estimate of what is approaching. Otherwise the key is
+        left out.
+
         """
-        value, dataset_what, moment_what = read_odim_classification_at(
-            BytesIO(content), *self.coords
-        )
+        nearby: dict[str, str | None] = {}
+        if self._rain_tracker is None:
+            value, dataset_what, moment_what = read_odim_classification_at(
+                BytesIO(content), *self.coords
+            )
+        else:
+            value, window, center, cell_m, dataset_what, moment_what = (
+                read_odim_classification_near(
+                    BytesIO(content), *self.coords, NEARBY_RADIUS_M
+                )
+            )
+            nearest = nearest_class(window, center, cell_m, NEARBY_CLASSES, NEARBY_RADIUS_M)
+            nearby[KEY_PRECIPITATION_TYPE_NEARBY] = (
+                None if nearest is None else PRECIP_TYPE_BY_INDEX[nearest]
+            )
 
         nodata = int(round(float(moment_what.get("nodata", 255))))
         undetect = int(round(float(moment_what.get("undetect", 254))))
@@ -920,7 +946,7 @@ class HymecNG(WholeFileProduct):
             precip_type = None
 
         return (
-            {KEY_PRECIPITATION_TYPE: precip_type},
+            {KEY_PRECIPITATION_TYPE: precip_type, **nearby},
             {KEY_PRECIPITATION_TYPE: _odim_metadata(dataset_what)},
         )
 
