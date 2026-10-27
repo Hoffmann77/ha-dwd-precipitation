@@ -1157,7 +1157,7 @@ version = "3.16.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy", version = "2.3.2", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-20-ha-dwd-precipitation-ha-test' or extra == 'group-20-ha-dwd-precipitation-unit-test'" },
-    { name = "numpy", version = "2.5.4", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'group-20-ha-dwd-precipitation-ha-test' and extra == 'group-20-ha-dwd-precipitation-unit-test') or (extra != 'group-20-ha-dwd-precipitation-unit-test' and extra == 'group-20-ha-dwd-precipitation-wradlib-comparison') or (extra != 'group-20-ha-dwd-precipitation-ha-test' and extra == 'group-20-ha-dwd-precipitation-wradlib-comparison')" },
+    { name = "numpy", version = "2.5.4", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-20-ha-dwd-precipitation-wradlib-comparison' or (extra == 'group-20-ha-dwd-precipitation-ha-test' and extra == 'group-20-ha-dwd-precipitation-unit-test')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/db/33/acd0ce6863b6c0d7735007df01815403f5589a21ff8c2e1ee2587a38f548/h5py-3.16.0.tar.gz", hash = "sha256:a0dbaad796840ccaa67a4c144a0d0c8080073c34c76d5a6941d6818678ef2738", size = 446526, upload-time = "2026-03-06T13:49:08.07Z" }
 wheels = [
@@ -1225,7 +1225,7 @@ wradlib-comparison = [
     { name = "h5py", specifier = "==3.16.0" },
     { name = "pytest" },
     { name = "requests", specifier = "==2.34.2" },
-    { name = "wradlib", specifier = "==2.9.6" },
+    { name = "wradlib", specifier = "==2.9.7" },
 ]
 
 [[package]]
@@ -3419,7 +3419,7 @@ wheels = [
 
 [[package]]
 name = "wradlib"
-version = "2.9.6"
+version = "2.9.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "deprecation" },
@@ -3431,9 +3431,9 @@ dependencies = [
     { name = "xarray" },
     { name = "xradar" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/36/3f/3746be41931be5b2e39883bdbc32831f450334f9c09db4b40559ee1d13ba/wradlib-2.9.6.tar.gz", hash = "sha256:90ce7c16d5b8f6b8fb5b7f5916c4d57fc54c716232f5cb3de310ec792ea13c85", size = 594654, upload-time = "2026-09-03T10:08:05.518Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/95/7e/733bfd25429e73a18cd2c90ffec685ac1e1ab4aa44608deb4120a9ec4980/wradlib-2.9.7.tar.gz", hash = "sha256:e41e4da1d591b79068aa5ef1d3d9706f28b9f4024605f5380efb85ecaa6357c7", size = 594832, upload-time = "2026-10-26T12:54:29.739Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f7/11/e7b5a8659022fde8e58d07ae5e7daeeb1f2dfcdfd20bba7759ca523f0554/wradlib-2.9.6-py3-none-any.whl", hash = "sha256:fda74f8e0ac8778ea240369f8297d79f69a346c48a444ea2577f5566660864d6", size = 274119, upload-time = "2026-09-03T10:08:04.171Z" },
+    { url = "https://files.pythonhosted.org/packages/a8/64/bfe80d1da8ac27f1f37fe2a9569584c8375ab1a3d223626f6c9fce97c4d8/wradlib-2.9.7-py3-none-any.whl", hash = "sha256:fa280759dd835950c23bc83089bc4214f15bd9d4a573cfa3986d94eeb58e51d5", size = 274244, upload-time = "2026-10-26T12:54:28.251Z" },
 ]
 
 [[package]]
@@ -3461,7 +3461,7 @@ wheels = [
 
 [[package]]
 name = "xradar"
-version = "0.12.0"
+version = "0.13.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cmweather" },
@@ -3476,9 +3476,9 @@ dependencies = [
     { name = "xarray" },
     { name = "xmltodict" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/32/df/40dd63aac217dba22256a9ab60596904e651dd22f03b58408ec79ceaf78b/xradar-0.12.0.tar.gz", hash = "sha256:72fb38a91437ef66d0272c0ebad39496cc13c6a64c47a4a648e755cc9b4caa21", size = 245907, upload-time = "2026-04-21T13:12:43.13Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/85/0a/ca208ade2ed89174ccb3ed9f612f4707ef9b3b4831126b10404c160e0521/xradar-0.13.0.tar.gz", hash = "sha256:3bb0f4b433702b0abf55f81aeb125bffc6769062794c0896850e9ddf59800b1e", size = 391544, upload-time = "2026-10-21T20:10:04.681Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ad/20/3e3b012ee0032f688f0965404822b6ca5d8a9ee6b72966fd6cd5d8d6c08c/xradar-0.12.0-py3-none-any.whl", hash = "sha256:2d017c50ace46b3a872e652c6d65fadff5b56b9fd8f8746a1333f93fb856218e", size = 157783, upload-time = "2026-04-21T13:12:41.194Z" },
+    { url = "https://files.pythonhosted.org/packages/09/0a/7a43dc80ed684a0b3978f3783cc67426ebc66546131ff4c6d52bf336ae3d/xradar-0.13.0-py3-none-any.whl", hash = "sha256:485cfb65b391651d42a765333fd2cc506e7f113d6b2d67b5bd0f252b4575e720", size = 211361, upload-time = "2026-10-21T20:10:03.071Z" },
 ]
 
 [[package]]
