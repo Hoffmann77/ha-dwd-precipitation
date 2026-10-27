@@ -433,3 +433,79 @@ async def test_renaming_a_warning_keeps_its_entity_ids(make_entry, hass: HomeAss
     assert hass.states.get("binary_sensor.home_laundry_rain_warning").attributes[
         "friendly_name"
     ] == "Home Washing Rain warning"
+
+
+# ---------------------------------------------------------------------------
+# Lead-time slider
+# ---------------------------------------------------------------------------
+
+LEAD_TIME = "number.home_laundry_lead_time"
+STATUS = "sensor.home_laundry_rain_warning_status"
+
+
+async def test_each_warning_has_a_lead_time_slider(make_entry, hass: HomeAssistant) -> None:
+    entry = await _set_up(hass, make_entry, [_warning(LAUNDRY, "Laundry", lead_time=45)], view=_view(40))
+
+    state = hass.states.get(LEAD_TIME)
+    assert float(state.state) == 45
+    assert state.attributes["min"] == 5
+    assert state.attributes["max"] == 120
+    assert state.attributes["step"] == 5
+    assert state.attributes["unit_of_measurement"] == "min"
+    entity = er.async_get(hass).async_get(LEAD_TIME)
+    assert entity.unique_id == f"{entry.entry_id}_{LAUNDRY}_rain_warning_lead_time"
+    assert entity.config_subentry_id == LAUNDRY
+
+
+async def test_the_slider_changes_the_warning_without_a_reload(
+    make_entry, hass: HomeAssistant
+) -> None:
+    """Rain in 40 minutes: dry at 30 minutes, soon once the slider says 60."""
+    entry = await _set_up(hass, make_entry, [_warning(LAUNDRY, "Laundry")], view=_view(40))
+    runtime = entry.runtime_data
+    assert hass.states.get(STATUS).state == "dry"
+
+    await hass.services.async_call(
+        "number", "set_value", {"entity_id": LEAD_TIME, "value": 60}, blocking=True
+    )
+    await hass.async_block_till_done()
+
+    assert hass.states.get(STATUS).state == "soon"
+    assert hass.states.get("binary_sensor.home_laundry_rain_warning").state == "on"
+    assert float(hass.states.get(LEAD_TIME).state) == 60
+    assert entry.subentries[LAUNDRY].data["lead_time"] == 60
+    assert entry.runtime_data is runtime  # not reloaded
+
+
+async def test_a_form_change_of_only_the_lead_time_needs_no_reload(
+    make_entry, hass: HomeAssistant
+) -> None:
+    entry = await _set_up(hass, make_entry, [_warning(LAUNDRY, "Laundry")], view=_view(40))
+    runtime = entry.runtime_data
+
+    result = await _start(hass, entry, SOURCE_RECONFIGURE, LAUNDRY)
+    await hass.config_entries.subentries.async_configure(
+        result["flow_id"], {"name": "Laundry", "lead_time": 60, "combine": "any"}
+    )
+    await hass.async_block_till_done()
+
+    assert entry.runtime_data is runtime
+    assert float(hass.states.get(LEAD_TIME).state) == 60
+    assert hass.states.get(STATUS).state == "soon"
+
+
+async def test_any_other_change_still_reloads(make_entry, hass: HomeAssistant) -> None:
+    entry = await _set_up(hass, make_entry, [_warning(LAUNDRY, "Laundry")], view=_view(40))
+    runtime = entry.runtime_data
+
+    result = await _start(hass, entry, SOURCE_RECONFIGURE, LAUNDRY)
+    with _patched_products(), patch.object(
+        RainEventsTracker, "async_track", new=AsyncMock(return_value=_view(40))
+    ):
+        await hass.config_entries.subentries.async_configure(
+            result["flow_id"], {"name": "Laundry", "lead_time": 60, "min_mm": 5.0, "combine": "any"}
+        )
+        await hass.async_block_till_done()
+
+    assert entry.runtime_data is not runtime
+    assert entry.runtime_data.rain_warnings[LAUNDRY].rule == WarningRule(lead_time=60, min_mm=5.0)

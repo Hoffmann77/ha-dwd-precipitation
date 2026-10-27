@@ -16,7 +16,7 @@ DOMAIN = "dwd_precipitation"
 # the German translations add /de, where the site keeps its German pages.
 DOCS_URL = "https://hoffmann77.github.io/ha-dwd-precipitation"
 
-PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR]
+PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.NUMBER]
 
 CONF_COORDS = "coordinates"
 
@@ -84,6 +84,8 @@ DEFAULT_RAIN_EVENT_THRESHOLD = 0.1
 # options.DEFAULT_RAIN_WARNING.
 SUBENTRY_RAIN_WARNING = "rain_warning"
 CONF_LEAD_TIME = "lead_time"
+# The lead time a warning can have, in minutes (subentry form and slider).
+LEAD_TIME_MIN, LEAD_TIME_MAX, LEAD_TIME_STEP = 5, 120, 5
 CONF_MIN_MM = "min_mm"
 CONF_MIN_PEAK_1H = "min_peak_1h"
 CONF_MIN_PEAK_10MIN = "min_peak_10min"

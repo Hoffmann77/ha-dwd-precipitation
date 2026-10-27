@@ -30,7 +30,9 @@ Leave all minimums empty to be warned about every rain event.
 To change a warning later, open its menu on the entry and select
 **Reconfigure**. Deleting it removes its device and entities. Adding,
 changing or deleting a warning reloads the integration; the values come back
-within a few seconds.
+within a few seconds. The lead time alone can also be changed with the
+warning's **Lead time** slider (see below), which takes effect at once and
+reloads nothing.
 
 ## Entities
 
@@ -42,6 +44,7 @@ warning: a warning `Laundry` at the location `Home` is the device
 |--------|-----------|--------|
 | Rain warning | `binary_sensor.home_laundry_rain_warning` | `on` while it rains or is about to, `off` otherwise |
 | Rain warning status | `sensor.home_laundry_rain_warning_status` | `dry`, `soon` or `rain` |
+| Lead time | `number.home_laundry_lead_time` | the lead time in minutes, 5 to 120; moving it changes the warning at once and saves the value in the warning's settings |
 
 The status sensor has the details as attributes; the on/off entity has none.
 

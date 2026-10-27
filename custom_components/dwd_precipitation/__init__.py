@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
@@ -63,6 +63,9 @@ class DwdRuntimeData:
     # One per rain-warning subentry, by subentry id: the memory its two
     # entities share (see RainWarning).
     rain_warnings: dict[str, RainWarning] = field(default_factory=dict)
+    # The warnings' titles at setup, by subentry id: a renamed warning renames
+    # its device, which takes a reload (see update_listener).
+    warning_titles: dict[str, str] = field(default_factory=dict)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: DwdConfigEntry) -> bool:
@@ -153,6 +156,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: DwdConfigEntry) -> bool:
             subentry.subentry_id: RainWarning(rain_warning_rule(subentry.data))
             for subentry in rain_warning_subentries(entry)
         },
+        {subentry.subentry_id: subentry.title for subentry in rain_warning_subentries(entry)},
     )
     entry.async_on_unload(entry.add_update_listener(update_listener))
 
@@ -198,8 +202,45 @@ async def update_listener(hass: HomeAssistant, entry: DwdConfigEntry) -> None:
     change takes effect. A deleted subentry's entities are removed by Home
     Assistant itself.
 
+    The exception is a change of nothing but warnings' lead times (the slider,
+    or the form with only the lead time changed): the running warnings take
+    the new rule and judge the current forecast again, without a reload.
+
     """
+    if _apply_lead_times(entry):
+        return
     await hass.config_entries.async_reload(entry.entry_id)
+
+
+def _apply_lead_times(entry: DwdConfigEntry) -> bool:
+    """Give the running warnings their new lead times, if that is all that changed.
+
+    Returns False, changing nothing, when anything else differs from what the
+    entry was set up with: its options, which warnings exist, their titles, or
+    any other field of their rules. Then the caller reloads.
+
+    """
+    runtime = entry.runtime_data
+    subentries = {s.subentry_id: s for s in rain_warning_subentries(entry)}
+    if (
+        DwdOptions.from_options(entry.options) != runtime.options
+        or subentries.keys() != runtime.rain_warnings.keys()
+        or any(s.title != runtime.warning_titles.get(i) for i, s in subentries.items())
+    ):
+        return False
+    rules = {i: rain_warning_rule(s.data) for i, s in subentries.items()}
+    if any(
+        replace(rule, lead_time=runtime.rain_warnings[i].rule.lead_time)
+        != runtime.rain_warnings[i].rule
+        for i, rule in rules.items()
+    ):
+        return False
+    for i, rule in rules.items():
+        if rule != runtime.rain_warnings[i].rule:
+            runtime.rain_warnings[i].set_rule(rule)
+    if (rv := runtime.coordinators.get(RadvorRV.PRODUCT_KEY)) is not None:
+        rv.async_update_listeners()
+    return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: DwdConfigEntry) -> bool:

@@ -29,6 +29,9 @@ sensor.py             HA SensorEntity descriptors; sub_key picks each value
 binary_sensor.py      "Precipitation expected" (RV), on the same descriptions;
                       its forecast_5min series is always exposed, unlike the
                       sensors' diagnostics (blueprints read it).
+number.py             Each rain warning's lead-time slider: changes the
+                      running RainWarning and saves the subentry; the update
+                      listener then skips the reload (_apply_lead_times).
 dry_streak.py         Pure "days without rain" logic: the persisted anchor
                       payload + threshold/downtime-correction helpers and the
                       unwatched RW hours of a gap, used by the
@@ -72,7 +75,8 @@ radar/                The HA-free core: parsers and pure domain logic (no
                       the cell holding a location on it (see "Grid lookup").
   odim.py             ODIM_H5 (HDF5) reader for every product (RS, RV,
                       HymecNG, RW/SF in their HDF5 edition): the cell at a
-                      location, on the file's own grid.
+                      location, on the file's own grid; for HymecNG with rain
+                      events also the 5 km window around it.
   tar_range.py        Reads selected members of a remote tar by HTTP range
                       requests (see "Range reads").
   nowcast.py          RV lead grid and the nowcast logic: start/end
@@ -81,6 +85,9 @@ radar/                The HA-free core: parsers and pure domain logic (no
                       (see "Rain events").
   rain_warning.py     The rain-warning filter over that view: WarningRule,
                       judge(), RainWarning (see "Rain warnings").
+  nearby.py           nearest_class(): the type of the nearest precipitation
+                      in a HymecNG window, for the warnings' expected_type
+                      (an estimate, never the measured type of ADR 0012).
   isotime.py          iso()/parse_utc() for attributes and stored payloads.
 ```
 

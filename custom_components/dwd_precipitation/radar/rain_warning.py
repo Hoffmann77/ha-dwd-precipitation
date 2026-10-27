@@ -202,6 +202,18 @@ class RainWarning:
         self._passed: frozenset[str] = frozenset()
         self._soon: frozenset[str] = frozenset()
 
+    def set_rule(self, rule: WarningRule) -> None:
+        """Use ``rule`` from now on, judging the current view again with it.
+
+        For a lead time changed on the warning's slider or form: the next
+        evaluate() judges the view it is given afresh, so the change shows
+        without waiting for the next release. What was remembered (events
+        that passed, events that were soon) is kept.
+
+        """
+        self.rule = rule
+        self._view = None
+
     def evaluate(self, view: dict[str, Any] | None, now: datetime) -> Verdict | None:
         """Return the verdict on ``view``, judging it at ``now`` if it is new.
 

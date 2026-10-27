@@ -33,6 +33,9 @@ from .const import (
     CONF_RAIN_EVENTS,
     CONF_RAIN_EVENT_THRESHOLD,
     CONF_LEAD_TIME,
+    LEAD_TIME_MAX,
+    LEAD_TIME_MIN,
+    LEAD_TIME_STEP,
     CONF_MIN_MM,
     CONF_MIN_PEAK_1H,
     CONF_MIN_PEAK_10MIN,
@@ -80,7 +83,6 @@ OPTION_SECTIONS: dict[str, tuple[str, ...]] = {
 
 # A rain warning's lead time: how many minutes before the rain it starts, in
 # the 5-minute steps of the forecast, up to its 2-hour horizon.
-LEAD_TIME_MIN, LEAD_TIME_MAX, LEAD_TIME_STEP = 5, 120, 5
 
 # A rain warning's optional minimums, all in mm.
 RAIN_WARNING_MINIMUMS = (CONF_MIN_MM, CONF_MIN_PEAK_1H, CONF_MIN_PEAK_10MIN)

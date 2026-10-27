@@ -205,6 +205,7 @@ class RainWarningEntity(DwdCoordinatorEntity):
             name=f"{entry.title or 'DWD Precipitation'} {subentry.title}",
         )
         self._warning = warning
+        self._subentry_id = subentry.subentry_id
 
     def _verdict(self) -> Verdict | None:
         """Return the warning's verdict on RV's latest view; None without one.

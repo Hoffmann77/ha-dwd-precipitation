@@ -258,6 +258,11 @@
       "rain_warning": {
         "name": "Rain warning"
       }
+    },
+    "number": {
+      "rain_warning_lead_time": {
+        "name": "Lead time"
+      }
     }
   }
 }

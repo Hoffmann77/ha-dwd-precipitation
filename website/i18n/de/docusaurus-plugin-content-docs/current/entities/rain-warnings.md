@@ -31,7 +31,9 @@ Lass alle Mindestwerte leer, um vor jedem Regenereignis gewarnt zu werden.
 Um eine Warnung später zu ändern, öffne ihr Menü am Eintrag und wähle
 **Neu konfigurieren**. Löschst du sie, verschwinden ihr Gerät und ihre
 Entitäten. Hinzufügen, Ändern und Löschen einer Warnung lädt die Integration
-neu; die Werte sind nach ein paar Sekunden wieder da.
+neu; die Werte sind nach ein paar Sekunden wieder da. Die Vorwarnzeit allein
+lässt sich auch am Regler **Vorwarnzeit** der Warnung ändern (siehe unten);
+das wirkt sofort und lädt nichts neu.
 
 ## Entitäten {#entities}
 
@@ -42,6 +44,7 @@ Eine Warnung `Wäsche` am Standort `Home` ist das Gerät `Home Wäsche` mit:
 |---------|-------------|----------|
 | Regenwarnung | `binary_sensor.home_wasche_rain_warning` | `on`, solange es regnet oder gleich regnet, sonst `off` |
 | Regenwarnung Status | `sensor.home_wasche_rain_warning_status` | `dry`, `soon` oder `rain` |
+| Vorwarnzeit | `number.home_wasche_lead_time` | die Vorwarnzeit in Minuten, 5 bis 120; Verstellen ändert die Warnung sofort und speichert den Wert in ihren Einstellungen |
 
 Der Status-Sensor trägt die Details als Attribute; die An/Aus-Entität hat
 keine.
