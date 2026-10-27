@@ -110,7 +110,9 @@ class Verdict:
     def attributes(self) -> dict[str, Any]:
         """Return the enum sensor's attributes: the event it is about.
 
-        ``event_id`` and ``start`` come from the event; ``mm``, ``peak_1h``
+        ``event_id``, ``start`` and ``end`` come from the event, with
+        ``beyond_horizon`` true while it lasts past the forecast horizon (its
+        end is then only the horizon's); ``mm``, ``peak_1h``
         and ``peak_10min`` are its ``total`` block (mm, the peaks as their
         amount). ``type`` is the event's measured precipitation type, the
         HymecNG label of its latest wet measured step: None while it is only
@@ -123,6 +125,8 @@ class Verdict:
         return {
             "event_id": event.get("id"),
             "start": event.get("start"),
+            "end": event.get("end"),
+            "beyond_horizon": event.get("beyond_horizon"),
             "mm": total.get("mm"),
             "peak_1h": _peak_mm(total.get("peak_1h")),
             "peak_10min": _peak_mm(total.get("peak_10min")),

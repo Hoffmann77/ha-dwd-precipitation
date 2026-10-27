@@ -66,6 +66,8 @@ Radarvorhersage veraltet ist, wie die anderen Vorhersagesensoren.
 |----------|--------------|
 | `event_id` | Die ID des Regenereignisses, um das es geht, wie in [Regenereignisse](rain-events.md#events) |
 | `start` | Wann dieses Ereignis beginnt (oder begonnen hat), ISO-8601 in UTC |
+| `end` | Wann es voraussichtlich endet, ISO-8601 in UTC; bei `beyond_horizon` nur das Ende der Vorhersage |
+| `beyond_horizon` | `true`, solange das Ereignis über den Vorhersagehorizont (etwa zwei Stunden) hinausgeht, sein Ende also offen ist |
 | `mm` | Seine Summe: bisher gemessen plus vorhergesagt, in mm |
 | `peak_1h` | Der Regen in seiner nassesten Stunde, in mm |
 | `peak_10min` | Der Regen in seinen nassesten 10 Minuten, in mm |

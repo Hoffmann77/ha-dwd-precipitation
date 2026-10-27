@@ -50,6 +50,8 @@ def event(
         "id": event_id,
         "status": status,
         "start": at(start),
+        "end": at(start + 40),
+        "beyond_horizon": False,
         "total": {
             "mm": mm,
             "peak_1h": None if peak_1h is None else peak(peak_1h),
@@ -193,6 +195,8 @@ def test_the_attributes_describe_the_event() -> None:
     assert result.attributes() == {
         "event_id": "a",
         "start": at(20),
+        "end": at(60),
+        "beyond_horizon": False,
         "mm": 2.5,
         "peak_1h": 1.5,
         "peak_10min": 0.8,

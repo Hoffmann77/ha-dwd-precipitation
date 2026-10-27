@@ -51,6 +51,8 @@ def _view(
                 "id": "20250601t1200-0",
                 "status": status,
                 "start": start.isoformat(),
+                "end": (start + timedelta(minutes=35)).isoformat(),
+                "beyond_horizon": False,
                 "total": {
                     "mm": mm,
                     "peak_1h": {"mm": 1.5, "start": None, "end": None},
@@ -243,6 +245,10 @@ async def test_each_warning_is_a_device_with_two_entities(
     assert laundry.attributes["options"] == ["dry", "soon", "rain"]
     assert laundry.attributes["event_id"] == "20250601t1200-0"
     assert laundry.attributes["mm"] == 2.0
+    assert laundry.attributes["beyond_horizon"] is False
+    assert dt_util.parse_datetime(laundry.attributes["end"]) - dt_util.parse_datetime(
+        laundry.attributes["start"]
+    ) == timedelta(minutes=35)
     assert laundry.attributes["peak_1h"] == 1.5
     assert laundry.attributes["peak_10min"] == 0.6
     assert laundry.attributes["type"] is None

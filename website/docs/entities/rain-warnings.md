@@ -64,6 +64,8 @@ is out of date, like the other forecast sensors.
 |-----------|-------------|
 | `event_id` | The id of the rain event the warning is about, as in [Rain events](rain-events.md#events) |
 | `start` | When that event starts (or started), ISO-8601 in UTC |
+| `end` | When it is forecast to end, ISO-8601 in UTC; with `beyond_horizon` only the end of the forecast |
+| `beyond_horizon` | `true` while the event lasts past the forecast horizon (about two hours), so its end is open |
 | `mm` | Its total: measured so far plus forecast, in mm |
 | `peak_1h` | The rain in its wettest hour, in mm |
 | `peak_10min` | The rain in its wettest 10 minutes, in mm |
