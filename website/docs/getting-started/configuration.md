@@ -53,6 +53,7 @@ automatically.
 | [Rain forecast](#rain-forecast) | [Only count rain heavier than](#rain-detection-threshold) | 0 mm/h |
 | | [Show start and end as](#start-and-end-format) | clock time |
 | | ["Precipitation end" shows](#end-algorithm) | the first dry break |
+| | [Evaluate the area around the location](#neighbourhood) | on |
 | [Timespan without precipitation](#timespan-without-precipitation) | [Rain that resets the count](#dry-streak-threshold) | 1.0 mm |
 | | [Measured with](#dry-streak-source) | radar and rain gauges (RW) |
 | [Rain events and rain warnings](#rain-events-and-rain-warnings) | [Add the "Rain events" sensor](#track-rain-events) | off |
@@ -91,6 +92,23 @@ Whichever you do not pick is still there as an attribute of the same sensor
 
 DWD's forecast reaches only two hours ahead, so if the rain lasts longer than
 that, the sensor is `unknown` either way.
+
+### Evaluate the area around the location {#neighbourhood}
+
+A single 1 km radar cell is a point sample: a shower a few hundred metres
+away is missed. With this on (the default), the cells around the location
+are read as well:
+
+- Two sensors are added, [*Nearest precipitation* and *Precipitation start
+  nearby*](../entities/radvor-rv.md#rain-nearby).
+- [Rain events](../entities/rain-events.md) and
+  [rain warnings](../entities/rain-warnings.md) count rain within about
+  1.5 km, but only while the forecast moves it **towards** the location.
+  Rain that passes by or moves away counts only where it is forecast on the
+  location's own cell, so a shower that only grazes the area raises no
+  warning.
+
+Off, only the own cell is used and the two sensors are removed.
 
 ## Timespan without precipitation
 

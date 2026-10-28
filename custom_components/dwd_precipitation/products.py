@@ -24,10 +24,16 @@ from .options import DwdOptions, tracks_rain_events
 from .utils import DownloadCache, FailureLatch, async_get
 from .radar.tar_range import fetch_tar_members, member_names, members_from_archive
 from .radar import (
+    area_max,
+    closest_approach,
+    compass,
+    nearest_above,
     nearest_class,
     read_odim_classification_at,
     read_odim_classification_near,
     read_odim_composite_at,
+    read_odim_composite_near,
+    rain_track,
 )
 from .radar.nowcast import (
     FUTURE_HOUR_LEADS,
@@ -46,6 +52,13 @@ from .radar.nowcast import (
 from .radar.rain_events import RainEventsView
 from .rain_events_tracker import RainEventsTracker
 from .const import (
+    AREA_APPROACH_RADIUS_M,
+    AREA_MIN_INTENSITY,
+    AREA_MIN_SPEED,
+    AREA_NEAR_RADIUS_M,
+    AREA_SCAN_RADIUS_M,
+    AREA_TRACK_LEADS,
+    AREA_TRACK_RADIUS_M,
     KEY_AMOUNT,
     KEY_LAST_60,
     KEY_NEXT_60,
@@ -128,6 +141,102 @@ def _decode_cells(
         val, what = read_odim_composite_at(BytesIO(member), *location)
         out[lead] = (_nan_to_none(val), what)
     return out
+
+
+# One lead's cells around the location: (value, window, center, cell size,
+# dataset_what), as read_odim_composite_near returns them.
+type _Window = tuple[float | None, np.ndarray, tuple[int, int], tuple[float, float], dict]
+
+
+def _decode_windows(
+    members: dict[str, bytes],
+    prefix: str,
+    leads,
+    location: tuple[float, float],
+    label: str,
+    radius_m: float,
+) -> dict[int, _Window | None]:
+    """Return the cells within ``radius_m`` of ``location`` in each RADVOR member.
+
+    Like _decode_cells, with the window of cells around the location (in mm,
+    NaN for no data) next to its own cell's value, for the neighbourhood
+    evaluation. Blocking.
+
+    """
+    out: dict[int, _Window | None] = {}
+    for lead, name in zip(leads, member_names(prefix, leads)):
+        if (member := members.get(name)) is None:
+            _LOGGER.warning("%s tar member not found: %s", label, name)
+            out[lead] = None
+            continue
+
+        val, window, center, cell_m, what = read_odim_composite_near(
+            BytesIO(member), *location, radius_m
+        )
+        out[lead] = (_nan_to_none(val), window, center, cell_m, what)
+    return out
+
+
+def _cells_of(windows: dict[int, _Window | None]) -> dict[int, tuple[float | None, dict] | None]:
+    """Return _decode_windows' output in _decode_cells' shape: (value, what) by lead."""
+    return {lead: (w[0], w[4]) if w else None for lead, w in windows.items()}
+
+
+def _area_series(windows: dict[int, _Window | None]) -> list[float | None]:
+    """Return the wettest cell within AREA_NEAR_RADIUS_M at every lead (mm).
+
+    Aligned to LEADS and rounded like the own cell's amounts; None for a lead
+    without data.
+
+    """
+    out: list[float | None] = []
+    for lead in LEADS:
+        w = windows[lead]
+        peak = area_max(w[1], w[2], w[3], AREA_NEAR_RADIUS_M) if w else None
+        out.append(round_mm(peak) if peak is not None else None)
+    return out
+
+
+@dataclass(frozen=True)
+class _Approach:
+    """Where the rain around the location is heading (radar/nearby.py)."""
+
+    approaching: bool
+    # How close its track comes (km) and in how many minutes; None for both
+    # without a track (no rain, or rain in a single step only).
+    closest_km: float | None = None
+    closest_in: int | None = None
+
+
+def _approach(windows: dict[int, _Window | None], threshold_mmh: float) -> _Approach:
+    """Return whether the rain within AREA_TRACK_RADIUS_M moves towards the location.
+
+    Its centre is followed over AREA_TRACK_LEADS (rain_track). It approaches
+    when it moves at AREA_MIN_SPEED or faster and its track passes within
+    AREA_APPROACH_RADIUS_M of the location ahead; rain that stands still, passes
+    further away or has passed already does not. Counts rain above
+    ``threshold_mmh``, but never below AREA_MIN_INTENSITY.
+
+    """
+    limit = max(threshold_mmh, AREA_MIN_INTENSITY) / STEPS_PER_HOUR
+    frames = [
+        (lead, w[1], w[2], w[3])
+        for lead in AREA_TRACK_LEADS
+        if (w := windows.get(lead)) is not None
+    ]
+    track = rain_track(frames, limit, AREA_TRACK_RADIUS_M)
+    if track is None:
+        return _Approach(False)
+    position, velocity = track
+    distance, minutes = closest_approach(position, velocity)
+    approaching = (
+        float(np.hypot(*velocity)) >= AREA_MIN_SPEED
+        # Closest now (within half a step) is rain over the location already,
+        # not coming: the own cell tells about that.
+        and minutes > LEAD_STEP / 2
+        and distance <= AREA_APPROACH_RADIUS_M
+    )
+    return _Approach(approaching, round(distance / 1000, 1), max(round(minutes), 0))
 
 
 
@@ -460,14 +569,27 @@ class _RvSeries:
     ends: list[datetime | None]
     base: datetime | None  # T, the end of the analysis window (lead 0)
     radars: tuple[str, ...] | None = None  # the analysis's radar nodes
+    # The wettest cell within AREA_NEAR_RADIUS_M at each lead (mm), with the
+    # neighbourhood evaluation on; None with it off.
+    area: list[float | None] | None = None
+    # What the rain-events tracker follows with the evaluation on: the area
+    # series while rain approaches, else the own cell's (see _approach).
+    event: list[float | None] | None = None
 
     @classmethod
-    def from_cells(cls, cells: dict[int, tuple[float | None, dict] | None]) -> _RvSeries:
+    def from_cells(
+        cls,
+        cells: dict[int, tuple[float | None, dict] | None],
+        area: list[float | None] | None = None,
+        approaching: bool = False,
+    ) -> _RvSeries:
         """Build the series from _decode_cells' output.
 
         Amounts are rounded to the ODIM resolution (0.001 mm); a lead without
         data keeps None and no window. The release time T is taken from the
-        analysis's window end, the radars from its nodes.
+        analysis's window end, the radars from its nodes. ``area`` is the
+        neighbourhood series (_area_series), if it was read; the tracker
+        follows it only while the rain is ``approaching``.
 
         """
         values: list[float | None] = []
@@ -481,7 +603,10 @@ class _RvSeries:
             ends.append(end)
         analysis = cells[0]
         radars = analysis[1].get("nodes") if analysis else None
-        return cls(values, starts, ends, base=ends[0], radars=radars)
+        event = None if area is None else (area if approaching else values)
+        return cls(
+            values, starts, ends, base=ends[0], radars=radars, area=area, event=event
+        )
 
     def at(self, minutes: int | None) -> datetime | None:
         """Return T + ``minutes``; None without either.
@@ -522,10 +647,14 @@ class _RvSeries:
 
         One dict per lead (``lead``, ``start``, ``end``, ``value``,
         ``intensity``), the 25-point series the "Precipitation expected" binary
-        sensor exposes as ``forecast_5min``.
+        sensor exposes as ``forecast_5min``. With the neighbourhood series,
+        each also has ``area_value``, the wettest cell nearby (mm), and
+        ``event_value``, the value the rain-events tracker then follows
+        instead of ``value``: ``area_value`` while rain approaches, else
+        ``value``.
 
         """
-        return [
+        samples = [
             {
                 "lead": lead,
                 "start": iso(start),
@@ -535,6 +664,11 @@ class _RvSeries:
             }
             for lead, value, start, end in zip(LEADS, self.values, self.starts, self.ends)
         ]
+        if self.area is not None and self.event is not None:
+            for sample, area, event in zip(samples, self.area, self.event):
+                sample["area_value"] = area
+                sample["event_value"] = event
+        return samples
 
     def hour_windows(self, leads: list[int]) -> list[tuple[datetime | None, datetime | None]]:
         """Return the rolling hour ending at each of ``leads``, aligned to LEADS.
@@ -608,6 +742,50 @@ def _rv_timing(series: _RvSeries, threshold_mmh: float, end_algorithm: str) -> _
         # The rain-expected flag owns the raw forecast curve: the full 25-point
         # 5-minute series, which the binary sensor surfaces.
         "rain_within_2h": (start_in is not None, series.metadata(LEADS, samples=series.samples())),
+    }
+
+
+def _rv_area(
+    series: _RvSeries,
+    analysis: _Window | None,
+    approach: _Approach,
+    threshold_mmh: float,
+    end_algorithm: str,
+) -> _Parts:
+    """Return when rain starts nearby, and where the nearest rain is now.
+
+    For the neighbourhood evaluation: the start is detected on the wettest
+    cell within AREA_NEAR_RADIUS_M (series.area) like the own cell's, and the
+    nearest rain is searched within AREA_SCAN_RADIUS_M of the analysis
+    (``analysis``, lead 0's window). Both count rain above ``threshold_mmh``,
+    but never below AREA_MIN_INTENSITY. The distance is in km. ``approach``
+    says whether the rain moves towards the location, shown with the nearest
+    rain.
+
+    """
+    limit = max(threshold_mmh, AREA_MIN_INTENSITY) / STEPS_PER_HOUR
+    start_in = (
+        detect_start_end(series.area, limit, end_algorithm)[0]
+        if series.area is not None
+        else None
+    )
+    nearest = (
+        nearest_above(analysis[1], analysis[2], analysis[3], limit, AREA_SCAN_RADIUS_M)
+        if analysis is not None
+        else None
+    )
+    distance, bearing = nearest if nearest is not None else (None, None)
+    timing = series.metadata()
+    now = series.metadata([0], 0)
+    return {
+        "area_start_in": (start_in, timing),
+        "area_start_at": (series.at(start_in), timing),
+        "nearest_km": (round(distance / 1000, 1) if distance is not None else None, now),
+        "nearest_bearing": (bearing, now),
+        "nearest_direction": (compass(bearing), now),
+        "approaching": (approach.approaching, timing),
+        "closest_approach_km": (approach.closest_km, timing),
+        "closest_approach_in": (approach.closest_in, timing),
     }
 
 
@@ -695,6 +873,7 @@ class RadvorRV(RadvorProduct):
                 self.options.rain_event_threshold,
                 self._async_fetch_analysis,
                 self._publish_rain_view,
+                value_key="event_value" if self.options.neighbourhood_evaluation else "value",
             )
 
     @property
@@ -779,6 +958,8 @@ class RadvorRV(RadvorProduct):
         """Decode the analysis member of a missed release (blocking).
 
         Returns its amount for the location (mm, rounded; None for no data).
+        Always the own cell: where a missed step's rain was heading is not
+        known any more, so the neighbourhood evaluation does not apply.
         Raises if the member is missing or covers another window than the step
         asked for, so a wrong file is never recorded as that step.
 
@@ -798,17 +979,30 @@ class RadvorRV(RadvorProduct):
 
         Decodes all 25 members at the location into one series, then derives
         every RV value from it: the intensities, the start/end timing and the
-        peak hour. ``past`` holds the analyses of the releases before ``ts``
+        peak hour. With the neighbourhood evaluation on, the cells around the
+        location are decoded too: for the nearby start, the nearest rain and
+        where it is heading (_rv_area, _approach), and the series the
+        rain-events tracker follows. ``past`` holds the analyses of the releases before ``ts``
         (see _past_hour); with it the rolling-hour series starts an hour
         earlier.
 
         """
         prefix = self._prefix(ts)
         members = members_from_archive(content, member_names(prefix, LEADS))
-        series = _RvSeries.from_cells(
-            _decode_cells(members, prefix, LEADS, self.coords, "RV")
-        )
         options = self.options
+        windows: dict[int, _Window | None] | None = None
+        if options.neighbourhood_evaluation:
+            windows = _decode_windows(
+                members, prefix, LEADS, self.coords, "RV", AREA_TRACK_RADIUS_M
+            )
+            approach = _approach(windows, options.precipitation_threshold)
+            series = _RvSeries.from_cells(
+                _cells_of(windows), _area_series(windows), approach.approaching
+            )
+        else:
+            series = _RvSeries.from_cells(
+                _decode_cells(members, prefix, LEADS, self.coords, "RV")
+            )
         parts = {
             **_rv_intensities(series),
             **_rv_timing(
@@ -818,6 +1012,14 @@ class RadvorRV(RadvorProduct):
             ),
             **_rv_peak_hour(series, past),
         }
+        if windows is not None:
+            parts |= _rv_area(
+                series,
+                windows[0],
+                approach,
+                options.precipitation_threshold,
+                options.precipitation_end_algorithm,
+            )
         return (
             {key: value for key, (value, _) in parts.items()},
             {key: meta for key, (_, meta) in parts.items()},

@@ -64,6 +64,34 @@ CONF_FULL_ROLLING_SERIES = "full_rolling_series"
 # 12 windows that straddle now. The peak itself is identical either way.
 DEFAULT_FULL_ROLLING_SERIES = False
 
+CONF_NEIGHBOURHOOD = "neighbourhood_evaluation"
+
+# Whether RV also reads the cells around the location (radar/nearby.py). On:
+# the "Nearest precipitation" and "Precipitation start nearby" sensors exist,
+# and rain events (so rain warnings) count rain within AREA_NEAR_RADIUS_M.
+# Rain nearby counts for rain events only while it moves towards the location
+# (radar/nearby.py rain_track); rain passing by or moving away counts only
+# where it is forecast on the own cell. Off: only the location's own 1 km
+# cell, and those sensors are removed.
+DEFAULT_NEIGHBOURHOOD = True
+# "Nearby" is the own cell and its eight neighbours; the nearest rain is
+# searched within AREA_SCAN_RADIUS_M.
+AREA_NEAR_RADIUS_M = 1500.0
+AREA_SCAN_RADIUS_M = 5000.0
+# mm/h; the least intensity the nearby sensors count as rain. Nine cells
+# catch a speck of trace rain far more often than one, so they never count
+# less than this, whatever precipitation_threshold says.
+AREA_MIN_INTENSITY = 0.3
+# Where the rain is heading is fitted from its centre within
+# AREA_TRACK_RADIUS_M over the first half hour of the forecast. It approaches
+# when it moves at AREA_MIN_SPEED or more (m/min; 50 is 3 km/h) and its track
+# passes within AREA_APPROACH_RADIUS_M of the location ahead, that is over the
+# own cell or right beside it; rain whose track passes further away goes by.
+AREA_TRACK_RADIUS_M = 10000.0
+AREA_TRACK_LEADS = (0, 5, 10, 15, 20, 25, 30)
+AREA_MIN_SPEED = 50.0
+AREA_APPROACH_RADIUS_M = 1000.0
+
 CONF_RAIN_EVENTS = "rain_events"
 
 # Whether the entry has the "Rain events" sensor. Off by default: its view is

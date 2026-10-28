@@ -12,10 +12,12 @@ from datetime import datetime, timedelta
 from typing import Any
 from unittest.mock import patch
 
+import numpy as np
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.dwd_precipitation import coordinator as coordinator_mod
+from custom_components.dwd_precipitation import products
 from custom_components.dwd_precipitation.const import DOMAIN
 from custom_components.dwd_precipitation.coordinator import (
     BaseProductUpdateCoordinator,
@@ -27,6 +29,26 @@ ENTRY_DATA = {"name": "Home", "latitude": LAT, "longitude": LON}
 
 MakeEntry = Callable[..., MockConfigEntry]
 MakeCoordinator = Callable[..., Any]
+
+
+@pytest.fixture(autouse=True)
+def own_cell_windows():
+    """Read RV's neighbourhood windows through the own-cell reader.
+
+    The neighbourhood evaluation is on by default, so RV reads windows with
+    read_odim_composite_near. Most tests feed RV through a patched
+    read_odim_composite_at; here a window is that one cell (1 x 1, 1 km), so
+    they see what they always did. Tests of the neighbourhood patch
+    read_odim_composite_near themselves.
+    """
+
+    def _near(fileobj, lat, lon, _radius_m, **kwargs):
+        value, what = products.read_odim_composite_at(fileobj, lat, lon, **kwargs)
+        window = np.array([[value]], dtype=np.float32)
+        return value, window, (0, 0), (1000.0, 1000.0), what
+
+    with patch.object(products, "read_odim_composite_near", side_effect=_near):
+        yield
 
 
 @pytest.fixture

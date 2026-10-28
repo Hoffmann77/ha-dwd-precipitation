@@ -35,7 +35,7 @@ Radar-based precipitation measurements and forecasts from the German Weather Ser
 
 All entities belong to one **DWD Precipitation** device per configured location (rain warnings are a device each):
 
-- **Radar nowcast, every 5 minutes:** Precipitation last 60 min, next 60 min, next 60–120 min and next 120 min; Precipitation intensity now; Peak intensity next 60 min, next 60–120 min and next 120 min; Peak hourly precipitation next 120 min; Precipitation start and end; Precipitation expected; Precipitation type now
+- **Radar nowcast, every 5 minutes:** Precipitation last 60 min, next 60 min, next 60–120 min and next 120 min; Precipitation intensity now; Peak intensity next 60 min, next 60–120 min and next 120 min; Peak hourly precipitation next 120 min; Precipitation start and end; Nearest precipitation (distance, direction and whether it is heading your way) and Precipitation start nearby; Precipitation expected; Precipitation type now
 - **Gauge-adjusted analyses, hourly and daily:** Precipitation previous hour, last 24h and yesterday
 - **For statistics:** Precipitation total and Precipitation total daily
 - **Timespan without precipitation**, and the optional **Rain events** sensor for blueprints

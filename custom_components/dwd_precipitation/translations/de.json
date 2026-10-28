@@ -31,12 +31,14 @@
             "data": {
               "precipitation_threshold": "Nur Regen zählen, der stärker ist als",
               "start_end_mode": "Beginn und Ende anzeigen als",
-              "precipitation_end_algorithm": "„Niederschlagsende“ zeigt"
+              "precipitation_end_algorithm": "„Niederschlagsende“ zeigt",
+              "neighbourhood_evaluation": "Umgebung des Standorts auswerten"
             },
             "data_description": {
               "precipitation_threshold": "Schwächerer Regen gilt für diese drei Sensoren als trocken. 0 zählt jeden Regen, den das Radar sieht; mit etwa 0,5 wird Nieselregen ignoriert.",
               "start_end_mode": "Die andere Form findest du weiterhin als Attribut der beiden Sensoren.",
-              "precipitation_end_algorithm": "„Die erste trockene Pause“ ist das Ende des aktuellen Schauers und ändert sich bei Schauerwetter daher oft. „Ab wann kein Regen mehr vorhergesagt ist“ ändert sich seltener, bleibt aber länger „unbekannt“. Die Vorhersage reicht 2 Stunden weit. [Mehr zu beiden]({docs_url}/de/getting-started/configuration#end-algorithm)"
+              "precipitation_end_algorithm": "„Die erste trockene Pause“ ist das Ende des aktuellen Schauers und ändert sich bei Schauerwetter daher oft. „Ab wann kein Regen mehr vorhergesagt ist“ ändert sich seltener, bleibt aber länger „unbekannt“. Die Vorhersage reicht 2 Stunden weit. [Mehr zu beiden]({docs_url}/de/getting-started/configuration#end-algorithm)",
+              "neighbourhood_evaluation": "Wertet zusätzlich die Radarzellen rund um deinen Standort aus: Die Sensoren „Nächster Niederschlag“ (Entfernung und Richtung im 5-km-Umkreis) und „Niederschlagsbeginn Umkreis“ (Regen im Umkreis von etwa 1,5 km) kommen hinzu. Regenereignisse und Regenwarnungen zählen Regen in der Umgebung nur, wenn er laut Vorhersage auf deinen Standort zuzieht; zieht er vorbei oder weg, zählt nur der Regen, der für deine eigene 1-km-Zelle vorhergesagt ist. Ausgeschaltet wird nur die eigene Zelle genutzt, und die beiden Sensoren werden entfernt. [Mehr]({docs_url}/de/getting-started/configuration#neighbourhood)"
             }
           },
           "dry_streak": {
@@ -214,6 +216,12 @@
       },
       "precipitation_end": {
         "name": "Niederschlagsende"
+      },
+      "area_precipitation_start": {
+        "name": "Niederschlagsbeginn Umkreis"
+      },
+      "nearest_precipitation": {
+        "name": "Nächster Niederschlag"
       },
       "timespan_without_precipitation": {
         "name": "Zeitraum ohne Niederschlag"

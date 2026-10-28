@@ -54,6 +54,12 @@ allows, in the section *Rain events and rain warnings*. The default is
 an intensity per hour; for a 5-minute step it is divided by 12 (the
 attribute `wet_step_mm` shows the result).
 
+With [*Evaluate the area around the location*](../getting-started/configuration.md#neighbourhood)
+on (the default), a step's rain is the wettest cell within about 1.5 km while
+the forecast moves the rain towards the location, and the own cell's
+otherwise (`event_value` in `forecast_5min`). A measured step filled in after
+a restart is always the own cell's.
+
 Changing this setting starts the events over, with new ids. The measured
 steps and `last_ended` are kept.
 

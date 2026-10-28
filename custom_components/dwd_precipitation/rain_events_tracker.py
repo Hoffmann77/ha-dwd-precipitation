@@ -113,6 +113,7 @@ class RainEventsTracker:
         fetch_analysis: Callable[[datetime], Awaitable[float | None]],
         publish: Callable[[RainEventsView], None],
         store: Store | None = None,
+        value_key: str = "value",
     ) -> None:
         """Set up the tracker; nothing is loaded before the first release.
 
@@ -121,7 +122,10 @@ class RainEventsTracker:
         shows a view finished in the background (both lent by RadvorRV). Writes
         the state once more when the entry unloads: an options change reloads
         the entry, and the new tracker must read the current state, not one a
-        pending delayed save still holds.
+        pending delayed save still holds. ``value_key`` picks the sample
+        value followed: "value" for the own cell, "event_value" for the
+        neighbourhood evaluation's (the wettest cell nearby while rain
+        approaches, else the own cell).
 
         """
         self._hass = hass
@@ -130,6 +134,7 @@ class RainEventsTracker:
         # reloads the entry, and the tracker starts new events for it.
         self._milli = wet_step_milli(threshold_mmh)
         self._fetch_analysis = fetch_analysis
+        self._value_key = value_key
         # Lent by the HymecNG coordinator (attach_types); None without one.
         self._fetch_type: Callable[[datetime], Awaitable[str | None]] | None = None
         self._publish = publish
@@ -203,7 +208,7 @@ class RainEventsTracker:
         try:
             series = metadata["rain_within_2h"]
             base = series.source_timestamp or release
-            values = [s["value"] for s in series.samples]
+            values = [s[self._value_key] for s in series.samples]
             state = await self._async_state()
         except Exception:
             self._failed()

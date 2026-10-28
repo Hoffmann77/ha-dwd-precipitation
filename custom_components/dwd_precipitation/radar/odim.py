@@ -154,6 +154,28 @@ def _cell_of(hf, lat: float, lon: float, dataset: str, moment: str):
     return dset[row:row + 1, col:col + 1], dataset_what, what
 
 
+def _window_of(hf, lat: float, lon: float, radius_m: float, dataset: str, moment: str):
+    """Return the raw cells within ``radius_m`` of a location, and how to read them.
+
+    The square of cells around the location's cell that reaches ``radius_m``,
+    clipped at the grid's edges, as stored. Returns the window, the location's
+    (row, col) in it, the cell size (y, x) in metres, the dataset's ``what`` and
+    the moment's ``what``.
+
+    """
+    grid = _file_grid(hf)
+    row, col = grid.cell(lat, lon)
+    dset, dataset_what, what = _open_composite(hf, dataset, moment, grid.shape)
+    reach_rows = math.ceil(radius_m / grid.yscale)
+    reach_cols = math.ceil(radius_m / grid.xscale)
+    r0, c0 = max(row - reach_rows, 0), max(col - reach_cols, 0)
+    window = dset[
+        r0:min(row + reach_rows + 1, grid.ysize),
+        c0:min(col + reach_cols + 1, grid.xsize),
+    ]
+    return window, (row - r0, col - c0), (grid.yscale, grid.xscale), dataset_what, what
+
+
 def _scale(raw, what):
     """Turn raw ACRR counts into mm: nodata -> NaN, undetect -> 0.0.
 
@@ -291,23 +313,35 @@ def read_odim_classification_near(
 
     """
     with h5py.File(fileobj, "r") as hf:
-        grid = _file_grid(hf)
-        row, col = grid.cell(lat, lon)
-        dset, dataset_what, moment_what = _open_composite(hf, dataset, moment, grid.shape)
-        reach_rows = math.ceil(radius_m / grid.yscale)
-        reach_cols = math.ceil(radius_m / grid.xscale)
-        r0, c0 = max(row - reach_rows, 0), max(col - reach_cols, 0)
-        window = dset[
-            r0:min(row + reach_rows + 1, grid.ysize),
-            c0:min(col + reach_cols + 1, grid.xsize),
-        ]
+        window, center, cell_m, dataset_what, moment_what = _window_of(
+            hf, lat, lon, radius_m, dataset, moment
+        )
 
-    center = (row - r0, col - c0)
-    return (
-        int(window[center]),
-        window,
-        center,
-        (grid.yscale, grid.xscale),
-        dataset_what,
-        moment_what,
-    )
+    return int(window[center]), window, center, cell_m, dataset_what, moment_what
+
+
+def read_odim_composite_near(
+    fileobj,
+    lat: float,
+    lon: float,
+    radius_m: float,
+    dataset: str = "dataset1",
+    moment: str = "data1",
+):
+    """Read the cell holding (lat, lon) and the cells within ``radius_m``, in mm.
+
+    Like read_odim_composite_at, plus the square of cells around the location
+    that reaches ``radius_m`` (clipped at the grid's edges), for the rain
+    around it (radar/nearby.py). Returns the cell's value (NaN for no data),
+    the window in mm, the location's (row, col) in the window, the cell size
+    (y, x) in metres and the dataset's ``what``. The read inflates the grid
+    once either way, so the window costs only its scaling.
+
+    """
+    with h5py.File(fileobj, "r") as hf:
+        raw, center, cell_m, dataset_what, what = _window_of(
+            hf, lat, lon, radius_m, dataset, moment
+        )
+
+    window = _scale(raw, what)
+    return window[center], window, center, cell_m, dataset_what

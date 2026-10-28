@@ -15,6 +15,7 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
+    UnitOfLength,
     UnitOfPrecipitationDepth,
     UnitOfTime,
     UnitOfVolumetricFlux,
@@ -355,6 +356,62 @@ def _rv_timing_sensors(
     )
 
 
+# The nearest rain within AREA_SCAN_RADIUS_M in the latest analysis, with the
+# neighbourhood evaluation on. Its attributes say where it is heading.
+NEAREST_PRECIPITATION_SENSOR = PrecipitationSensorEntityDescription(
+    key="radvor_rv_nearest_precipitation",
+    translation_key="nearest_precipitation",
+    icon="mdi:map-marker-distance",
+    native_unit_of_measurement=UnitOfLength.KILOMETERS,
+    device_class=SensorDeviceClass.DISTANCE,
+    suggested_display_precision=1,
+    state_class=SensorStateClass.MEASUREMENT,
+    product_key="rv",
+    sub_key="nearest_km",
+    attrs_fn=lambda d: {
+        "bearing": d["nearest_bearing"],
+        "direction": d["nearest_direction"],
+        "approaching": d["approaching"],
+        "closest_approach_km": d["closest_approach_km"],
+        "closest_approach_in": d["closest_approach_in"],
+    },
+)
+
+
+def _area_sensors(mode: str) -> tuple[PrecipitationSensorEntityDescription, ...]:
+    """Return the neighbourhood evaluation's sensors for the start/end mode.
+
+    The nearest rain, and when rain starts within AREA_NEAR_RADIUS_M, shown
+    like "Precipitation start" (see _rv_timing_sensors).
+
+    """
+    if mode == START_END_MODE_DURATION:
+        start = PrecipitationSensorEntityDescription(
+            key="radvor_rv_area_precipitation_start",
+            translation_key="area_precipitation_start",
+            native_unit_of_measurement=UnitOfTime.MINUTES,
+            device_class=SensorDeviceClass.DURATION,
+            state_class=SensorStateClass.MEASUREMENT,
+            product_key="rv",
+            sub_key="area_start_in",
+            attrs_fn=lambda d: {"at": d["area_start_at"]},
+        )
+    else:
+        start = PrecipitationSensorEntityDescription(
+            key="radvor_rv_area_precipitation_start",
+            translation_key="area_precipitation_start",
+            device_class=SensorDeviceClass.TIMESTAMP,
+            product_key="rv",
+            sub_key="area_start_at",
+            attrs_fn=lambda d: {"minutes_until": d["area_start_in"]},
+        )
+    return (NEAREST_PRECIPITATION_SENSOR, start)
+
+
+# The sensors that exist only with the neighbourhood evaluation on.
+AREA_SENSOR_KEYS = ("radvor_rv_nearest_precipitation", "radvor_rv_area_precipitation_start")
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -377,6 +434,11 @@ async def async_setup_entry(
         RADVOR_SENSORS
         + RADVOR_RV_SENSORS
         + _rv_timing_sensors(options.start_end_mode)
+        + (
+            _area_sensors(options.start_end_mode)
+            if options.neighbourhood_evaluation
+            else ()
+        )
         + HYMECNG_SENSORS
         + RADOLAN_SENSORS
     )
@@ -397,11 +459,11 @@ async def async_setup_entry(
     if options.rain_events:
         entities.append(RainEventsSensor(coordinators["rv"], RAIN_EVENTS_SENSOR))
     else:
-        registry = er.async_get(hass)
-        if entity_id := registry.async_get_entity_id(
-            "sensor", DOMAIN, unique_id_for(entry.entry_id, RAIN_EVENTS_SENSOR.key)
-        ):
-            registry.async_remove(entity_id)
+        _remove_sensor(hass, entry, RAIN_EVENTS_SENSOR.key)
+    # Likewise the neighbourhood evaluation's sensors.
+    if not options.neighbourhood_evaluation:
+        for key in AREA_SENSOR_KEYS:
+            _remove_sensor(hass, entry, key)
 
     # Changing the source reloads the entry, so binding once at setup is enough.
     # The unique id does not depend on it, so the entity and its persisted
@@ -438,6 +500,20 @@ async def async_setup_entry(
             ],
             config_subentry_id=subentry.subentry_id,
         )
+
+
+def _remove_sensor(hass: HomeAssistant, entry: ConfigEntry, key: str) -> None:
+    """Remove the entry's sensor ``key`` from the registry, if it is there.
+
+    For a sensor an option turned off, so it goes rather than lingering as
+    "no longer provided".
+
+    """
+    registry = er.async_get(hass)
+    if entity_id := registry.async_get_entity_id(
+        "sensor", DOMAIN, unique_id_for(entry.entry_id, key)
+    ):
+        registry.async_remove(entity_id)
 
 
 class PrecipitationSensorEntity(DwdCoordinatorEntity, SensorEntity):

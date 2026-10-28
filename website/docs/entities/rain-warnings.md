@@ -86,7 +86,11 @@ integration tracks for the location, the same events the
 option
 [*Only count rain heavier than*](../getting-started/configuration.md#rain-event-threshold)
 in the *Rain events and rain warnings* section,
-and the forecast reaches two hours ahead.
+and the forecast reaches two hours ahead. With
+[*Evaluate the area around the location*](../getting-started/configuration.md#neighbourhood)
+on, rain within about 1.5 km counts too, but only while it moves towards the
+location; a shower that passes by or moves away warns only if it is forecast
+on the location's own cell.
 
 - The lead time counts from when the radar data arrives in Home Assistant.
   The data comes every 5 minutes, so a warning can turn on up to 5 minutes

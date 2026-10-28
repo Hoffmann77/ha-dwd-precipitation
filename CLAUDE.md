@@ -88,6 +88,11 @@ radar/                The HA-free core: parsers and pure domain logic (no
   nearby.py           nearest_class(): the type of the nearest precipitation
                       in a HymecNG window, for the warnings' expected_type
                       (an estimate, never the measured type of ADR 0012).
+                      area_max(), nearest_above(), compass(), rain_track(),
+                      closest_approach(): the neighbourhood evaluation's
+                      rain around the location in RV windows, and whether
+                      it heads for the location (option
+                      neighbourhood_evaluation; RadvorRV._approach).
   isotime.py          iso()/parse_utc() for attributes and stored payloads.
 ```
 

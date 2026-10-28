@@ -23,6 +23,7 @@ from .const import (
     CONF_DRY_STREAK_SOURCE,
     CONF_EXTRA_ATTRIBUTES,
     CONF_FULL_ROLLING_SERIES,
+    CONF_NEIGHBOURHOOD,
     CONF_PRECIPITATION_END_ALGORITHM,
     CONF_PRECIPITATION_RESET_THRESHOLD,
     CONF_PRECIPITATION_THRESHOLD,
@@ -33,6 +34,7 @@ from .const import (
     DEFAULT_DRY_STREAK_SOURCE,
     DEFAULT_EXTRA_ATTRIBUTES,
     DEFAULT_FULL_ROLLING_SERIES,
+    DEFAULT_NEIGHBOURHOOD,
     DEFAULT_PRECIPITATION_END_ALGORITHM,
     DEFAULT_PRECIPITATION_RESET_THRESHOLD,
     DEFAULT_PRECIPITATION_THRESHOLD,
@@ -60,6 +62,7 @@ DEFAULT_OPTIONS: dict[str, Any] = {
     CONF_START_END_MODE: DEFAULT_START_END_MODE,
     CONF_PRECIPITATION_END_ALGORITHM: DEFAULT_PRECIPITATION_END_ALGORITHM,
     CONF_FULL_ROLLING_SERIES: DEFAULT_FULL_ROLLING_SERIES,
+    CONF_NEIGHBOURHOOD: DEFAULT_NEIGHBOURHOOD,
     CONF_RAIN_EVENTS: DEFAULT_RAIN_EVENTS,
     CONF_RAIN_EVENT_THRESHOLD: DEFAULT_RAIN_EVENT_THRESHOLD,
     CONF_PRECIPITATION_RESET_THRESHOLD: DEFAULT_PRECIPITATION_RESET_THRESHOLD,
@@ -77,6 +80,7 @@ class DwdOptions:
     start_end_mode: str
     precipitation_end_algorithm: str
     full_rolling_series: bool
+    neighbourhood_evaluation: bool
     rain_events: bool
     rain_event_threshold: float
     precipitation_reset_threshold: float
@@ -101,6 +105,7 @@ class DwdOptions:
             values["unknown_dry_streak_source"] = values["dry_streak_source"]
             values["dry_streak_source"] = DEFAULT_DRY_STREAK_SOURCE
         values["rain_events"] = bool(values["rain_events"])
+        values["neighbourhood_evaluation"] = bool(values["neighbourhood_evaluation"])
         return cls(**values)
 
     @property

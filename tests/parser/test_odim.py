@@ -17,6 +17,7 @@ from radar.odim import (
     read_odim_classification_near,
     read_odim_composite,
     read_odim_composite_at,
+    read_odim_composite_near,
     read_odim_grid,
 )
 
@@ -325,6 +326,37 @@ def test_real_hymecng_window_matches_the_whole_grid(kind):
     assert window.shape == (min(row + 6, whole.shape[0]) - r0, min(col + 6, whole.shape[1]) - c0)
     np.testing.assert_array_equal(window, whole[r0:r0 + window.shape[0], c0:c0 + window.shape[1]])
     assert (int(moment_what["undetect"]), int(moment_what["nodata"])) == (254, 255)
+
+
+def test_real_rv_window_matches_the_whole_grid():
+    """The amount window around a location is the whole grid's square, in mm."""
+    content, _ = real_member("rv")
+    cell = real_cells("rv")["wet"]
+    whole, _ = read_odim_composite(io.BytesIO(content))
+
+    value, window, center, cell_m, what = read_odim_composite_near(
+        io.BytesIO(content), cell["lat"], cell["lon"], 10000
+    )
+
+    assert value == pytest.approx(cell["value"])
+    assert cell_m == (1000.0, 1000.0)
+    assert window.shape == (21, 21)
+    assert center == (10, 10)
+    row, col = cell["row"] - 10, cell["col"] - 10
+    np.testing.assert_array_equal(window, whole[row:row + 21, col:col + 21])
+    assert "startdate" in what
+
+
+def test_real_rv_window_is_clipped_at_the_corner():
+    """At the grid's corner the window starts at row and column 0."""
+    content, _ = real_member("rv")
+    cell = real_cells("rv")["nodata"]
+    value, window, center, _, _ = read_odim_composite_near(
+        io.BytesIO(content), cell["lat"], cell["lon"], 5000
+    )
+    assert np.isnan(value)
+    assert center == (0, 0)
+    assert window.shape == (6, 6)
 
 
 # --- the radars a composite was built from (/how nodes) ----------------------

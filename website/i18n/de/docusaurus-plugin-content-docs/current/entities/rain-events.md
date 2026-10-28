@@ -61,6 +61,13 @@ im Abschnitt *Regenereignisse und Regenwarnungen* zulässt. Der Standard ist
 eine Intensität pro Stunde; für einen 5-Minuten-Schritt wird sie durch 12
 geteilt (das Attribut `wet_step_mm` zeigt das Ergebnis).
 
+Mit [*Umgebung des Standorts auswerten*](../getting-started/configuration.md#neighbourhood)
+(Standard: an) ist der Regen eines Schritts die nasseste Zelle im Umkreis von
+etwa 1,5 km, solange die Vorhersage den Regen auf den Standort zu bewegt, und
+sonst der der eigenen Zelle (`event_value` in `forecast_5min`). Ein nach
+einem Neustart nachgeholter gemessener Schritt ist immer der der eigenen
+Zelle.
+
 Eine Änderung dieser Einstellung beginnt die Ereignisse von vorn, mit neuen
 IDs. Die gemessenen Schritte und `last_ended` bleiben erhalten.
 

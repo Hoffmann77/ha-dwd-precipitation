@@ -65,6 +65,14 @@ RV_DATA = {
     "end_at": TS,
     "rain_within_2h": True,
     "peak_1h": 4.0,
+    "area_start_in": 0,
+    "area_start_at": TS,
+    "nearest_km": 2.0,
+    "nearest_bearing": 270,
+    "nearest_direction": "W",
+    "approaching": True,
+    "closest_approach_km": 0.3,
+    "closest_approach_in": 20,
 }
 RV_META = {key: RV_TIMING for key in RV_DATA} | {
     "intensity_000": RV_ANALYSIS,
@@ -162,6 +170,55 @@ async def test_rv_sensors_show_the_rates_and_the_peak_hour(make_entry, hass: Hom
     # The peak intensities report the extrapolated mm/h rate.
     assert float(_state_for(hass, entry, "radvor_rv_max_intensity_060").state) == approx(48.0)
     assert float(_state_for(hass, entry, "radvor_rv_max_intensity_000_120").state) == approx(48.0)
+
+
+@pytest.mark.asyncio
+async def test_neighbourhood_sensors_show_the_rain_around(make_entry, hass: HomeAssistant) -> None:
+    """On by default: the nearest rain, where it heads, and the nearby start."""
+    entry = await _set_up(make_entry, hass)
+
+    state = _state_for(hass, entry, "radvor_rv_nearest_precipitation")
+    assert float(state.state) == approx(2.0)
+    assert state.attributes["unit_of_measurement"] == "km"
+    assert state.attributes["direction"] == "W"
+    assert state.attributes["bearing"] == 270
+    assert state.attributes["approaching"] is True
+    assert state.attributes["closest_approach_km"] == approx(0.3)
+    assert state.attributes["closest_approach_in"] == 20
+
+    state = _state_for(hass, entry, "radvor_rv_area_precipitation_start")
+    assert state.state == TS.isoformat()
+    assert state.attributes["minutes_until"] == 0
+
+
+@pytest.mark.asyncio
+async def test_neighbourhood_off_removes_its_sensors(make_entry, hass: HomeAssistant) -> None:
+    """Off: the two sensors go, rather than lingering as no longer provided."""
+    entry = make_entry({"neighbourhood_evaluation": False})
+    registry = er.async_get(hass)
+    for key in ("radvor_rv_nearest_precipitation", "radvor_rv_area_precipitation_start"):
+        registry.async_get_or_create("sensor", DOMAIN, f"{entry.entry_id}_{key}", config_entry=entry)
+
+    with _patched_products():
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    for key in ("radvor_rv_nearest_precipitation", "radvor_rv_area_precipitation_start"):
+        assert registry.async_get_entity_id("sensor", DOMAIN, f"{entry.entry_id}_{key}") is None
+
+
+@pytest.mark.asyncio
+async def test_rain_events_follow_the_neighbourhood_when_it_is_on(
+    make_entry, hass: HomeAssistant
+) -> None:
+    """The tracker follows the nearby series with the option on, else the own cell."""
+    for options, key in (({}, "event_value"), ({"neighbourhood_evaluation": False}, "value")):
+        entry = make_entry({"rain_events": True, **options})
+        with _patched_products():
+            assert await hass.config_entries.async_setup(entry.entry_id)
+            await hass.async_block_till_done()
+        assert entry.runtime_data.coordinators["rv"]._rain_tracker._value_key == key
+        assert await hass.config_entries.async_unload(entry.entry_id)
 
 
 @pytest.mark.asyncio

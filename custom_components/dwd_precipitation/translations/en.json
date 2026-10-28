@@ -31,12 +31,14 @@
             "data": {
               "precipitation_threshold": "Only count rain heavier than",
               "start_end_mode": "Show start and end as",
-              "precipitation_end_algorithm": "“Precipitation end” shows"
+              "precipitation_end_algorithm": "“Precipitation end” shows",
+              "neighbourhood_evaluation": "Evaluate the area around the location"
             },
             "data_description": {
               "precipitation_threshold": "Lighter rain counts as dry for these three sensors. 0 counts any rain the radar sees; about 0.5 ignores drizzle.",
               "start_end_mode": "Whichever you do not pick is still shown as an attribute of the two sensors.",
-              "precipitation_end_algorithm": "“The first dry break” is when the current shower stops, so in showery weather it can change often. “When no more rain is forecast” changes less often, but stays “unknown” for longer. The forecast reaches 2 hours ahead. [More about both]({docs_url}/getting-started/configuration#end-algorithm)"
+              "precipitation_end_algorithm": "“The first dry break” is when the current shower stops, so in showery weather it can change often. “When no more rain is forecast” changes less often, but stays “unknown” for longer. The forecast reaches 2 hours ahead. [More about both]({docs_url}/getting-started/configuration#end-algorithm)",
+              "neighbourhood_evaluation": "Also looks at the radar cells around your location: adds the sensors “Nearest precipitation” (distance and direction within 5 km) and “Precipitation start nearby” (rain within about 1.5 km). Rain events and rain warnings count rain nearby only when the forecast moves it towards your location; rain passing by or moving away counts only where it is forecast on your own 1 km cell. Turn it off to use only your own cell; the two sensors are then removed. [More]({docs_url}/getting-started/configuration#neighbourhood)"
             }
           },
           "dry_streak": {
@@ -214,6 +216,12 @@
       },
       "precipitation_end": {
         "name": "Precipitation end"
+      },
+      "area_precipitation_start": {
+        "name": "Precipitation start nearby"
+      },
+      "nearest_precipitation": {
+        "name": "Nearest precipitation"
       },
       "timespan_without_precipitation": {
         "name": "Timespan without precipitation"

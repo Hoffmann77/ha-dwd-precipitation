@@ -118,6 +118,41 @@ wählt eine von zwei Antworten:
   Vorhersage, nach dem innerhalb des Horizonts nichts mehr erwartet wird.
   Ruhiger, bleibt aber länger `unknown`.
 
+## Regen in der Umgebung {#rain-nearby}
+
+Mit [*Umgebung des Standorts auswerten*](../getting-started/configuration.md#neighbourhood)
+(Standard: an) liest RV auch die Zellen rund um den Standort. Beide Sensoren
+zählen Regen über *Nur Regen zählen, der stärker ist als*, aber nie unter
+0,3 mm/h: Rund um den Standort gibt es viel mehr Zellen, die eine Spur
+Nieselregen erwischen.
+
+**Nächster Niederschlag** ist die Entfernung (km) zum nächsten Regen im
+Umkreis von 5 km in der jüngsten Analyse; `0`, wenn es auf der eigenen Zelle
+regnet, `unknown` („Unbekannt“), wenn im 5-km-Umkreis keiner ist.
+
+| Attribut | Bedeutung |
+|----------|-----------|
+| `bearing` | Wo der Regen ist, in Grad (0 Nord, 90 Ost); `null` auf der eigenen Zelle |
+| `direction` | Dasselbe als Himmelsrichtung: `N`, `NE`, `E`, ... |
+| `approaching` | `true`, solange der Regen im 10-km-Umkreis auf den Standort zuzieht |
+| `closest_approach_km` | Wie nah die Zugbahn des Regens dem Standort kommt |
+| `closest_approach_in` | In wie vielen Minuten; `0`, wenn er sich schon entfernt |
+
+Wohin der Regen zieht, ergibt sich aus der ersten halben Stunde der
+Vorhersage: Der Schwerpunkt des Regens im 10-km-Umkreis wird von Schritt zu
+Schritt verfolgt. Er zieht heran, wenn er sich mit mindestens 3 km/h bewegt
+und seine Zugbahn höchstens 1 km am Standort vorbeiführt. Regen, der
+stehen bleibt, weiter entfernt vorbeizieht oder sich entfernt, zieht nicht
+heran.
+
+**Niederschlagsbeginn Umkreis** ist wie `Niederschlagsbeginn`, für Regen im
+Umkreis von etwa 1,5 km (die eigene Zelle und ihre acht Nachbarn). Er folgt
+der Einstellung
+[*Beginn und Ende anzeigen als*](../getting-started/configuration.md#start-and-end-format).
+Mit der Option hat jeder Schritt von `forecast_5min` außerdem `area_value`
+(die nasseste Zelle im 1,5-km-Umkreis, mm) und `event_value` (dem die
+[Regenereignisse](rain-events.md#what-counts-as-rain) folgen).
+
 ## Niederschlag erwartet {#precipitation-expected}
 
 **Niederschlag erwartet** ist ein Binärsensor: `on`, wenn innerhalb der

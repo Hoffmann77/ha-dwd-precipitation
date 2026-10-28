@@ -46,6 +46,9 @@ NEW_SINCE_2026_10_0 = {
     "radvor_rv_intensity_000": "precipitation_intensity_now",
     "radvor_rs_000_120": "precipitation_next_120_min",
     "radvor_rv_max_intensity_000_120": "peak_intensity_next_120_min",
+    # The neighbourhood evaluation's, with the ids the fork gave them.
+    "radvor_rv_nearest_precipitation": "nearest_precipitation",
+    "radvor_rv_area_precipitation_start": "precipitation_start_nearby",
 }
 
 # Added since 2026.10.0: one pair per rain-warning subentry, on the warning's

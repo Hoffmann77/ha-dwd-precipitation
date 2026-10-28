@@ -87,7 +87,11 @@ die Integration für den Standort verfolgt, dieselben, die der Sensor
 [Regenereignisse](rain-events.md) zeigt. Was als Regen zählt, legt daher die
 Option
 [*Nur Regen zählen, der stärker ist als*](../getting-started/configuration.md#rain-event-threshold)
-im Abschnitt *Regenereignisse und Regenwarnungen* fest, und die Vorhersage reicht zwei Stunden voraus.
+im Abschnitt *Regenereignisse und Regenwarnungen* fest, und die Vorhersage reicht zwei Stunden voraus. Mit
+[*Umgebung des Standorts auswerten*](../getting-started/configuration.md#neighbourhood)
+zählt auch Regen im Umkreis von etwa 1,5 km, aber nur, solange er auf den
+Standort zuzieht; ein Schauer, der vorbeizieht oder sich entfernt, warnt nur,
+wenn er für die eigene Zelle vorhergesagt ist.
 
 - Die Vorlaufzeit zählt ab dem Moment, in dem die Radardaten in Home
   Assistant ankommen. Sie kommen alle 5 Minuten, daher kann eine Warnung bis
