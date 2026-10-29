@@ -23,49 +23,159 @@
     "step": {
       "init": {
         "title": "DWD Niederschlag – Optionen",
-        "description": "Diese Einstellungen ändern, wie die Sensoren die Daten des DWD darstellen. Keine davon beeinflusst, wie oft abgerufen wird – jedes Produkt wird aktualisiert, sobald der DWD es veröffentlicht, und fehlgeschlagene Abrufe werden automatisch wiederholt.",
-        "data": {
-          "extra_state_attributes": "Metadaten als Sensorattribute anzeigen",
-          "unavailable_when_stale": "Sensoren als nicht verfügbar anzeigen, wenn die Daten veraltet sind",
-          "precipitation_threshold": "Schwelle für Regenerkennung (mm pro Stunde)",
-          "start_end_mode": "Anzeige von „Niederschlagsbeginn“ und „Niederschlagsende“",
-          "precipitation_end_algorithm": "Wann „Niederschlagsende“ den Regen als beendet ansieht",
-          "precipitation_reset_threshold": "Regenmenge, die den Trockenzähler zurücksetzt (mm)",
-          "full_rolling_series": "Vergangene Stunde in die stündliche Vorhersagereihe aufnehmen"
-        },
-        "data_description": {
-          "extra_state_attributes": "Hängt jedem Sensor den DWD-Produktnamen, den Messzeitpunkt und den abgedeckten Zeitraum als Attribute an. Nützlich in Templates oder beim Melden eines Problems; ansonsten ausgeschaltet lassen.",
-          "unavailable_when_stale": "Veröffentlicht der DWD nicht rechtzeitig eine neue Datei, melden die betroffenen Sensoren „nicht verfügbar“, statt den letzten Wert zu behalten. Schalte dies aus, um immer den neuesten Messwert zu behalten – auch wenn er Stunden alt sein kann. In beiden Fällen wird die fehlende Datei im Hintergrund weiter abgerufen.",
-          "precipitation_threshold": "Wie viel vorhergesagter Regen für die Sensoren „Niederschlagsbeginn“, „Niederschlagsende“ und „Niederschlag erwartet“ als Niederschlag zählt. 0 bedeutet jede vom DWD erkannte Menge; auf etwa 0,5 erhöhen, um Nieselregen zu ignorieren.",
-          "start_end_mode": "Ob diese beiden Sensoren eine Uhrzeit („14:25“) oder die Minuten bis zum Ereignis („20“) anzeigen. Die nicht gewählte Variante bleibt als Attribut am selben Sensor verfügbar.",
-          "precipitation_end_algorithm": "„Erste trockene Lücke“ meldet das Ende des aktuellen Schauers und springt daher bei Schauerwetter hin und her. „Niederschlag endet innerhalb von 2 h“ wartet, bis kein weiterer Regen vorhergesagt ist – das ist stabiler, bleibt aber länger unbekannt. Der DWD sagt nur zwei Stunden voraus, darüber hinaus ist der Sensor in beiden Fällen „unbekannt“.",
-          "precipitation_reset_threshold": "Wie viel Regen „Zeitraum ohne Niederschlag“ auf null zurücksetzt. Verglichen wird mit „Niederschlag aktuell“, also den in der letzten Stunde gefallenen Millimetern – 1 mm bedeutet, dass in der letzten Stunde 1 mm gefallen ist, keine Rate.",
-          "full_rolling_series": "Lässt das Attribut „forecast_rolling_1h“ von „Maximaler Stundenniederschlag nächste 2h“ eine Stunde früher beginnen. Jeder Eintrag ist der Niederschlag in der Stunde, die zu diesem Zeitpunkt beginnt. Die ersten Einträge enthalten damit auch Regen, der bereits gefallen ist, und ein Diagramm zeigt die vergangene Stunde und die Vorhersage als eine durchgehende Kurve. Der Wert des Sensors ist in beiden Fällen gleich, da er nur die kommenden Stunden betrachtet. Eingeschaltet verdoppelt sich etwa die Rechenzeit pro Aktualisierung, was auf kleinen Geräten spürbar sein kann."
+        "description": "Die Einstellungen sind nach den Sensoren gruppiert, die sie verändern. Beim Speichern wird die Integration neu geladen; die Sensoren sind nach wenigen Sekunden wieder da. [Was jede Einstellung bewirkt]({docs_url}/de/getting-started/configuration#options)",
+        "sections": {
+          "rain_forecast": {
+            "name": "Regenvorhersage",
+            "description": "Für „Niederschlagsbeginn“, „Niederschlagsende“ und „Niederschlag erwartet“.",
+            "data": {
+              "precipitation_threshold": "Nur Regen zählen, der stärker ist als",
+              "start_end_mode": "Beginn und Ende anzeigen als",
+              "precipitation_end_algorithm": "„Niederschlagsende“ zeigt",
+              "neighbourhood_evaluation": "Umgebung des Standorts auswerten"
+            },
+            "data_description": {
+              "precipitation_threshold": "Schwächerer Regen gilt für diese drei Sensoren als trocken. 0 zählt jeden Regen, den das Radar sieht; mit etwa 0,5 wird Nieselregen ignoriert.",
+              "start_end_mode": "Die andere Form findest du weiterhin als Attribut der beiden Sensoren.",
+              "precipitation_end_algorithm": "„Die erste trockene Pause“ ist das Ende des aktuellen Schauers und ändert sich bei Schauerwetter daher oft. „Ab wann kein Regen mehr vorhergesagt ist“ ändert sich seltener, bleibt aber länger „unbekannt“. Die Vorhersage reicht 2 Stunden weit. [Mehr zu beiden]({docs_url}/de/getting-started/configuration#end-algorithm)",
+              "neighbourhood_evaluation": "Wertet zusätzlich die Radarzellen rund um deinen Standort aus: Die Sensoren „Nächster Niederschlag“ (Entfernung und Richtung im 5-km-Umkreis) und „Niederschlagsbeginn Umkreis“ (Regen im Umkreis von etwa 1,5 km) kommen hinzu. Regenereignisse und Regenwarnungen zählen Regen in der Umgebung nur, wenn er laut Vorhersage auf deinen Standort zuzieht; zieht er vorbei oder weg, zählt nur der Regen, der für deine eigene 1-km-Zelle vorhergesagt ist. Ausgeschaltet wird nur die eigene Zelle genutzt, und die beiden Sensoren werden entfernt. [Mehr]({docs_url}/de/getting-started/configuration#neighbourhood)"
+            }
+          },
+          "dry_streak": {
+            "name": "Zeitraum ohne Niederschlag",
+            "description": "Für den Sensor, der zählt, wie lange es nicht geregnet hat.",
+            "data": {
+              "precipitation_reset_threshold": "Regen, der die Zählung zurücksetzt",
+              "dry_streak_source": "Gemessen mit"
+            },
+            "data_description": {
+              "precipitation_reset_threshold": "Fällt innerhalb einer Stunde mindestens so viel Regen, beginnt die Zählung wieder bei null. 1 mm sind 1 Liter pro Quadratmeter.",
+              "dry_streak_source": "Mit Radar und Regenmessern ist die Zählung genauer, ein Zurücksetzen erscheint aber erst etwa 30 bis 40 Minuten nach dem Regen. Nur mit Radar reagiert sie innerhalb weniger Minuten, ist aber ungenauer. [Mehr zu beiden]({docs_url}/de/getting-started/configuration#dry-streak-source)"
+            }
+          },
+          "rain_event_tracking": {
+            "name": "Regenereignisse und Regenwarnungen",
+            "description": "Regenereignisse verfolgen jeden Schauer von der ersten Vorhersage, die ihn zeigt, bis er vorbei ist. Darauf bauen die Regenwarnungen auf; die fügst du auf der Seite dieser Integration mit „Regenwarnung hinzufügen“ hinzu.",
+            "data": {
+              "default_rain_warning": "Regenwarnung für diesen Ort hinzufügen",
+              "rain_events": "Sensor „Regenereignisse“ hinzufügen",
+              "rain_event_threshold": "Nur Regen zählen, der stärker ist als"
+            },
+            "data_description": {
+              "default_rain_warning": "Fügt dem Ort den Sensor „Regenwarnung“ (trocken, bald oder Regen) und den Regler „Vorwarnzeit Regenwarnung“ hinzu, ohne dass du erst eine Regenwarnung anlegen musst. Er hat keine Mindestmengen: Die legt der Blueprint fest. Weitere Warnungen mit eigenen Mindestmengen fügst du mit „Regenwarnung hinzufügen“ hinzu. [Mehr]({docs_url}/de/entities/rain-warnings#location-warning)",
+              "rain_events": "Für Blueprints, die vor Regen warnen oder darüber berichten. Regenwarnungen funktionieren auch ohne ihn. Solange der Sensor oder eine Regenwarnung genutzt wird, speichert die Integration eine kleine Aufzeichnung des jüngsten Regens. [Mehr zum Sensor]({docs_url}/de/entities/rain-events)",
+              "rain_event_threshold": "Gilt für den Sensor „Regenereignisse“ und für alle Regenwarnungen. 0 zählt jeden Regen, den das Radar sieht. Unabhängig von der gleichnamigen Einstellung unter „Regenvorhersage“."
+            }
+          },
+          "advanced_options": {
+            "name": "Erweitert",
+            "description": "Zusätzliche Angaben für Templates und Diagramme, und was die Sensoren zeigen, wenn der DWD sich verspätet. Die meisten Installationen ändern hier nichts.",
+            "data": {
+              "extra_state_attributes": "Technische Details zu den Sensoren hinzufügen",
+              "full_rolling_series": "Vergangene Stunde in die stündliche Regenreihe aufnehmen",
+              "unavailable_when_stale": "„Nicht verfügbar“ anzeigen, wenn die Daten veraltet sind"
+            },
+            "data_description": {
+              "extra_state_attributes": "Zeigt als zusätzliche Attribute, aus welchem DWD-Produkt ein Wert stammt, wann er gemessen wurde und welchen Zeitraum er abdeckt. Hilfreich, wenn du ein Problem meldest; sonst kannst du es ausgeschaltet lassen. [Liste der Details]({docs_url}/de/entities/attributes#technical-details)",
+              "full_rolling_series": "Für Diagramme: Das Attribut „forecast_rolling_1h“ von „Maximaler Stundenniederschlag nächste 120 min“ beginnt dann eine Stunde früher, sodass bereits gefallener Regen und die Vorhersage eine Kurve bilden. Der Wert des Sensors ändert sich nicht. Nach einem Neustart füllt sich die vergangene Stunde im Lauf der ersten Stunde. [Mehr]({docs_url}/de/entities/radvor-rv#peak-hourly-precipitation)",
+              "unavailable_when_stale": "Verspätet sich der DWD mit neuen Daten, zeigen die betroffenen Sensoren „nicht verfügbar“ statt eines alten Werts. Schalte dies aus, um weiter den letzten Wert zu zeigen, auch wenn er Stunden alt ist. In beiden Fällen werden neue Daten abgerufen, sobald der DWD sie veröffentlicht. [Wann Daten als veraltet gelten]({docs_url}/de/how-it-works/availability)"
+            }
+          }
         }
+      }
+    }
+  },
+  "config_subentries": {
+    "rain_warning": {
+      "initiate_flow": {
+        "user": "Regenwarnung hinzufügen",
+        "reconfigure": "Regenwarnung ändern"
+      },
+      "entry_type": "Regenwarnung",
+      "step": {
+        "user": {
+          "title": "Regenwarnung hinzufügen",
+          "description": "Eine Regenwarnung geht an, kurz bevor Regen diesen Ort erreicht, und bleibt an, solange es regnet. Jede Warnung ist ein eigenes Gerät, benannt nach dem Ort und der Warnung („Home Wäsche“), mit zwei Entitäten: „Regenwarnung“ (an/aus) und „Regenwarnung Status“ (trocken, bald oder Regen, mit den Details des Regenereignisses). Sie arbeitet mit den Regenereignissen, die die Integration verfolgt; was als Regen zählt, legt daher die erweiterte Option „Schwelle für Regenereignisse“ fest.",
+          "data": {
+            "name": "Name",
+            "lead_time": "Vorlaufzeit",
+            "min_mm": "Mindestregen insgesamt (mm)",
+            "min_peak_1h": "Mindestregen in der nassesten Stunde (mm)",
+            "min_peak_10min": "Mindestregen in den nassesten 10 Minuten (mm)",
+            "combine": "Bei mehreren Mindestwerten"
+          },
+          "data_description": {
+            "name": "Wofür die Warnung ist, etwa „Wäsche“ oder „Fenster“. An einem Ort namens „Home“ ergibt „Wäsche“ das Gerät „Home Wäsche“ und binary_sensor.home_wasche_rain_warning.",
+            "lead_time": "Wie viele Minuten vor dem Regen die Warnung angeht. Die Vorhersage reicht zwei Stunden voraus und kommt ein paar Minuten nach der DWD-Veröffentlichung an, daher kann die Warnung bis zu 5 Minuten später kommen.",
+            "min_mm": "Nur vor einem Regenereignis warnen, das insgesamt mindestens so viel bringt, gemessen und vorhergesagt. Leer lassen, um vor jedem Regenereignis zu warnen.",
+            "min_peak_1h": "Nur vor einem Regenereignis warnen, dessen nasseste Stunde mindestens so viel bringt. Leer lassen, um es nicht zu prüfen.",
+            "min_peak_10min": "Nur vor einem Regenereignis warnen, dessen nasseste 10 Minuten mindestens so viel bringen, für kurze, heftige Schauer. Leer lassen, um es nicht zu prüfen.",
+            "combine": "Ob ein Ereignis einen der gesetzten Mindestwerte erreichen muss oder alle. Ohne Mindestwert spielt es keine Rolle."
+          }
+        },
+        "reconfigure": {
+          "title": "Regenwarnung ändern",
+          "description": "Ein neuer Name benennt das Gerät und die Entitäten der Warnung um; ihre Entitäts-IDs bleiben, wie sie sind.",
+          "data": {
+            "name": "Name",
+            "lead_time": "Vorlaufzeit",
+            "min_mm": "Mindestregen insgesamt (mm)",
+            "min_peak_1h": "Mindestregen in der nassesten Stunde (mm)",
+            "min_peak_10min": "Mindestregen in den nassesten 10 Minuten (mm)",
+            "combine": "Bei mehreren Mindestwerten"
+          },
+          "data_description": {
+            "name": "Wofür die Warnung ist, etwa „Wäsche“ oder „Fenster“. An einem Ort namens „Home“ ergibt „Wäsche“ das Gerät „Home Wäsche“ und binary_sensor.home_wasche_rain_warning.",
+            "lead_time": "Wie viele Minuten vor dem Regen die Warnung angeht. Die Vorhersage reicht zwei Stunden voraus und kommt ein paar Minuten nach der DWD-Veröffentlichung an, daher kann die Warnung bis zu 5 Minuten später kommen.",
+            "min_mm": "Nur vor einem Regenereignis warnen, das insgesamt mindestens so viel bringt, gemessen und vorhergesagt. Leer lassen, um vor jedem Regenereignis zu warnen.",
+            "min_peak_1h": "Nur vor einem Regenereignis warnen, dessen nasseste Stunde mindestens so viel bringt. Leer lassen, um es nicht zu prüfen.",
+            "min_peak_10min": "Nur vor einem Regenereignis warnen, dessen nasseste 10 Minuten mindestens so viel bringen, für kurze, heftige Schauer. Leer lassen, um es nicht zu prüfen.",
+            "combine": "Ob ein Ereignis einen der gesetzten Mindestwerte erreichen muss oder alle. Ohne Mindestwert spielt es keine Rolle."
+          }
+        }
+      },
+      "error": {
+        "invalid_name": "Bitte gib einen Namen ein.",
+        "name_already_exists": "Dieser Ort hat bereits eine Regenwarnung mit diesem Namen. Bitte wähle einen anderen Namen."
+      },
+      "abort": {
+        "reconfigure_successful": "Die Regenwarnung wurde geändert."
       }
     }
   },
   "selector": {
     "start_end_mode": {
       "options": {
-        "timestamp": "Uhrzeit",
-        "duration": "Minuten ab jetzt"
+        "timestamp": "Uhrzeit, z. B. 14:25",
+        "duration": "Minuten ab jetzt, z. B. 20"
       }
     },
     "precipitation_end_algorithm": {
       "options": {
-        "episode": "Erste trockene Lücke",
-        "clearing": "Niederschlag endet innerhalb von 2 h"
+        "episode": "Die erste trockene Pause",
+        "clearing": "Ab wann kein Regen mehr vorhergesagt ist"
+      }
+    },
+    "dry_streak_source": {
+      "options": {
+        "rw": "Radar und Regenmessern (RW)",
+        "rs": "Nur Radar (RS)"
+      }
+    },
+    "combine": {
+      "options": {
+        "any": "Einer davon genügt",
+        "all": "Alle müssen erreicht werden"
       }
     }
   },
   "entity": {
     "sensor": {
-      "precipitation_now": {
-        "name": "Niederschlag aktuell"
+      "precipitation_last_60_min": {
+        "name": "Niederschlag letzte 60 min"
       },
-      "precipitation_last_1h": {
-        "name": "Niederschlag letzte 1h"
+      "precipitation_previous_hour": {
+        "name": "Niederschlag vorige Stunde"
       },
       "precipitation_last_24h": {
         "name": "Niederschlag letzte 24h"
@@ -73,26 +183,35 @@
       "precipitation_yesterday": {
         "name": "Niederschlag gestern"
       },
-      "precipitation_total_hourly": {
-        "name": "Niederschlag gesamt (stündlich)"
+      "precipitation_total": {
+        "name": "Niederschlag gesamt"
       },
       "precipitation_total_daily": {
-        "name": "Niederschlag gesamt (täglich)"
+        "name": "Niederschlag gesamt täglich"
       },
-      "precipitation_next_1h": {
-        "name": "Niederschlag nächste 1h"
+      "precipitation_next_60_min": {
+        "name": "Niederschlag nächste 60 min"
       },
-      "precipitation_next_1_2h": {
-        "name": "Niederschlag nächste 1–2h"
+      "precipitation_next_60_120_min": {
+        "name": "Niederschlag nächste 60–120 min"
       },
-      "peak_hourly_precipitation_next_2h": {
-        "name": "Maximaler Stundenniederschlag nächste 2h"
+      "precipitation_next_120_min": {
+        "name": "Niederschlag nächste 120 min"
       },
-      "peak_intensity_next_1h": {
-        "name": "Spitzenintensität nächste 1h"
+      "peak_hourly_precipitation_next_120_min": {
+        "name": "Maximaler Stundenniederschlag nächste 120 min"
       },
-      "peak_intensity_next_1_2h": {
-        "name": "Spitzenintensität nächste 1–2h"
+      "precipitation_intensity_now": {
+        "name": "Niederschlagsintensität aktuell"
+      },
+      "peak_intensity_next_60_min": {
+        "name": "Spitzenintensität nächste 60 min"
+      },
+      "peak_intensity_next_60_120_min": {
+        "name": "Spitzenintensität nächste 60–120 min"
+      },
+      "peak_intensity_next_120_min": {
+        "name": "Spitzenintensität nächste 120 min"
       },
       "precipitation_start": {
         "name": "Niederschlagsbeginn"
@@ -100,11 +219,17 @@
       "precipitation_end": {
         "name": "Niederschlagsende"
       },
+      "area_precipitation_start": {
+        "name": "Niederschlagsbeginn Umkreis"
+      },
+      "nearest_precipitation": {
+        "name": "Nächster Niederschlag"
+      },
       "timespan_without_precipitation": {
         "name": "Zeitraum ohne Niederschlag"
       },
-      "precipitation_type": {
-        "name": "Niederschlagsart",
+      "precipitation_type_now": {
+        "name": "Niederschlagsart aktuell",
         "state": {
           "no_precipitation": "Kein Niederschlag",
           "not_classified": "Nicht klassifiziert",
@@ -118,11 +243,46 @@
           "hail": "Hagel",
           "large_hail": "Großer Hagel"
         }
+      },
+      "rain_events": {
+        "name": "Regenereignisse",
+        "state": {
+          "none": "Keines",
+          "upcoming": "Bevorstehend",
+          "ongoing": "Laufend"
+        }
+      },
+      "rain_warning_status": {
+        "name": "Regenwarnung Status",
+        "state": {
+          "dry": "Trocken",
+          "soon": "Bald",
+          "rain": "Regen"
+        }
+      },
+      "rain_warning": {
+        "name": "Regenwarnung",
+        "state": {
+          "dry": "Trocken",
+          "soon": "Bald",
+          "rain": "Regen"
+        }
       }
     },
     "binary_sensor": {
       "precipitation_expected": {
         "name": "Niederschlag erwartet"
+      },
+      "rain_warning": {
+        "name": "Regenwarnung"
+      }
+    },
+    "number": {
+      "rain_warning_lead_time": {
+        "name": "Vorwarnzeit"
+      },
+      "warning_lead_time": {
+        "name": "Vorwarnzeit Regenwarnung"
       }
     }
   }

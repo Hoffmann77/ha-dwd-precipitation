@@ -1,0 +1,50 @@
+{
+  "link.title.Docs": {
+    "message": "Doku",
+    "description": "The title of the footer links column with title=Docs in the footer"
+  },
+  "link.title.Project": {
+    "message": "Projekt",
+    "description": "The title of the footer links column with title=Project in the footer"
+  },
+  "link.title.Data": {
+    "message": "Daten",
+    "description": "The title of the footer links column with title=Data in the footer"
+  },
+  "link.item.label.Installation": {
+    "message": "Installation",
+    "description": "The label of footer link with label=Installation linking to /getting-started/installation"
+  },
+  "link.item.label.Entities": {
+    "message": "Entitäten",
+    "description": "The label of footer link with label=Entities linking to /entities/overview"
+  },
+  "link.item.label.Troubleshooting": {
+    "message": "Fehlerbehebung",
+    "description": "The label of footer link with label=Troubleshooting linking to /help/troubleshooting"
+  },
+  "link.item.label.GitHub": {
+    "message": "GitHub",
+    "description": "The label of footer link with label=GitHub linking to https://github.com/Hoffmann77/ha-dwd-precipitation"
+  },
+  "link.item.label.Issues": {
+    "message": "Issues",
+    "description": "The label of footer link with label=Issues linking to https://github.com/Hoffmann77/ha-dwd-precipitation/issues"
+  },
+  "link.item.label.Releases": {
+    "message": "Releases",
+    "description": "The label of footer link with label=Releases linking to https://github.com/Hoffmann77/ha-dwd-precipitation/releases"
+  },
+  "link.item.label.DWD Open Data": {
+    "message": "DWD Open Data",
+    "description": "The label of footer link with label=DWD Open Data linking to https://opendata.dwd.de/"
+  },
+  "link.item.label.DWD terms of use": {
+    "message": "DWD-Nutzungsbedingungen",
+    "description": "The label of footer link with label=DWD terms of use linking to https://www.dwd.de/EN/service/copyright/copyright_node.html"
+  },
+  "copyright": {
+    "message": "Radardaten: Deutscher Wetterdienst (DWD). Ein Community-Projekt, nicht mit dem DWD verbunden und nicht von ihm unterstützt.",
+    "description": "The footer copyright"
+  }
+}

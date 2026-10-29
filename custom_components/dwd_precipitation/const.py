@@ -11,11 +11,17 @@ from .radar.nowcast import (
 
 DOMAIN = "dwd_precipitation"
 
-PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR]
+# The documentation site, manifest.json's "documentation" without the trailing
+# slash. The options form links into it through the {docs_url} placeholder;
+# the German translations add /de, where the site keeps its German pages.
+DOCS_URL = "https://hoffmann77.github.io/ha-dwd-precipitation"
+
+PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.NUMBER]
 
 CONF_COORDS = "coordinates"
 
 CONF_EXTRA_ATTRIBUTES = "extra_state_attributes"
+DEFAULT_EXTRA_ATTRIBUTES = False
 
 CONF_UNAVAILABLE_WHEN_STALE = "unavailable_when_stale"
 
@@ -52,20 +58,106 @@ DEFAULT_PRECIPITATION_END_ALGORITHM = DEFAULT_END_ALGO
 
 CONF_FULL_ROLLING_SERIES = "full_rolling_series"
 
-# Where "Peak hourly precipitation next 2h" comes from. Off: summed from the RV
+# Where "Peak hourly precipitation next 120 min" comes from. Off: summed from the RV
 # 5-minute steps that are decoded anyway, which only reaches the 13 rolling
 # hours wholly in the future. On: RS decodes all 25 of its members, adding the
 # 12 windows that straddle now. The peak itself is identical either way.
 DEFAULT_FULL_ROLLING_SERIES = False
 
+CONF_NEIGHBOURHOOD = "neighbourhood_evaluation"
+
+# Whether RV also reads the cells around the location (radar/nearby.py). On:
+# the "Nearest precipitation" and "Precipitation start nearby" sensors exist,
+# and rain events (so rain warnings) count rain within AREA_NEAR_RADIUS_M.
+# Rain nearby counts for rain events only while it moves towards the location
+# (radar/nearby.py rain_track); rain passing by or moving away counts only
+# where it is forecast on the own cell. Off: only the location's own 1 km
+# cell, and those sensors are removed.
+DEFAULT_NEIGHBOURHOOD = True
+# "Nearby" is the own cell and its eight neighbours; the nearest rain is
+# searched within AREA_SCAN_RADIUS_M.
+AREA_NEAR_RADIUS_M = 1500.0
+AREA_SCAN_RADIUS_M = 5000.0
+# mm/h; the least intensity the nearby sensors count as rain. Nine cells
+# catch a speck of trace rain far more often than one, so they never count
+# less than this, whatever precipitation_threshold says.
+AREA_MIN_INTENSITY = 0.3
+# Where the rain is heading is fitted from its centre within
+# AREA_TRACK_RADIUS_M over the first half hour of the forecast. It approaches
+# when it moves at AREA_MIN_SPEED or more (m/min; 50 is 3 km/h) and its track
+# passes within AREA_APPROACH_RADIUS_M of the location ahead, that is over the
+# own cell or right beside it; rain whose track passes further away goes by.
+AREA_TRACK_RADIUS_M = 10000.0
+AREA_TRACK_LEADS = (0, 5, 10, 15, 20, 25, 30)
+AREA_MIN_SPEED = 50.0
+AREA_APPROACH_RADIUS_M = 1000.0
+
+CONF_DEFAULT_RAIN_WARNING = "default_rain_warning"
+
+# Whether the location has its own rain warning, without minimums: the
+# sensor "Rain warning" (unique-id suffix "rain_warning") and its lead-time
+# slider ("warning_lead_time"), on the location's device. On by default, so a
+# blueprint has a warning to read without one being added first; minimums
+# are for the blueprint, or for warnings added as subentries.
+DEFAULT_DEFAULT_RAIN_WARNING = True
+DEFAULT_WARNING_LEAD_TIME = 30
+
+CONF_RAIN_EVENTS = "rain_events"
+
+# Whether the entry has the "Rain events" sensor. Off by default: its view is
+# for blueprints. The tracker behind it also runs for rain warnings, with the
+# option off (options.tracks_rain_events).
+DEFAULT_RAIN_EVENTS = False
+
+CONF_RAIN_EVENT_THRESHOLD = "rain_event_threshold"
+
+# mm/h; a 5-minute step above a twelfth of this is wet for rain_events. Not a
+# clutter filter (the composite is clean): it stops trace rain forming events
+# and drizzle bridging two cells, while light rain still counts. Deliberately
+# independent of CONF_PRECIPITATION_THRESHOLD.
+DEFAULT_RAIN_EVENT_THRESHOLD = 0.1
+
+# Rain warnings: config subentries of this type, one warning each, filtering
+# the rain-events view (radar/rain_warning.py). Their data keys; defaults in
+# options.DEFAULT_RAIN_WARNING.
+SUBENTRY_RAIN_WARNING = "rain_warning"
+CONF_LEAD_TIME = "lead_time"
+# The lead time a warning can have, in minutes (subentry form and slider).
+LEAD_TIME_MIN, LEAD_TIME_MAX, LEAD_TIME_STEP = 5, 120, 5
+CONF_MIN_MM = "min_mm"
+CONF_MIN_PEAK_1H = "min_peak_1h"
+CONF_MIN_PEAK_10MIN = "min_peak_10min"
+CONF_COMBINE = "combine"
+
+# The coordinator for RW's 10-minute runs: each a sliding hour ending at that
+# mark, gauge-adjusted as strongly as the hourly run (scripts/compare_rw_runs.py).
+# Created only when the dry streak counts RW.
+RW_SLIDING_KEY = "rw_10min"
+
 CONF_PRECIPITATION_RESET_THRESHOLD = "precipitation_reset_threshold"
 
-# mm; "Precipitation now" at/above this value resets the dry streak counter.
+# mm; a past-hour total from the dry-streak source at/above this value resets
+# the dry streak counter.
 DEFAULT_PRECIPITATION_RESET_THRESHOLD = 1.0
+
+CONF_DRY_STREAK_SOURCE = "dry_streak_source"
+
+# Which product's past-hour total resets the dry streak. Both are 60-minute
+# totals in mm, so the reset threshold means the same thing either way.
+# "rw" = RW, gauge-adjusted: its 10-minute runs (RW_SLIDING_KEY), ~28 min late.
+# "rs" = RS _000, radar only, a rolling hour refreshed every 5 minutes.
+DRY_STREAK_SOURCE_RW = "rw"
+DRY_STREAK_SOURCE_RS = "rs"
+DRY_STREAK_SOURCES = (DRY_STREAK_SOURCE_RW, DRY_STREAK_SOURCE_RS)
+DEFAULT_DRY_STREAK_SOURCE = DRY_STREAK_SOURCE_RW
+
+# Entries created before the option existed counted RS; the 1.2 migration pins
+# them to it, so only new installs pick up the default.
+LEGACY_DRY_STREAK_SOURCE = DRY_STREAK_SOURCE_RS
 
 # HymecNG precipitation-type classes, indexed by the DWD class value (0..10) as
 # defined by the ODIM legend embedded in the composite. These are the possible
-# states of the "Precipitation type" enum sensor.
+# states of the "Precipitation type now" enum sensor.
 PRECIP_TYPE_BY_INDEX = (
     "no_precipitation",   # 0  NO_PRECIPITATION
     "not_classified",     # 1  NOT_CLASSIFIED
@@ -79,12 +171,21 @@ PRECIP_TYPE_BY_INDEX = (
     "hail",               # 9  HAIL
     "large_hail",         # 10 LARGE_HAIL
 )
-PRECIP_TYPE_OPTIONS = list(PRECIP_TYPE_BY_INDEX)
+PRECIP_TYPE_OPTIONS: list[str] = list(PRECIP_TYPE_BY_INDEX)
 
-DWD_OPENDATA_URL = "https://opendata.dwd.de"
-
-DWD_RADOLAN_URL = f"{DWD_OPENDATA_URL}/weather/radar/radolan"
-
-DWD_RADVOR_URL = f"{DWD_OPENDATA_URL}/weather/radar/radvor"
-
-DWD_COMPOSITE_URL = f"{DWD_OPENDATA_URL}/weather/radar/composite"
+# Sub-keys of the coordinator payloads: each product's data and metadata are
+# dicts keyed by these (RV's are its own, see RadvorRV), and every entity
+# description names the one it shows.
+KEY_LAST_60 = "last_60"          # RS _000: the past hour
+KEY_NEXT_60 = "next_60"          # RS _060
+KEY_NEXT_60_120 = "next_60_120"  # RS _120
+KEY_NEXT_120 = "next_120"        # RS _060 + _120
+KEY_AMOUNT = "amount"            # RADOLAN: mm in the analysis window
+KEY_PRECIPITATION_TYPE = "precipitation_type"  # HymecNG
+# HymecNG: the type of the nearest precipitation within NEARBY_RADIUS_M,
+# read only when the entry tracks rain events (for the warnings'
+# expected_type). An estimate, never the measured type (radar/nearby.py).
+KEY_PRECIPITATION_TYPE_NEARBY = "precipitation_type_nearby"
+NEARBY_RADIUS_M = 5000.0
+# HymecNG classes that are actual precipitation (drizzle .. large_hail).
+NEARBY_CLASSES = range(2, len(PRECIP_TYPE_BY_INDEX))
