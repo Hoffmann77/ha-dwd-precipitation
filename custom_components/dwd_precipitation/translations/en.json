@@ -57,10 +57,12 @@
             "name": "Rain events and rain warnings",
             "description": "Rain events follow each shower from the first forecast that shows it until it has passed. Rain warnings are built on them; you add those with “Add rain warning” on this integration's page.",
             "data": {
+              "default_rain_warning": "Add a rain warning for this location",
               "rain_events": "Add the “Rain events” sensor",
               "rain_event_threshold": "Only count rain heavier than"
             },
             "data_description": {
+              "default_rain_warning": "Adds the sensor “Rain warning” (dry, soon or rain) and the slider “Rain warning lead time” to the location, without adding a rain warning first. It has no minimums: the blueprint sets those. Add more warnings with their own minimums with “Add rain warning”. [More]({docs_url}/entities/rain-warnings#location-warning)",
               "rain_events": "For blueprints that warn about or report rain. Rain warnings work without it. While the sensor or a rain warning is in use, the integration keeps a small record of recent rain. [About the sensor]({docs_url}/entities/rain-events)",
               "rain_event_threshold": "Applies to the “Rain events” sensor and to all rain warnings. 0 counts any rain the radar sees. Separate from the setting of the same name under “Rain forecast”."
             }
@@ -257,6 +259,14 @@
           "soon": "Soon",
           "rain": "Rain"
         }
+      },
+      "rain_warning": {
+        "name": "Rain warning",
+        "state": {
+          "dry": "Dry",
+          "soon": "Soon",
+          "rain": "Rain"
+        }
       }
     },
     "binary_sensor": {
@@ -270,6 +280,9 @@
     "number": {
       "rain_warning_lead_time": {
         "name": "Lead time"
+      },
+      "warning_lead_time": {
+        "name": "Rain warning lead time"
       }
     }
   }

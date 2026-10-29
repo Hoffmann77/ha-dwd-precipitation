@@ -12,6 +12,19 @@ anlegen.
 Regenwarnungen brauchen weder Blueprint noch Template: Jede ist ein Gerät mit
 zwei Entitäten, auf die eine Automation auslösen kann.
 
+## Die Warnung des Orts {#location-warning}
+
+Jeder Ort hat eine Regenwarnung eingebaut, ohne dass du etwas anlegen musst:
+den Sensor **Regenwarnung** (`sensor.home_rain_warning` an einem Ort `Home`)
+mit denselben Zuständen und Attributen wie die
+[Status-Entität](#entities) einer Warnung, und den Regler **Vorwarnzeit
+Regenwarnung** (30 Minuten, bis du ihn verschiebst). Sie hat keine
+Mindestmengen und meldet daher jedes Regenereignis; welche davon eine
+Nachricht wert sind, entscheidet ein Blueprint wie *DWD Regenwarnung*.
+Abschalten kannst du sie mit
+[*Regenwarnung für diesen Ort hinzufügen*](../getting-started/configuration.md#location-warning)
+in den Optionen; beide Entitäten werden dann entfernt.
+
 ## Eine Warnung hinzufügen {#adding-a-warning}
 
 Öffne **Einstellungen > Geräte & Dienste > DWD Precipitation** und wähle am

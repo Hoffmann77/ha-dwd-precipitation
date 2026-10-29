@@ -20,6 +20,7 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry, ConfigSubentry
 
 from .const import (
+    CONF_DEFAULT_RAIN_WARNING,
     CONF_DRY_STREAK_SOURCE,
     CONF_EXTRA_ATTRIBUTES,
     CONF_FULL_ROLLING_SERIES,
@@ -31,6 +32,7 @@ from .const import (
     CONF_RAIN_EVENTS,
     CONF_START_END_MODE,
     CONF_UNAVAILABLE_WHEN_STALE,
+    DEFAULT_DEFAULT_RAIN_WARNING,
     DEFAULT_DRY_STREAK_SOURCE,
     DEFAULT_EXTRA_ATTRIBUTES,
     DEFAULT_FULL_ROLLING_SERIES,
@@ -64,6 +66,7 @@ DEFAULT_OPTIONS: dict[str, Any] = {
     CONF_FULL_ROLLING_SERIES: DEFAULT_FULL_ROLLING_SERIES,
     CONF_NEIGHBOURHOOD: DEFAULT_NEIGHBOURHOOD,
     CONF_RAIN_EVENTS: DEFAULT_RAIN_EVENTS,
+    CONF_DEFAULT_RAIN_WARNING: DEFAULT_DEFAULT_RAIN_WARNING,
     CONF_RAIN_EVENT_THRESHOLD: DEFAULT_RAIN_EVENT_THRESHOLD,
     CONF_PRECIPITATION_RESET_THRESHOLD: DEFAULT_PRECIPITATION_RESET_THRESHOLD,
     CONF_DRY_STREAK_SOURCE: DEFAULT_DRY_STREAK_SOURCE,
@@ -82,6 +85,7 @@ class DwdOptions:
     full_rolling_series: bool
     neighbourhood_evaluation: bool
     rain_events: bool
+    default_rain_warning: bool
     rain_event_threshold: float
     precipitation_reset_threshold: float
     dry_streak_source: str
@@ -105,6 +109,7 @@ class DwdOptions:
             values["unknown_dry_streak_source"] = values["dry_streak_source"]
             values["dry_streak_source"] = DEFAULT_DRY_STREAK_SOURCE
         values["rain_events"] = bool(values["rain_events"])
+        values["default_rain_warning"] = bool(values["default_rain_warning"])
         values["neighbourhood_evaluation"] = bool(values["neighbourhood_evaluation"])
         return cls(**values)
 
@@ -164,11 +169,15 @@ def rain_warning_subentries(entry: ConfigEntry) -> list[ConfigSubentry]:
 def tracks_rain_events(entry: ConfigEntry, options: DwdOptions) -> bool:
     """Return whether the entry runs the rain-events tracker.
 
-    For the Rain events sensor (the option) or for any rain warning, which
-    filters its view. Without either there is no tracker, no fill requests
+    For the Rain events sensor (the option) or for any rain warning, the
+    location's own included, which filters its view. Without either there is no tracker, no fill requests
     and no store. Adding or removing a warning reloads the entry, like an
     option change, so asking once at setup is enough.
 
     """
-    return options.rain_events or bool(rain_warning_subentries(entry))
+    return (
+        options.rain_events
+        or options.default_rain_warning
+        or bool(rain_warning_subentries(entry))
+    )
 

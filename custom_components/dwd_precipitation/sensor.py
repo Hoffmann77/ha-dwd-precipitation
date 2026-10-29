@@ -300,6 +300,18 @@ RAIN_WARNING_STATUS_SENSOR = SensorEntityDescription(
 )
 
 
+# The location's own rain warning (default_rain_warning), on the location's
+# device. Its key is the unique-id suffix the fork's "Rain warning" sensor
+# had, so an install that had it gets its entity back.
+DEFAULT_RAIN_WARNING_SENSOR = SensorEntityDescription(
+    key="rain_warning",
+    translation_key="rain_warning",
+    icon="mdi:umbrella",
+    device_class=SensorDeviceClass.ENUM,
+    options=rain_warning.STATES,
+)
+
+
 def _rv_timing_sensors(
     mode: str,
 ) -> tuple[PrecipitationSensorEntityDescription, ...]:
@@ -460,7 +472,14 @@ async def async_setup_entry(
         entities.append(RainEventsSensor(coordinators["rv"], RAIN_EVENTS_SENSOR))
     else:
         _remove_sensor(hass, entry, RAIN_EVENTS_SENSOR.key)
-    # Likewise the neighbourhood evaluation's sensors.
+    # Likewise the location's own rain warning, and the neighbourhood
+    # evaluation's sensors.
+    if (warning := entry.runtime_data.default_warning) is not None:
+        entities.append(
+            RainWarningStatusSensor(coordinators["rv"], DEFAULT_RAIN_WARNING_SENSOR, None, warning)
+        )
+    else:
+        _remove_sensor(hass, entry, DEFAULT_RAIN_WARNING_SENSOR.key)
     if not options.neighbourhood_evaluation:
         for key in AREA_SENSOR_KEYS:
             _remove_sensor(hass, entry, key)

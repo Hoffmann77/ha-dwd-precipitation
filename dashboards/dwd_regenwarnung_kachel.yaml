@@ -2,11 +2,12 @@ type: custom:mushroom-template-card
 # Kachel "DWD Regenwarnung" für die Integration DWD Precipitation.
 # Benötigt: Mushroom (custom:mushroom-template-card) und card-mod, beide über HACS.
 # Für DWD Precipitation ab Version 2026.11.
-# Einzige Anpassung: hier den Status-Sensor einer Regenwarnung eintragen
-# ("Rain warning status", z. B. sensor.home_waesche_rain_warning_status).
+# Einzige Anpassung: hier den Sensor "Regenwarnung" des Orts eintragen
+# (z. B. sensor.home_rain_warning) oder den Status-Sensor einer selbst
+# angelegten Regenwarnung (z. B. sensor.home_waesche_rain_warning_status).
 # Die Vorhersagekurve holt sich die Kachel selbst vom Binärsensor
 # "Precipitation expected" desselben Standorts.
-entity: sensor.DEIN_STANDORT_DEINE_WARNUNG_rain_warning_status
+entity: sensor.DEIN_STANDORT_rain_warning
 icon: |-
   {% set st = state_attr(entity, 'start') %}
   {% set en = state_attr(entity, 'end') %}

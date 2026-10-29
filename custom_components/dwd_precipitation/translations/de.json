@@ -57,10 +57,12 @@
             "name": "Regenereignisse und Regenwarnungen",
             "description": "Regenereignisse verfolgen jeden Schauer von der ersten Vorhersage, die ihn zeigt, bis er vorbei ist. Darauf bauen die Regenwarnungen auf; die fügst du auf der Seite dieser Integration mit „Regenwarnung hinzufügen“ hinzu.",
             "data": {
+              "default_rain_warning": "Regenwarnung für diesen Ort hinzufügen",
               "rain_events": "Sensor „Regenereignisse“ hinzufügen",
               "rain_event_threshold": "Nur Regen zählen, der stärker ist als"
             },
             "data_description": {
+              "default_rain_warning": "Fügt dem Ort den Sensor „Regenwarnung“ (trocken, bald oder Regen) und den Regler „Vorwarnzeit Regenwarnung“ hinzu, ohne dass du erst eine Regenwarnung anlegen musst. Er hat keine Mindestmengen: Die legt der Blueprint fest. Weitere Warnungen mit eigenen Mindestmengen fügst du mit „Regenwarnung hinzufügen“ hinzu. [Mehr]({docs_url}/de/entities/rain-warnings#location-warning)",
               "rain_events": "Für Blueprints, die vor Regen warnen oder darüber berichten. Regenwarnungen funktionieren auch ohne ihn. Solange der Sensor oder eine Regenwarnung genutzt wird, speichert die Integration eine kleine Aufzeichnung des jüngsten Regens. [Mehr zum Sensor]({docs_url}/de/entities/rain-events)",
               "rain_event_threshold": "Gilt für den Sensor „Regenereignisse“ und für alle Regenwarnungen. 0 zählt jeden Regen, den das Radar sieht. Unabhängig von der gleichnamigen Einstellung unter „Regenvorhersage“."
             }
@@ -257,6 +259,14 @@
           "soon": "Bald",
           "rain": "Regen"
         }
+      },
+      "rain_warning": {
+        "name": "Regenwarnung",
+        "state": {
+          "dry": "Trocken",
+          "soon": "Bald",
+          "rain": "Regen"
+        }
       }
     },
     "binary_sensor": {
@@ -270,6 +280,9 @@
     "number": {
       "rain_warning_lead_time": {
         "name": "Vorwarnzeit"
+      },
+      "warning_lead_time": {
+        "name": "Vorwarnzeit Regenwarnung"
       }
     }
   }

@@ -39,6 +39,7 @@ Alle Entitäten gehören zu einem Gerät **DWD Precipitation** pro eingerichtete
 - **Angeeichte Analysen, stündlich und täglich:** Niederschlag vorige Stunde, letzte 24h und gestern
 - **Für die Statistik:** Niederschlag gesamt und Niederschlag gesamt täglich
 - **Zeitraum ohne Niederschlag**, und der optionale Sensor **Regenereignisse** für Blueprints
+- **Regenwarnung** des Orts, eingebaut: ein Status-Sensor ohne Mindestmengen und ein Regler für die Vorwarnzeit, bereit für den Blueprint
 - **Regenwarnungen**, die du selbst hinzufügst, jede ein eigenes Gerät mit einer An/Aus- und einer Status-Entität und einem Regler für die Vorwarnzeit. Der Status nennt Beginn, Ende und die erwartete Niederschlagsart (vor dem Regen geschätzt aus dem Umkreis von 5 km)
 
 Die [Entitätsübersicht](https://hoffmann77.github.io/ha-dwd-precipitation/de/entities/overview) listet jede Entität mit ihrer ID, Einheit und Aktualisierungsrate.
@@ -50,7 +51,7 @@ Die [Entitätsübersicht](https://hoffmann77.github.io/ha-dwd-precipitation/de/e
 
 Für die Regenwarnungen gibt es zwei fertige Bausteine in diesem Repository:
 
-- **Blueprint „DWD Regenwarnung“** ([`blueprints/automation/dwd/dwd_regenwarnung.yaml`](blueprints/automation/dwd/dwd_regenwarnung.yaml)): meldet jedes Regenereignis einmal, als Benachrichtigung und als Sprachdurchsage, mit eigenem Zeitfenster und eigener Mindestintensität (mm/h) je Weg, zum Beispiel um Niesel von Durchsagen auszunehmen. Die Texte wie „In 20 Minuten beginnt leichter Regen für 35 Minuten.“ sind anpassbar. Importiere die Datei unter **Einstellungen > Automationen & Szenen > Blueprints > Blueprint importieren** und wähle den Sensor „Rain warning status“ einer Warnung.
+- **Blueprint „DWD Regenwarnung“** ([`blueprints/automation/dwd/dwd_regenwarnung.yaml`](blueprints/automation/dwd/dwd_regenwarnung.yaml)): meldet jedes Regenereignis einmal, als Benachrichtigung und als Sprachdurchsage, mit eigenem Zeitfenster und eigener Mindestintensität (mm/h) je Weg, zum Beispiel um Niesel von Durchsagen auszunehmen. Die Texte wie „In 20 Minuten beginnt leichter Regen für 35 Minuten.“ sind anpassbar. Importiere die Datei unter **Einstellungen > Automationen & Szenen > Blueprints > Blueprint importieren** und wähle den Sensor „Regenwarnung“ des Orts (oder „Regenwarnung Status“ einer selbst angelegten Warnung).
 - **Dashboard-Kachel** ([`dashboards/dwd_regenwarnung_kachel.yaml`](dashboards/dwd_regenwarnung_kachel.yaml)): zeigt den nächsten Regen als Text und die Vorhersage der nächsten zwei Stunden als Farbverlauf. Benötigt [Mushroom](https://github.com/piitaya/lovelace-mushroom) und [card-mod](https://github.com/thomasloven/lovelace-card-mod); in der Zeile `entity:` den Status-Sensor deiner Warnung eintragen.
 
 ## Screenshots

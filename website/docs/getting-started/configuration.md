@@ -56,7 +56,8 @@ automatically.
 | | [Evaluate the area around the location](#neighbourhood) | on |
 | [Timespan without precipitation](#timespan-without-precipitation) | [Rain that resets the count](#dry-streak-threshold) | 1.0 mm |
 | | [Measured with](#dry-streak-source) | radar and rain gauges (RW) |
-| [Rain events and rain warnings](#rain-events-and-rain-warnings) | [Add the "Rain events" sensor](#track-rain-events) | off |
+| [Rain events and rain warnings](#rain-events-and-rain-warnings) | [Add a rain warning for this location](#location-warning) | on |
+| | [Add the "Rain events" sensor](#track-rain-events) | off |
 | | [Only count rain heavier than](#rain-event-threshold) | 0.1 mm/h |
 | [Advanced](#advanced-options) | [Add technical details to the sensors](#technical-details) | off |
 | | [Add the past hour to the hourly rain series](#past-hour-in-the-series) | off |
@@ -148,6 +149,13 @@ them; you add those with **Add rain warning** on the integration's page (see
 [Rain warnings](#rain-warnings) above). The section is open when the
 `Rain events` sensor is on or the location has a rain warning, and collapsed
 otherwise.
+
+### Add a rain warning for this location {#location-warning}
+
+Gives the location its own [rain warning](../entities/rain-warnings.md#location-warning):
+the sensor `Rain warning` and the slider `Rain warning lead time`, without
+minimums. On by default, so a blueprint has a warning to read straight away.
+Turn it off if you only use warnings you added yourself.
 
 ### Add the "Rain events" sensor {#track-rain-events}
 

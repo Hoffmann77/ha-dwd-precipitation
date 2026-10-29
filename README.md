@@ -39,6 +39,7 @@ All entities belong to one **DWD Precipitation** device per configured location 
 - **Gauge-adjusted analyses, hourly and daily:** Precipitation previous hour, last 24h and yesterday
 - **For statistics:** Precipitation total and Precipitation total daily
 - **Timespan without precipitation**, and the optional **Rain events** sensor for blueprints
+- **Rain warning** of the location, built in: a status sensor without minimums and a lead-time slider, ready for the blueprint
 - **Rain warnings** you add yourself, each a device of its own with an on/off and a status entity and a lead-time slider. The status gives the event's start, end and expected precipitation type (estimated from within 5 km before the rain arrives)
 
 The [entity overview](https://hoffmann77.github.io/ha-dwd-precipitation/entities/overview) lists every entity with its id, unit and update interval.
@@ -50,7 +51,7 @@ The [entity overview](https://hoffmann77.github.io/ha-dwd-precipitation/entities
 
 Two ready-made building blocks for the rain warnings live in this repository; their texts are in German:
 
-- **Blueprint "DWD Regenwarnung"** ([`blueprints/automation/dwd/dwd_regenwarnung.yaml`](blueprints/automation/dwd/dwd_regenwarnung.yaml)): reports each rain event once, as a notification and as a voice announcement, each with its own time window and minimum intensity (mm/h), for example to keep drizzle out of announcements. The texts ("In 20 Minuten beginnt leichter Regen für 35 Minuten.") can be changed. Import the file under **Settings > Automations & Scenes > Blueprints > Import blueprint** and pick a warning's "Rain warning status" sensor.
+- **Blueprint "DWD Regenwarnung"** ([`blueprints/automation/dwd/dwd_regenwarnung.yaml`](blueprints/automation/dwd/dwd_regenwarnung.yaml)): reports each rain event once, as a notification and as a voice announcement, each with its own time window and minimum intensity (mm/h), for example to keep drizzle out of announcements. The texts ("In 20 Minuten beginnt leichter Regen für 35 Minuten.") can be changed. Import the file under **Settings > Automations & Scenes > Blueprints > Import blueprint** and pick the location's "Rain warning" sensor (or a warning's "Rain warning status" sensor).
 - **Dashboard tile** ([`dashboards/dwd_regenwarnung_kachel.yaml`](dashboards/dwd_regenwarnung_kachel.yaml)): shows the next rain as text and the two-hour forecast as a colour gradient. Needs [Mushroom](https://github.com/piitaya/lovelace-mushroom) and [card-mod](https://github.com/thomasloven/lovelace-card-mod); put your warning's status sensor in the `entity:` line.
 
 ## Screenshots

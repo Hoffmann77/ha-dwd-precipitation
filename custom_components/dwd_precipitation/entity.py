@@ -182,7 +182,7 @@ class RainWarningEntity(DwdCoordinatorEntity):
         self,
         coordinator: BaseProductUpdateCoordinator,
         description: EntityDescription,
-        subentry: ConfigSubentry,
+        subentry: ConfigSubentry | None,
         warning: RainWarning,
     ) -> None:
         """Bind the entity to its subentry's device and the warning's memory.
@@ -191,10 +191,16 @@ class RainWarningEntity(DwdCoordinatorEntity):
         unique-id suffix after the subentry id. The device name is the
         location's title and the warning's, both as the user typed them, so
         entity ids do not depend on Home Assistant's language. Renaming the
-        warning renames the device; the entity ids stay.
+        warning renames the device; the entity ids stay. Without a subentry it
+        is the location's own warning (default_rain_warning), on the
+        location's device with the description's key as its suffix.
 
         """
         super().__init__(coordinator, description)
+        self._warning = warning
+        self._subentry_id = None if subentry is None else subentry.subentry_id
+        if subentry is None:
+            return
         entry = coordinator.config_entry
         self._attr_unique_id = unique_id_for(
             entry.entry_id, f"{subentry.subentry_id}_{description.key}"
@@ -204,8 +210,6 @@ class RainWarningEntity(DwdCoordinatorEntity):
             identifiers={(DOMAIN, f"{entry.entry_id}_{subentry.subentry_id}")},
             name=f"{entry.title or 'DWD Precipitation'} {subentry.title}",
         )
-        self._warning = warning
-        self._subentry_id = subentry.subentry_id
 
     def _verdict(self) -> Verdict | None:
         """Return the warning's verdict on RV's latest view; None without one.

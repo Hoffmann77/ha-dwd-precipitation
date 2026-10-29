@@ -92,6 +92,16 @@ AREA_TRACK_LEADS = (0, 5, 10, 15, 20, 25, 30)
 AREA_MIN_SPEED = 50.0
 AREA_APPROACH_RADIUS_M = 1000.0
 
+CONF_DEFAULT_RAIN_WARNING = "default_rain_warning"
+
+# Whether the location has its own rain warning, without minimums: the
+# sensor "Rain warning" (unique-id suffix "rain_warning") and its lead-time
+# slider ("warning_lead_time"), on the location's device. On by default, so a
+# blueprint has a warning to read without one being added first; minimums
+# are for the blueprint, or for warnings added as subentries.
+DEFAULT_DEFAULT_RAIN_WARNING = True
+DEFAULT_WARNING_LEAD_TIME = 30
+
 CONF_RAIN_EVENTS = "rain_events"
 
 # Whether the entry has the "Rain events" sensor. Off by default: its view is

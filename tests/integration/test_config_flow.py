@@ -324,9 +324,10 @@ async def test_options_form_has_one_section_per_group(make_entry, hass: HomeAssi
 @pytest.mark.parametrize(
     ("options", "warnings", "rain_events_collapsed"),
     [
-        ({}, [], True),
-        ({"rain_events": True}, [], False),
-        ({}, [_WARNING], False),
+        ({}, [], False),  # the location's own warning, on by default
+        ({"default_rain_warning": False}, [], True),
+        ({"default_rain_warning": False, "rain_events": True}, [], False),
+        ({"default_rain_warning": False}, [_WARNING], False),
     ],
 )
 async def test_options_form_opens_the_sections_that_matter(

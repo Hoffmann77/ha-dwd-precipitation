@@ -32,6 +32,7 @@ from .const import (
     CONF_FULL_ROLLING_SERIES,
     CONF_NEIGHBOURHOOD,
     CONF_RAIN_EVENTS,
+    CONF_DEFAULT_RAIN_WARNING,
     CONF_RAIN_EVENT_THRESHOLD,
     CONF_LEAD_TIME,
     LEAD_TIME_MAX,
@@ -75,7 +76,7 @@ OPTION_SECTIONS: dict[str, tuple[str, ...]] = {
         CONF_NEIGHBOURHOOD,
     ),
     SECTION_DRY_STREAK: (CONF_PRECIPITATION_RESET_THRESHOLD, CONF_DRY_STREAK_SOURCE),
-    SECTION_RAIN_EVENTS: (CONF_RAIN_EVENTS, CONF_RAIN_EVENT_THRESHOLD),
+    SECTION_RAIN_EVENTS: (CONF_DEFAULT_RAIN_WARNING, CONF_RAIN_EVENTS, CONF_RAIN_EVENT_THRESHOLD),
     SECTION_ADVANCED: (
         CONF_EXTRA_ATTRIBUTES,
         CONF_FULL_ROLLING_SERIES,
@@ -191,6 +192,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 list(DRY_STREAK_SOURCES), CONF_DRY_STREAK_SOURCE
             ),
             CONF_NEIGHBOURHOOD: selector.BooleanSelector(),
+            CONF_DEFAULT_RAIN_WARNING: selector.BooleanSelector(),
             CONF_RAIN_EVENTS: selector.BooleanSelector(),
             CONF_RAIN_EVENT_THRESHOLD: _number("mm/h"),
             CONF_EXTRA_ATTRIBUTES: selector.BooleanSelector(),

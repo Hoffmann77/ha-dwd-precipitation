@@ -585,8 +585,8 @@ async def test_rain_events_off_runs_no_tracker_and_leaves_nothing(
     make_entry,
     hass: HomeAssistant, hass_storage
 ) -> None:
-    """Off (the default): no tracker, and what an earlier "on" left is removed."""
-    entry = make_entry()
+    """Off, and no warning: no tracker, and what an earlier "on" left is removed."""
+    entry = make_entry({"default_rain_warning": False})
     unique_id = f"{entry.entry_id}_radvor_rv_rain_events"
     er.async_get(hass).async_get_or_create(
         "sensor", DOMAIN, unique_id, config_entry=entry

@@ -362,7 +362,7 @@ async def test_a_warning_runs_the_tracker_without_the_rain_events_sensor(
 
 async def test_a_warning_keeps_the_tracker_store(make_entry, hass: HomeAssistant, hass_storage) -> None:
     """With the option off, the store is deleted only when no warning needs it."""
-    entry = make_entry(subentries_data=[_warning(LAUNDRY, "Laundry")])
+    entry = make_entry({"default_rain_warning": False}, subentries_data=[_warning(LAUNDRY, "Laundry")])
     key = f"dwd_precipitation.{entry.entry_id}.rain_events"
     hass_storage[key] = {"version": 1, "minor_version": 1, "key": key, "data": {}}
 
@@ -509,3 +509,76 @@ async def test_any_other_change_still_reloads(make_entry, hass: HomeAssistant) -
 
     assert entry.runtime_data is not runtime
     assert entry.runtime_data.rain_warnings[LAUNDRY].rule == WarningRule(lead_time=60, min_mm=5.0)
+
+
+# ---------------------------------------------------------------------------
+# The location's own warning (default_rain_warning)
+# ---------------------------------------------------------------------------
+
+
+def _location_ids(hass, entry) -> tuple[str | None, str | None]:
+    registry = er.async_get(hass)
+    return (
+        registry.async_get_entity_id("sensor", DOMAIN, f"{entry.entry_id}_rain_warning"),
+        registry.async_get_entity_id("number", DOMAIN, f"{entry.entry_id}_warning_lead_time"),
+    )
+
+
+async def test_the_location_has_its_own_warning_by_default(make_entry, hass: HomeAssistant) -> None:
+    """Without any subentry: the fork's ids, on the location's device, no minimums."""
+    entry = await _set_up(hass, make_entry, [], view=_view(20, mm=0.1))
+
+    sensor_id, number_id = _location_ids(hass, entry)
+    assert (sensor_id, number_id) == ("sensor.home_rain_warning", "number.home_rain_warning_lead_time")
+    state = hass.states.get(sensor_id)
+    assert state.state == "soon"  # 0.1 mm: no minimum to hold it back
+    assert state.attributes["mm"] == 0.1
+    assert float(hass.states.get(number_id).state) == 30
+    device = er.async_get(hass).async_get(sensor_id).device_id
+    assert device == _device(hass, entry.entry_id).id
+
+
+async def test_the_location_warnings_slider_moves_its_lead_time(make_entry, hass: HomeAssistant) -> None:
+    entry = await _set_up(hass, make_entry, [], view=_view(40))
+    sensor_id, number_id = _location_ids(hass, entry)
+    assert hass.states.get(sensor_id).state == "dry"
+
+    await hass.services.async_call(
+        "number", "set_value", {"entity_id": number_id, "value": 45}, blocking=True
+    )
+    await hass.async_block_till_done()
+
+    assert hass.states.get(sensor_id).state == "soon"
+    assert entry.runtime_data.default_warning.rule.lead_time == 45
+
+
+async def test_the_location_warnings_lead_time_is_restored(make_entry, hass: HomeAssistant) -> None:
+    from pytest_homeassistant_custom_component.common import mock_restore_cache_with_extra_data
+    from homeassistant.core import State
+
+    entry = make_entry()
+    mock_restore_cache_with_extra_data(
+        hass,
+        [(State("number.home_rain_warning_lead_time", "60"), {"native_value": 60, "native_min_value": 5, "native_max_value": 120, "native_step": 5, "native_unit_of_measurement": "min"})],
+    )
+    tracker = AsyncMock(return_value=_view(50))
+    with _patched_products(), patch.object(RainEventsTracker, "async_track", new=tracker):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    assert entry.runtime_data.default_warning.rule.lead_time == 60
+    assert hass.states.get("sensor.home_rain_warning").state == "soon"
+
+
+async def test_turning_the_location_warning_off_removes_it(make_entry, hass: HomeAssistant) -> None:
+    entry = make_entry({"default_rain_warning": False})
+    registry = er.async_get(hass)
+    for domain, key in (("sensor", "rain_warning"), ("number", "warning_lead_time")):
+        registry.async_get_or_create(domain, DOMAIN, f"{entry.entry_id}_{key}", config_entry=entry)
+
+    with _patched_products():
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    assert _location_ids(hass, entry) == (None, None)
+    assert entry.runtime_data.default_warning is None

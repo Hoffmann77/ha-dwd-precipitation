@@ -66,6 +66,9 @@ class DwdRuntimeData:
     # The warnings' titles at setup, by subentry id: a renamed warning renames
     # its device, which takes a reload (see update_listener).
     warning_titles: dict[str, str] = field(default_factory=dict)
+    # The location's own rain warning (the default_rain_warning option); None
+    # with the option off.
+    default_warning: RainWarning | None = None
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: DwdConfigEntry) -> bool:
@@ -157,6 +160,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: DwdConfigEntry) -> bool:
             for subentry in rain_warning_subentries(entry)
         },
         {subentry.subentry_id: subentry.title for subentry in rain_warning_subentries(entry)},
+        # No minimums; its lead time is restored by its slider (number.py).
+        RainWarning(rain_warning_rule({})) if options.default_rain_warning else None,
     )
     entry.async_on_unload(entry.add_update_listener(update_listener))
 

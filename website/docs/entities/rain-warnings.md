@@ -11,6 +11,18 @@ only for a heavy burst". Add as many as you like.
 Rain warnings need no blueprint and no template: each one is a device with
 two entities that an automation can trigger on.
 
+## The location's own warning {#location-warning}
+
+Every location has one rain warning built in, without adding anything: the
+sensor **Rain warning** (`sensor.home_rain_warning` at a location `Home`),
+with the same states and attributes as a warning's
+[status entity](#entities), and the slider **Rain warning lead time** (30
+minutes until you move it). It has no minimums, so it reports every rain
+event; a blueprint such as *DWD Regenwarnung* decides which ones are worth a
+message. Turn it off with
+[*Add a rain warning for this location*](../getting-started/configuration.md#location-warning)
+in the options; both entities are then removed.
+
 ## Adding a warning
 
 Open **Settings > Devices & services > DWD Precipitation**, then select

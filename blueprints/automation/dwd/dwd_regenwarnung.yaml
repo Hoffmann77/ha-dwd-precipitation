@@ -12,8 +12,9 @@ blueprint:
     warning_sensor:
       name: Regenwarnung-Status
       description: >-
-        Sensor „Rain warning status“ einer Regenwarnung der DWD-Precipitation-Integration,
-        z. B. sensor.home_waesche_rain_warning_status.
+        Sensor „Regenwarnung“ des Orts (z. B. sensor.home_rain_warning, ohne Mindestmengen,
+        die setzt dieser Blueprint) oder „Regenwarnung Status“ einer selbst angelegten
+        Regenwarnung (z. B. sensor.home_waesche_rain_warning_status).
       selector:
         entity:
           filter:

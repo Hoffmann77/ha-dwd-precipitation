@@ -59,7 +59,8 @@ Download wird automatisch wiederholt.
 | | [Umgebung des Standorts auswerten](#neighbourhood) | an |
 | [Zeitraum ohne Niederschlag](#timespan-without-precipitation) | [Regen, der die Zählung zurücksetzt](#dry-streak-threshold) | 1,0 mm |
 | | [Gemessen mit](#dry-streak-source) | Radar und Regenmessern (RW) |
-| [Regenereignisse und Regenwarnungen](#rain-events-and-rain-warnings) | [Sensor „Regenereignisse“ hinzufügen](#track-rain-events) | aus |
+| [Regenereignisse und Regenwarnungen](#rain-events-and-rain-warnings) | [Regenwarnung für diesen Ort hinzufügen](#location-warning) | an |
+| | [Sensor „Regenereignisse“ hinzufügen](#track-rain-events) | aus |
 | | [Nur Regen zählen, der stärker ist als](#rain-event-threshold) | 0,1 mm/h |
 | [Erweitert](#advanced-options) | [Technische Details zu den Sensoren hinzufügen](#technical-details) | aus |
 | | [Vergangene Stunde in die stündliche Regenreihe aufnehmen](#past-hour-in-the-series) | aus |
@@ -157,6 +158,13 @@ der Integration mit **Regenwarnung hinzufügen** hinzu (siehe
 [Regenwarnungen](#rain-warnings) oben). Der Abschnitt ist aufgeklappt, wenn
 der Sensor `Regenereignisse` an ist oder der Standort eine Regenwarnung hat,
 sonst eingeklappt.
+
+### Regenwarnung für diesen Ort hinzufügen {#location-warning}
+
+Gibt dem Ort seine eigene [Regenwarnung](../entities/rain-warnings.md#location-warning):
+den Sensor `Regenwarnung` und den Regler `Vorwarnzeit Regenwarnung`, ohne
+Mindestmengen. Standardmäßig an, damit ein Blueprint sofort eine Warnung zum
+Lesen hat. Schalte sie aus, wenn du nur selbst angelegte Warnungen nutzt.
 
 ### Sensor „Regenereignisse“ hinzufügen {#track-rain-events}
 
