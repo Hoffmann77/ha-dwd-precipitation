@@ -23,6 +23,13 @@ conflicts = [
     ],
 ]
 
+# TODO: pytest-home-assistant is not on PyPI yet (first release: HA 2026.11.0).
+# Until then it is built from the core tag that matches the homeassistant pin
+# in ha-test. Once it is published, drop this table and pin
+# "pytest-home-assistant==<that HA version>" in ha-test instead.
+[tool.uv.sources]
+pytest-home-assistant = { git = "https://github.com/home-assistant/core", tag = "2026.11.0b1", subdirectory = "packages/pytest-home-assistant" }
+
 [dependency-groups]
 # Minimal deps for parser + live tests — no HA, no wradlib.
 # numpy/aiohttp are pulled so radar/* and utils.py import without HA installed.
@@ -30,7 +37,8 @@ unit-test = [
     "pytest",
     # HA's own pin, so the parser tier decodes with the numpy users run.
     # Renovate leaves it alone; tests/integration/test_dependencies.py fails
-    # when a HA bump moves numpy, which is the cue to update it here.
+    # when a HA bump moves numpy, which is the cue to update it here and in
+    # ha-test.
     "numpy==2.3.2",
     "aiohttp",
     "requests==2.34.2",
@@ -39,8 +47,18 @@ unit-test = [
 
 # Installs only HA-compatible packages — validates the component runs in the
 # same environment HA uses (same Python version, same numpy/h5py pins).
+#
+# pytest-home-assistant is HA's own test plugin, released from home-assistant/core
+# alongside HA itself; each release only works with the HA release it was
+# built from, so the two are pinned to the same version here and Renovate
+# moves them together. homeassistant is pinned explicitly because the plugin
+# does not pin it.
 ha-test = [
-    "pytest-homeassistant-custom-component==0.13.375",
+    "homeassistant==2026.11.0b1",
+    "pytest-home-assistant",
+    # HA's package_constraints.txt pin, which neither homeassistant nor the
+    # plugin applies; same pin and same drift guard as unit-test above.
+    "numpy==2.3.2",
     "h5py==3.16.0",
 ]
 
@@ -74,11 +92,17 @@ testpaths = ["tests"]
 pythonpath = [".", "custom_components/dwd_precipitation"]
 # Network tests only when asked for (`-m live`, as the scheduled workflows
 # do); a mistyped marker is an error, not a silent no-op.
-addopts = "-m 'not live' --strict-markers"
+# -p no:respx: pytest-home-assistant must install HA's httpx alias before
+# respx's own pytest plugin imports it (its README asks for this). Harmless in
+# the groups that have no respx.
+addopts = "-m 'not live' --strict-markers -p no:respx"
 asyncio_mode = "auto"
-# asyncio_mode is pytest-asyncio's, which only the ha-test group installs.
+asyncio_default_fixture_loop_scope = "function"
+# The asyncio_* options are pytest-asyncio's, which only the ha-test group
+# installs.
 filterwarnings = [
     "ignore:Unknown config option. asyncio_mode:pytest.PytestConfigWarning",
+    "ignore:Unknown config option. asyncio_default_fixture_loop_scope:pytest.PytestConfigWarning",
 ]
 markers = [
     "live: requires network access to DWD OpenData (scheduled, not on PRs)",

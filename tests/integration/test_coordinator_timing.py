@@ -38,7 +38,7 @@ async def test_overlapping_refreshes_fetch_once(hass) -> None:
     find the release already fetched. Calling the unlocked _async_refresh
     instead would fetch twice.
     """
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from pytest_homeassistant.common import MockConfigEntry
 
     entry = MockConfigEntry(
         domain="dwd_precipitation",

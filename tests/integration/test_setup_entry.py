@@ -1,8 +1,8 @@
 """End-to-end integration test — entry setup → coordinators → sensor states.
 
 Requires the ha-test dependency group (Linux only):
-  pytest-homeassistant-custom-component imports homeassistant.runner which
-  imports fcntl, a POSIX-only module not available on Windows.
+  pytest-home-assistant imports homeassistant.runner which imports fcntl, a
+  POSIX-only module not available on Windows.
 
 Run with:
   uv run --group ha-test pytest tests/integration -v
@@ -19,7 +19,7 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from pytest import approx
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.dwd_precipitation import PRODUCT_CLASSES
 from custom_components.dwd_precipitation.const import DOMAIN
