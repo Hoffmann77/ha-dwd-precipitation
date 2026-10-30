@@ -1,15 +1,12 @@
-"""Fixtures for the dwd_precipitation test suite."""
+"""Fixtures for the dwd_precipitation test suite.
 
-import pytest
+pytest-home-assistant registers itself through its pytest11 entry point and
+enables custom integrations for every ``hass`` test, so nothing is wired up
+here when it is installed.
+"""
 
 try:
-    import pytest_homeassistant_custom_component  # noqa: F401
-
-    pytest_plugins = "pytest_homeassistant_custom_component"
-
-    @pytest.fixture(autouse=True)
-    def auto_enable_custom_integrations(enable_custom_integrations: None) -> None:
-        """Enable custom integrations for every test that uses the hass fixture."""
+    import pytest_homeassistant  # noqa: F401
 except ImportError:
     # When running without homeassistant (e.g. the parser/reference/live jobs),
     # skip the integration tier, which imports HA packages. parser/, reference/

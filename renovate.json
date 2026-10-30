@@ -22,6 +22,11 @@
       "groupName": "h5py"
     },
     {
+      "description": "pytest-home-assistant only works with the HA release it was built from",
+      "matchPackageNames": ["homeassistant", "pytest-home-assistant"],
+      "groupName": "Home Assistant"
+    },
+    {
       "description": "numpy follows HA's pin, not PyPI (see pyproject unit-test)",
       "matchManagers": ["pep621"],
       "matchPackageNames": ["numpy"],

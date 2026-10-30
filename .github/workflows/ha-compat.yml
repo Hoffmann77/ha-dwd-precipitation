@@ -1,8 +1,9 @@
 name: HA version compatibility
 
 # Version-drift monitor: runs the integration tier against the latest and dev
-# pytest-homeassistant-custom-component (which tracks HA releases). The version
-# pyproject pins is what tests.yml runs on every PR and push to main.
+# Home Assistant, each with the pytest-home-assistant built from that same
+# release (the plugin only works with the HA it was released with). The
+# versions pyproject pins are what tests.yml runs on every PR and push to main.
 # Scheduled (never gates PRs); opens/updates a tracking issue on failure.
 on:
   schedule:
@@ -34,11 +35,15 @@ jobs:
       - uses: astral-sh/setup-uv@v7
       - name: Install HA test dependencies
         run: uv sync --locked --only-group ha-test
-      - name: Upgrade the HA test library
+      - name: Upgrade Home Assistant and its test plugin
         run: |
-          uv pip install -U pytest-homeassistant-custom-component
           if [ "${{ matrix.ha_dev }}" = "true" ]; then
-            uv pip install -U "homeassistant @ git+https://github.com/home-assistant/core@dev" || true
+            # Both from the same dev checkout, so they cannot drift apart.
+            uv pip install -U \
+              "homeassistant @ git+https://github.com/home-assistant/core@dev" \
+              "pytest-home-assistant @ git+https://github.com/home-assistant/core@dev#subdirectory=packages/pytest-home-assistant"
+          else
+            uv pip install -U homeassistant pytest-home-assistant
           fi
       - name: Run integration tests
         # --no-sync so the manual version override above is not reverted by uv run.
@@ -51,7 +56,7 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           TITLE="HA compatibility check failing (${{ matrix.name }})"
-          BODY="The integration tier failed against the ${{ matrix.name }} pytest-homeassistant-custom-component. A newer HA release may have broken the integration. Run: $RUN_URL"
+          BODY="The integration tier failed against the ${{ matrix.name }} Home Assistant release. A newer HA release may have broken the integration. Run: $RUN_URL"
           num=$(gh issue list --state open --search "$TITLE in:title" --json number --jq '.[0].number // empty')
           if [ -n "$num" ]; then
             gh issue comment "$num" --body "$BODY"
