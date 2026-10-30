@@ -1,0 +1,56 @@
+name: Release asset
+
+# Attaches dwd_precipitation.zip to a GitHub release. HACS installs from that
+# asset (hacs.json: zip_release) and reports its download_count as the
+# repository's downloads, which plain source installs never record.
+#
+# The zip holds the *contents* of custom_components/dwd_precipitation at its
+# root: HACS extracts it straight into config/custom_components/<domain>/.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to (re)build the asset for"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  zip:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      ASSET: dwd_precipitation.zip
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Stamp the release version into manifest.json
+        run: |
+          python - <<'EOF'
+          import json, os, pathlib
+          path = pathlib.Path("custom_components/dwd_precipitation/manifest.json")
+          manifest = json.loads(path.read_text())
+          if manifest["version"] != os.environ["TAG"]:
+              print(f"::notice::manifest version {manifest['version']} -> {os.environ['TAG']}")
+          manifest["version"] = os.environ["TAG"]
+          path.write_text(json.dumps(manifest, indent=2) + "\n")
+          EOF
+
+      - name: Build the zip
+        working-directory: custom_components/dwd_precipitation
+        run: |
+          find . -name __pycache__ -prune -exec rm -rf {} +
+          zip -r -X "$GITHUB_WORKSPACE/$ASSET" . -x '*.pyc' 'test.py'
+          unzip -l "$GITHUB_WORKSPACE/$ASSET"
+
+      - name: Upload to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" "$ASSET" --clobber --repo "$GITHUB_REPOSITORY"

@@ -264,6 +264,25 @@ just records the streak (via `actions/cache`) without notifying, so one-off
 measurement noise doesn't page anyone. The streak resets to zero as soon as a
 run comes back clean.
 
+## Publishing releases
+
+HACS installs from a release asset, not the source tree: `hacs.json` sets
+`zip_release` + `filename: dwd_precipitation.zip`, and
+`.github/workflows/release.yml` builds that zip whenever a release (including an
+RC) is published. That is what gives HACS a download count — it reports the
+asset's GitHub `download_count` for the version it offers, so the number is per
+release, not cumulative.
+
+- The zip holds the *contents* of `custom_components/dwd_precipitation/` at its
+  root, with no enclosing folder: HACS extracts it straight into
+  `config/custom_components/<domain>/`.
+- The workflow stamps the tag into the zipped `manifest.json`, so the installed
+  version always matches the release even if the bump commit was forgotten.
+- HACS reads `hacs.json` from the version it offers, then uses that one manifest
+  for every version in its picker — so a release without the asset cannot be
+  installed through HACS. Rebuild one with the workflow's manual run (`tag`
+  input). `hide_default_branch` is set because a branch has no asset at all.
+
 ## Grid lookup
 
 The lookup returns the cell that *contains* the location: project it, then
