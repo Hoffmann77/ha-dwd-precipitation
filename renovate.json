@@ -28,6 +28,12 @@
       "enabled": false
     },
     {
+      "description": "The docs site (website/): every Docusaurus package moves in one PR",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["@docusaurus/**"],
+      "groupName": "Docusaurus"
+    },
+    {
       "matchManagers": ["github-actions"],
       "matchUpdateTypes": ["minor", "patch"],
       "enabled": false

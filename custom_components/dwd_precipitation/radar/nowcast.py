@@ -9,9 +9,12 @@ values are represented as a list ``values`` aligned to
 ``LEADS = [0, 5, 10, ..., 120]`` (minutes). Index 0 is the latest analysis
 window ``[T-5, T]`` (``T`` = release base time); index ``k`` (k >= 1) is the
 forecast window ``[T + (k-1)*5, T + k*5]``.
+
 """
 
 from __future__ import annotations
+
+from typing import overload
 
 LEAD_STEP = 5
 MAX_LEAD = 120
@@ -30,10 +33,30 @@ HOUR2_LEADS = list(range(60 + LEAD_STEP, 120 + 1, LEAD_STEP))  # 65..120 → [T+
 # [T+60, T+120]; the leads below 60 still include observed rain.
 FUTURE_HOUR_LEADS = list(range(60, MAX_LEAD + 1, LEAD_STEP))  # 60..120 → 13 windows
 
+# The analyses of earlier releases the hour ending at T needs: [T-60, T] is
+# the analysis of release T and of the 11 releases before it.
+PAST_STEPS = STEPS_PER_HOUR - 1  # 11
+
 # RS and RV store amounts in 0.001 mm steps (ODIM gain). Rolling-hour totals are
 # rounded to it, so a sum of twelve float32 RV steps and the matching RS member
 # compare equal instead of differing in the seventh decimal.
 MM_DECIMALS = 3
+
+
+@overload
+def round_mm(value: float) -> float: ...
+@overload
+def round_mm(value: None) -> None: ...
+def round_mm(value: float | None) -> float | None:
+    """Round an amount (mm) to the ODIM resolution; None stays None.
+
+    DWD stores RADVOR amounts in steps of 0.001 mm, so three decimals lose
+    nothing and remove the noise float32 storage and float sums add (0.123
+    instead of 0.12300000339746475). Always a float, so an empty sum (the int
+    0) is published as 0.0 too.
+
+    """
+    return None if value is None else round(value + 0.0, MM_DECIMALS)
 
 # Algorithms for deriving the "precipitation end" from the forecast series:
 #
@@ -53,65 +76,72 @@ DEFAULT_END_ALGO = END_ALGO_EPISODE
 
 
 def _is_rain(value: float | None, threshold: float) -> bool:
-    """Return True when a 5-minute accumulation counts as precipitation."""
+    """Return True when a 5-minute amount counts as precipitation.
+
+    ``threshold`` is in mm per 5-minute step (the configured mm/h divided by
+    12). Strictly above the threshold counts; a step without data never does.
+
+    """
     return value is not None and value > threshold
 
 
 def bucket_max_intensity(
     values: list[float | None], leads: list[int]
 ) -> float | None:
-    """Return the peak intensity (mm/h) over the given lead minutes.
+    """Return the peak intensity (mm/h) over the given leads.
 
-    ``values`` is aligned to :data:`LEADS` and holds 5-minute accumulations
-    (mm). Each is extrapolated to an hourly rate via :data:`STEPS_PER_HOUR`, and
-    the maximum is returned. ``None`` entries (nodata) are skipped; the result is
-    ``None`` only when *every* constituent is missing.
+    ``values`` are the RV amounts aligned to LEADS, ``leads`` the minutes to
+    look at (HOUR1_LEADS for the next hour, say). Each 5-minute amount is
+    scaled to an hourly rate (x12) and the largest is returned, rounded to
+    0.001. Steps without data are skipped; None only when all are missing.
+
     """
     present = [
-        values[lead // LEAD_STEP]
-        for lead in leads
-        if values[lead // LEAD_STEP] is not None
+        value for lead in leads if (value := values[lead // LEAD_STEP]) is not None
     ]
     if not present:
         return None
-    return float(max(present)) * STEPS_PER_HOUR
+    return round_mm(float(max(present)) * STEPS_PER_HOUR)
 
 
-def rolling_hour_sums(values: list[float | None]) -> list[float | None]:
-    """Return RS-equivalent rolling 60-minute totals (mm) from RV 5-minute steps.
+def rolling_hour_sums(
+    values: list[float | None], past: list[float | None] | None = None
+) -> list[float | None]:
+    """Return rolling 60-minute totals (mm), like RS's members, from RV's steps.
 
-    ``values`` is aligned to :data:`LEADS` and holds RV 5-minute accumulations.
-    The result is aligned to :data:`LEADS` too: for each lead ``L`` in
-    :data:`FUTURE_HOUR_LEADS` it is the sum of the twelve steps ending at ``L``
-    (RV leads ``L-55..L``), i.e. the window ``[T+L-60, T+L]`` of the RS member
-    at the same lead; every other position is ``None``. Only windows wholly in
-    the forecast can be built this way, since RV holds no rain from before
-    ``T-5``: that is what FUTURE_HOUR_LEADS (60..120) are.
+    ``values`` are the 25 RV amounts of one release (the analysis, then 24
+    forecast steps). Each lead's total adds the twelve 5-minute steps ending at
+    it, and the result is aligned to LEADS, None where no total is built.
 
-    A missing step counts as 0, which is what RS reports at the edge of radar
-    coverage; a window is ``None`` only when all twelve steps are missing.
-    On live data this matched RS exactly wherever both had data.
+    Without ``past`` only the 13 hours wholly in the forecast (ending at +60 to
+    +120) are built; with the analyses of the 11 releases before T, every lead
+    is. A missing step counts as 0, as in RS, which is this sum in almost every
+    cell (ADR 0009).
+
     """
+    if past is not None and len(past) != PAST_STEPS:
+        raise ValueError(f"past holds {len(past)} analyses, not {PAST_STEPS}")
+
+    # Step i ends at T + (i - PAST_STEPS) * 5 min. Without a past, the padding
+    # is never read: the future windows start at step PAST_STEPS + 1.
+    steps = (past if past is not None else [None] * PAST_STEPS) + values
     sums: list[float | None] = [None] * len(LEADS)
-    for lead in FUTURE_HOUR_LEADS:
-        window = [
-            values[k // LEAD_STEP]
-            for k in range(lead - 60 + LEAD_STEP, lead + 1, LEAD_STEP)
-        ]
-        present = [float(v) for v in window if v is not None]
+    for lead in LEADS if past is not None else FUTURE_HOUR_LEADS:
+        i = lead // LEAD_STEP
+        present = [float(v) for v in steps[i:i + STEPS_PER_HOUR] if v is not None]
         if present:
-            sums[lead // LEAD_STEP] = round(sum(present), MM_DECIMALS)
+            sums[i] = round_mm(sum(present))
     return sums
 
 
 def peak_rolling_hour(values: list[float | None]) -> tuple[float | None, int | None]:
-    """Return ``(peak, lead)`` of the wettest rolling hour wholly in the future.
+    """Return the wettest rolling hour wholly in the future, and its lead.
 
-    ``values`` is aligned to :data:`LEADS` and holds RS rolling 60-minute
-    accumulations (mm), so each is already an hourly total and is compared as
-    is. ``lead`` identifies the peak window (it ends at ``T + lead``); a tie goes
-    to the earliest window, the one an automation has to act on first. ``None``
-    entries (nodata) are skipped; ``(None, None)`` only when every one is missing.
+    ``values`` are rolling-hour totals aligned to LEADS (see
+    rolling_hour_sums). Compares the totals ending at +60 to +120 minutes; a
+    tie goes to the earlier hour, the one an automation must act on first.
+    Missing totals are skipped; (None, None) when all are missing.
+
     """
     peak: float | None = None
     peak_lead: int | None = None
@@ -125,7 +155,13 @@ def peak_rolling_hour(values: list[float | None]) -> tuple[float | None, int | N
 def _end_episode(
     future: list[float | None], threshold: float, episode_start_k: int
 ) -> int | None:
-    """First dry window at or after ``episode_start_k`` (end of first episode)."""
+    """Return when the first rain episode ends, in minutes from now.
+
+    ``future`` holds the forecast steps (index k starts at T + 5k minutes) and
+    ``episode_start_k`` the step the rain starts in. The end is the first dry
+    step at or after it; None when it rains to the end of the forecast.
+
+    """
     for k in range(episode_start_k, len(future)):
         if not _is_rain(future[k], threshold):
             return k * LEAD_STEP
@@ -135,10 +171,12 @@ def _end_episode(
 def _end_clearing(
     future: list[float | None], threshold: float, episode_start_k: int
 ) -> int | None:
-    """Boundary after the last rainy window at or after ``episode_start_k``.
+    """Return when rain stops for good within the forecast, in minutes from now.
 
-    ``None`` when the last rainy window is the horizon edge (rain never clears
-    within the forecast).
+    Looks through dry gaps to the last rainy step from ``episode_start_k`` on;
+    the end is the boundary after it. None when the forecast's last step is
+    still rainy, 0 when it rains now but no more rain is forecast.
+
     """
     last_rain_k: int | None = None
     for k in range(episode_start_k, len(future)):
@@ -159,22 +197,14 @@ def detect_start_end(
     threshold: float,
     end_algorithm: str = DEFAULT_END_ALGO,
 ) -> tuple[int | None, int | None]:
-    """Return ``(start_in, end_in)`` in minutes from now (``T``).
+    """Return in how many minutes precipitation starts and ends.
 
-    ``values`` is aligned to :data:`LEADS`. Semantics:
+    ``values`` are one release's 25 RV amounts, ``threshold`` the wet limit in
+    mm per 5 minutes. The start is 0 when it is raining now, and None when no
+    rain is forecast within two hours. The end follows ``end_algorithm``: the
+    end of the first episode ("episode"), or when no more rain is forecast at
+    all ("clearing"); None when it does not end within the forecast.
 
-    * ``start_in`` — minutes until precipitation begins. ``0`` if it is already
-      raining (analysis window, index 0). ``None`` if no precipitation occurs
-      within the 2-hour horizon.
-    * ``end_in`` — minutes until precipitation ends, per ``end_algorithm``:
-
-      - :data:`END_ALGO_EPISODE` (default): the current/next precipitation
-        episode ends (first dry window after onset).
-      - :data:`END_ALGO_CLEARING`: no further rain is forecast within the
-        horizon (the boundary after the last rainy window).
-
-      ``None`` if precipitation never occurs, or if it persists through the end
-      of the forecast horizon (i.e. the stop time is beyond +120 min).
     """
     currently_raining = _is_rain(values[0], threshold)
     future = values[1:]  # leads 5..120; future[k] window starts at T + k*5

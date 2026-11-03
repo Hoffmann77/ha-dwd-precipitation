@@ -1,0 +1,18 @@
+{
+  "theme.navbar.mobileDropdown.collapseButton.expandAriaLabel": {
+    "message": "Auswahl aufklappen",
+    "description": "The ARIA label of the button to expand the mobile dropdown navbar item"
+  },
+  "theme.navbar.mobileDropdown.collapseButton.collapseAriaLabel": {
+    "message": "Auswahl zuklappen",
+    "description": "The ARIA label of the button to collapse the mobile dropdown navbar item"
+  },
+  "theme.contentVisibility.unlistedBanner.message": {
+    "message": "Diese Seite ist nicht gelistet. Suchmaschinen indexieren sie nicht, und nur wer den direkten Link hat, kann sie aufrufen.",
+    "description": "The unlisted content banner message"
+  },
+  "theme.contentVisibility.draftBanner.message": {
+    "message": "Diese Seite ist ein Entwurf. Sie ist nur in der Entwicklungsumgebung sichtbar und nicht im Produktions-Build enthalten.",
+    "description": "The draft content banner message"
+  }
+}

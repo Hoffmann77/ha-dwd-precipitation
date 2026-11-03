@@ -1,0 +1,10 @@
+{
+  "version.label": {
+    "message": "Aktuell",
+    "description": "The label for version current"
+  },
+  "sidebar.development.link.Architecture decisions": {
+    "message": "Architekturentscheidungen",
+    "description": "The label for link 'Architecture decisions' in sidebar 'development', linking to '/development/adr'"
+  }
+}

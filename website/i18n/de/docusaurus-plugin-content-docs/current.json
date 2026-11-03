@@ -1,0 +1,22 @@
+{
+  "version.label": {
+    "message": "Aktuell",
+    "description": "The label for version current"
+  },
+  "sidebar.docs.category.Getting started": {
+    "message": "Erste Schritte",
+    "description": "The label for category 'Getting started' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Entities": {
+    "message": "Entitäten",
+    "description": "The label for category 'Entities' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.How it works": {
+    "message": "Funktionsweise",
+    "description": "The label for category 'How it works' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Help": {
+    "message": "Hilfe",
+    "description": "The label for category 'Help' in sidebar 'docs'"
+  }
+}

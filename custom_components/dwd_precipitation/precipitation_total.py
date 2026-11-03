@@ -12,56 +12,78 @@ equally wet hours in a row are two releases and must both be counted, and a
 release seen twice (a refresh, a restart) must be counted once.
 
 Holds the persisted payload and the pure helpers; the entity lives in sensor.py.
+
 """
 
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
 from homeassistant.helpers.restore_state import ExtraStoredData
-from homeassistant.util import dt as dt_util
+
+from .release_grid import ReleaseGrid
+from .radar.isotime import iso, parse_utc
 
 
 @dataclass
 class PrecipitationTotalExtraData(ExtraStoredData):
-    """Persisted running total and the newest release already counted in it."""
+    """Persisted running total, the newest release counted in it, and the
+    older releases still missing from it (to be fetched and added).
+
+    """
 
     total: float | None
     last_release: datetime | None
+    pending: list[datetime] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
-        """Serialize the total for restore_state."""
+        """Serialize the total for restore_state.
+
+        The total (mm), the newest release counted in it and the older releases
+        still to be fetched and added (``pending``), with the timestamps as ISO
+        strings. Home Assistant stores this with the entity's state and hands
+        it back after a restart (see from_dict).
+
+        """
         return {
             "total": self.total,
-            "last_release": (
-                self.last_release.isoformat() if self.last_release else None
-            ),
+            "last_release": iso(self.last_release),
+            "pending": [iso(release) for release in self.pending],
         }
 
     @classmethod
     def from_dict(cls, restored: dict[str, Any]) -> "PrecipitationTotalExtraData":
-        """Rebuild the total from a restored dict, forcing UTC-awareness."""
-        raw = restored.get("last_release")
-        ts = dt_util.parse_datetime(raw) if raw else None
-        if ts is not None and ts.tzinfo is None:
-            ts = dt_util.as_utc(ts)
+        """Rebuild the total from a restored dict, forcing UTC-awareness.
 
+        The counterpart of as_dict. A timestamp that cannot be read is dropped
+        (or restores as None), and a total stored before ``pending`` existed
+        restores with an empty list.
+
+        """
         total = restored.get("total")
 
         return cls(
             total=float(total) if total is not None else None,
-            last_release=ts,
+            last_release=parse_utc(restored.get("last_release")),
+            pending=sorted(
+                ts
+                for raw in restored.get("pending") or ()
+                if (ts := parse_utc(raw)) is not None
+            ),
         )
 
 
 def countable(value: Any) -> float | None:
     """Return a reading as mm to add to the total, or None if it is unusable.
 
-    NaN marks a cell outside radar coverage. Negative values cannot be rain, and
-    adding one would make a TOTAL_INCREASING sensor look like it was reset.
+    ``value`` is the amount a release reported for the location. None and NaN
+    mark a cell without data (outside radar coverage, a radar outage); such a
+    release adds nothing. Negative values cannot be rain, and adding one would
+    make a TOTAL_INCREASING sensor look like it was reset.
+
     """
     if value is None:
         return None
@@ -73,26 +95,64 @@ def countable(value: Any) -> float | None:
     return value
 
 
+def counted_on_grid(grid: ReleaseGrid, last_counted: datetime) -> datetime:
+    """Return the release on ``grid`` that a stored ``last_counted`` stands for.
+
+    A release on the grid stands for itself. One from an older grid (RW's HH:50
+    run, before 2026.11.0) maps to the new-grid release before the first window
+    wholly after it, so ten minutes are left out once instead of fifty counted
+    twice (ADR 0002). Applied once, when the total is restored, so the counting
+    continues on the current grid.
+
+    """
+    if grid.at_or_before(last_counted) == last_counted:
+        return last_counted
+
+    return grid.at_or_before(grid.next_after(last_counted))
+
+
 def missed_releases(
-    coordinator: Any,
+    grid: ReleaseGrid,
     last_counted: datetime,
     current: datetime,
     limit: int,
-) -> list[datetime]:
-    """Return the releases strictly between last_counted and current, oldest first.
+) -> tuple[list[datetime], tuple[datetime, datetime] | None]:
+    """Return the uncounted releases still fetchable, and the stretch that is not.
 
-    These are the windows nobody counted: Home Assistant was down, or the
-    product failed for longer than one release. Walked with the coordinator's
-    own _next_release_after, so a local-time product steps over DST changeovers
-    exactly as its schedule does. Only the newest ``limit`` are returned; older
-    files are unlikely to still be on OpenData, and a long outage should not
-    turn into a burst of downloads at startup.
+    The releases after ``last_counted`` and before ``current`` were missed:
+    Home Assistant was down, or the product failed. Only the ``limit`` newest
+    are still on OpenData, so only they come back, oldest first, for the sensor
+    to fetch and add. An older stretch comes back as its (first, last) release,
+    for the caller to log; None when nothing is lost. Walked on the grid, so a
+    DST day counts as one release.
+
     """
-    missed: list[datetime] = []
-    release = coordinator._next_release_after(last_counted)
+    first = grid.next_after(last_counted)
+    oldest = grid.back(current, limit)
+    lost = (first, grid.previous(oldest)) if first < oldest else None
 
-    while release < current:
-        missed.append(release)
-        release = coordinator._next_release_after(release)
+    return grid.walk(max(first, oldest), current), lost
 
-    return missed[-limit:] if limit > 0 else []
+
+def split_fetchable(
+    grid: ReleaseGrid,
+    pending: list[datetime],
+    current: datetime,
+    limit: int,
+) -> tuple[list[datetime], list[datetime]]:
+    """Split pending releases into (still fetchable, given up), oldest first.
+
+    ``pending`` are missed releases not yet added. Fetchable means among the
+    ``limit`` releases before ``current``: the same window missed_releases
+    draws from, and what DWD keeps on OpenData. Anything older can no longer be
+    fetched, so the sensor drops it and logs it once. Counted on the grid, so a
+    local-time product's DST days count as one release each.
+
+    """
+    oldest = grid.back(current, limit)
+    releases = sorted(set(pending))
+
+    return (
+        [r for r in releases if r >= oldest],
+        [r for r in releases if r < oldest],
+    )
