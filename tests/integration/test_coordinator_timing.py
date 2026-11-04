@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo
 import aiohttp
 import pytest
 from homeassistant.helpers.update_coordinator import UpdateFailed
-from pytest_homeassistant_custom_component.common import async_fire_time_changed
+from pytest_homeassistant.common import async_fire_time_changed
 
 from custom_components.dwd_precipitation import (
     PRODUCT_CLASSES,

@@ -499,11 +499,11 @@ HACS itself and moves its installs over on its own. What either needs:
 `homeassistant` is the minimum HA version per release), a `version` in
 `manifest.json` equal to the release tag, published GitHub releases, and the
 brand icon (in `home-assistant/brands` for now). hassfest and the HACS action
-(`validate.yaml`) check both files. The manifest has no `categories` yet: the
-catalog passes them to the Marketplace for browsing (`weather_alerts` fits),
-but the hassfest action's image still rejects the key ("not a valid option at
-'categories'", October 2026), although core's `dev` accepts it. Add it once
-hassfest passes with it; until then the HACS action only warns. The install buttons pass the lowercase
+(`validate.yaml`) check both files. The manifest's `categories` is
+`weather_alerts.forecasts`, as for core's `met`: the catalog passes it to the
+Marketplace for browsing. hassfest accepts the key from 2026.11 (an unknown
+category only warns for a custom integration); the HACS action warns without
+it and fails on an unknown one. The install buttons pass the lowercase
 category (`category=integration`): `marketplace_repository` for 2026.11 and
 newer, `hacs_repository` for older versions, where it opens HACS.
 
@@ -512,7 +512,17 @@ newer, `hacs_repository` for older versions, where it opens HACS.
 Besides the three test tiers, CI (`tests.yml`) runs ruff (F rules only) and
 pyright (basic mode, settings in `pyproject.toml` `[tool.pyright]`) on the
 component. Pyright checks against HA's own types, so it runs in the
-`typecheck` dependency group, which is `ha-test` plus pyright. Keep it at 0
+`typecheck` dependency group, which is `ha-test` plus pyright. `ha-test`
+is HA's own plugin, `pytest-homeassistant` (imported as
+`pytest_homeassistant.common`), whose release pins one HA version; while only
+a beta exists for a release, `override-dependencies` in `[tool.uv]` puts the
+final HA under it. It needs `-p no:respx` (in `addopts`), and pins no numpy, so
+`ha-test` pins HA's.
+
+Entities that override `async_added_to_hass` also define
+`async_entity_id_changed` (calling only `super()`): that opts them in to HA
+2026.11's in-place entity id change instead of a remove and re-add, the
+fallback HA drops in 2027.11. Keep it at 0
 errors: fix a finding, or ignore it on its line with the reason. The one
 such case is the config flow's `vol.Schema`, which HA's annotations call
 `probatio.Schema`; HA installs probatio as voluptuous at runtime, and

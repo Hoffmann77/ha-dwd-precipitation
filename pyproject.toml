@@ -6,6 +6,11 @@ requires-python = ">=3.14.2,<3.15"
 [tool.uv]
 package = false  # not a distributable Python package; test in-place via pythonpath
 
+# pytest-homeassistant (ha-test) pins the HA it was built with, and only
+# betas of 2026.11 are published so far: run them against the final release
+# users have. Drop this once pytest-homeassistant 2026.11.0 is out.
+override-dependencies = ["homeassistant==2026.11.0"]
+
 # Component only runs under HA (Linux/macOS/Windows x86_64); excluding the
 # niche Windows ARM64 slice avoids uv resolving unsatisfiable transitive
 # constraints (e.g. numpy) for a platform nobody targets.
@@ -45,7 +50,11 @@ unit-test = [
 # Installs only HA-compatible packages — validates the component runs in the
 # same environment HA uses (same Python version, same numpy/h5py pins).
 ha-test = [
-    "pytest-homeassistant-custom-component==0.13.373",
+    # HA's own test plugin (replaces pytest-homeassistant-custom-component from
+    # 2026.11). It pins neither numpy nor h5py, so both are pinned here: numpy
+    # is HA's own pin (package_constraints.txt), as in unit-test.
+    "pytest-homeassistant==2026.11.0b6",
+    "numpy==2.3.2",
     "h5py==3.16.0",
 ]
 
@@ -96,7 +105,9 @@ testpaths = ["tests"]
 pythonpath = [".", "custom_components/dwd_precipitation"]
 # Network tests only when asked for (`-m live`, as the scheduled workflows
 # do); a mistyped marker is an error, not a silent no-op.
-addopts = "-m 'not live' --strict-markers"
+# -p no:respx: HA installs its httpx alias at import, which fails once respx
+# has imported httpx (pytest-homeassistant's README asks for this).
+addopts = "-m 'not live' --strict-markers -p no:respx"
 asyncio_mode = "auto"
 # asyncio_mode is pytest-asyncio's, which only the ha-test group installs.
 filterwarnings = [
