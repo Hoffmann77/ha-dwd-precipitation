@@ -520,16 +520,18 @@ every final (`ignoreUnstable: false`), so the suite runs on a release
 before it is out. It needs `-p no:respx` (in `addopts`), and pins no numpy, so
 `ha-test` pins HA's.
 
-Entities that override `async_added_to_hass` also define
-`async_entity_id_changed` (calling only `super()`): that opts them in to HA
-2026.11's in-place entity id change instead of a remove and re-add, the
-fallback HA drops in 2027.11. Keep it at 0
+Keep pyright at 0
 errors: fix a finding, or ignore it on its line with the reason. The one
 such case is the config flow's `vol.Schema`, which HA's annotations call
 `probatio.Schema`; HA installs probatio as voluptuous at runtime, and
 importing probatio ourselves would break every HA from before that alias.
 `reportIncompatibleVariableOverride` is off: HA entities override
 `entity_description` and their cached properties by design.
+
+Entities that override `async_added_to_hass` also define
+`async_entity_id_changed` (calling only `super()`): that opts them in to HA
+2026.11's in-place entity id change instead of a remove and re-add, the
+fallback HA drops in 2027.11.
 
 ## Documentation site
 
