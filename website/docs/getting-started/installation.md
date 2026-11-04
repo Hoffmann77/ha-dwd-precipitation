@@ -63,16 +63,15 @@ restart Home Assistant again.
 
 ## Manual installation
 
-1. Download the latest release from
-   [GitHub Releases](https://github.com/Hoffmann77/ha-dwd-precipitation/releases/latest)
-   and extract it.
-2. Copy the `custom_components/dwd_precipitation` folder into the
-   `custom_components` folder of your Home Assistant configuration directory,
-   so that you end up with `/config/custom_components/dwd_precipitation/`.
+1. Download `dwd_precipitation.zip` from the
+   [latest release](https://github.com/Hoffmann77/ha-dwd-precipitation/releases/latest).
+2. Create the folder `/config/custom_components/dwd_precipitation/` in your
+   Home Assistant configuration directory and extract the zip into it. The
+   zip has no folder of its own: its files go straight into that folder.
 3. [Restart Home Assistant](#restart-home-assistant).
 4. [Add the integration](#add-the-integration).
 
-To update, replace that folder with the one from the new release. A manual
+To update, empty that folder and extract the zip of the new release into it. A manual
 installation is not updated automatically.
 
 ## Restart Home Assistant

@@ -64,16 +64,18 @@ aktualisiere von dort und starte Home Assistant danach erneut neu.
 
 ## Manuelle Installation {#manual-installation}
 
-1. Lade die neueste Version von
-   [GitHub Releases](https://github.com/Hoffmann77/ha-dwd-precipitation/releases/latest)
-   herunter und entpacke sie.
-2. Kopiere den Ordner `custom_components/dwd_precipitation` in den Ordner
-   `custom_components` deines Home-Assistant-Konfigurationsverzeichnisses,
-   sodass am Ende `/config/custom_components/dwd_precipitation/` existiert.
+1. Lade `dwd_precipitation.zip` aus der
+   [neuesten Version](https://github.com/Hoffmann77/ha-dwd-precipitation/releases/latest)
+   herunter.
+2. Lege in deinem Home-Assistant-Konfigurationsverzeichnis den Ordner
+   `/config/custom_components/dwd_precipitation/` an und entpacke die ZIP-Datei
+   hinein. Sie enthält keinen eigenen Ordner: Ihre Dateien gehören direkt in
+   diesen Ordner.
 3. [Starte Home Assistant neu](#restart-home-assistant).
 4. [Füge die Integration hinzu](#add-the-integration).
 
-Zum Aktualisieren ersetzt du diesen Ordner durch den aus der neuen Version.
+Zum Aktualisieren leerst du diesen Ordner und entpackst die ZIP-Datei der
+neuen Version hinein.
 Eine manuelle Installation wird nicht automatisch aktualisiert.
 
 ## Home Assistant neu starten {#restart-home-assistant}
