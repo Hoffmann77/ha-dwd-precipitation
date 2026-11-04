@@ -1,14 +1,30 @@
-# DWD Precipitation
+<div align="center">
 
 **English** | [Deutsch](https://github.com/Hoffmann77/ha-dwd-precipitation/blob/main/README.de.md)
 
-[![Documentation](https://img.shields.io/badge/docs-read%20online-blue.svg)](https://hoffmann77.github.io/ha-dwd-precipitation/)
-[![Marketplace and HACS](https://img.shields.io/badge/Marketplace%20%26%20HACS-default%20catalog-41BDF5.svg)](https://hoffmann77.github.io/ha-dwd-precipitation/getting-started/installation)
-[![GitHub Release](https://img.shields.io/github/v/release/Hoffmann77/ha-dwd-precipitation)](https://github.com/Hoffmann77/ha-dwd-precipitation/releases/latest)
-[![Tests](https://github.com/Hoffmann77/ha-dwd-precipitation/actions/workflows/tests.yml/badge.svg)](https://github.com/Hoffmann77/ha-dwd-precipitation/actions/workflows/tests.yml)
-[![HACS Validate](https://github.com/Hoffmann77/ha-dwd-precipitation/actions/workflows/validate.yaml/badge.svg)](https://github.com/Hoffmann77/ha-dwd-precipitation/actions/workflows/validate.yaml)
+<img src="custom_components/dwd_precipitation/brand/icon@2x.png" alt="DWD Precipitation" width="120">
 
-Radar-based precipitation measurements and forecasts from the German Weather Service (DWD), for your exact location, directly in Home Assistant.
+# DWD Precipitation
+
+**Radar-based precipitation measurements and forecasts from the German Weather Service (DWD), for your exact location, directly in Home Assistant.**
+
+[![Marketplace and HACS](https://img.shields.io/badge/Marketplace%20%26%20HACS-default%20catalog-41BDF5.svg?style=flat-square)](https://hoffmann77.github.io/ha-dwd-precipitation/getting-started/installation)
+[![GitHub Release](https://img.shields.io/github/v/release/Hoffmann77/ha-dwd-precipitation?include_prereleases&style=flat-square)](https://github.com/Hoffmann77/ha-dwd-precipitation/releases/latest)
+[![Tests](https://img.shields.io/github/actions/workflow/status/Hoffmann77/ha-dwd-precipitation/tests.yml?branch=main&label=tests&style=flat-square)](https://github.com/Hoffmann77/ha-dwd-precipitation/actions/workflows/tests.yml)
+[![HACS Validate](https://img.shields.io/github/actions/workflow/status/Hoffmann77/ha-dwd-precipitation/validate.yaml?branch=main&label=HACS%20validate&style=flat-square)](https://github.com/Hoffmann77/ha-dwd-precipitation/actions/workflows/validate.yaml)
+[![License](https://img.shields.io/github/license/Hoffmann77/ha-dwd-precipitation?style=flat-square)](LICENSE)
+
+[**📖 Docs**](https://hoffmann77.github.io/ha-dwd-precipitation/) ·
+[Installation](https://hoffmann77.github.io/ha-dwd-precipitation/getting-started/installation) ·
+[Configuration](https://hoffmann77.github.io/ha-dwd-precipitation/getting-started/configuration) ·
+[Entities](https://hoffmann77.github.io/ha-dwd-precipitation/entities/overview) ·
+[Rain warnings](https://hoffmann77.github.io/ha-dwd-precipitation/entities/rain-warnings) ·
+[FAQ](https://hoffmann77.github.io/ha-dwd-precipitation/help/faq) ·
+[Troubleshooting](https://hoffmann77.github.io/ha-dwd-precipitation/help/troubleshooting)
+
+</div>
+
+---
 
 > [!IMPORTANT]
 > This integration **only works** for locations **within Germany** and areas immediately adjacent to the German border.
@@ -16,8 +32,6 @@ Radar-based precipitation measurements and forecasts from the German Weather Ser
 
 > [!TIP]
 > **[Read the documentation](https://hoffmann77.github.io/ha-dwd-precipitation/)** for every sensor, every option, how it works, and help with problems. Also [in German](https://hoffmann77.github.io/ha-dwd-precipitation/de/).
->
-> [Installation](https://hoffmann77.github.io/ha-dwd-precipitation/getting-started/installation) · [Configuration](https://hoffmann77.github.io/ha-dwd-precipitation/getting-started/configuration) · [Entities](https://hoffmann77.github.io/ha-dwd-precipitation/entities/overview) · [Rain warnings](https://hoffmann77.github.io/ha-dwd-precipitation/entities/rain-warnings) · [FAQ](https://hoffmann77.github.io/ha-dwd-precipitation/help/faq) · [Troubleshooting](https://hoffmann77.github.io/ha-dwd-precipitation/help/troubleshooting)
 
 ## Features
 
