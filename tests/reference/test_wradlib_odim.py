@@ -3,8 +3,9 @@
 The grid-lookup tests resolve locations with wradlib's own DE1200 grid
 (``create_crs("dwd-radolan-wgs84-de1200")`` + ``get_radolan_coordinates``), not
 with a reimplementation of our arithmetic: a reference that repeats our
-convention cannot catch a mistake in it. wradlib's grid is in turn pinned to
-the fixture file's corner attributes, so all three have to agree.
+convention cannot catch a mistake in it. Ours is the grid the fixture file
+describes in /where, as production reads it, and wradlib's grid is in turn
+pinned to that file's corner attributes, so all three have to agree.
 """
 
 import io
@@ -17,7 +18,14 @@ import pytest
 
 pytest.importorskip("wradlib")
 
-from radar.odim import RS_WHERE, get_rs_grid_index, read_odim_composite, rs_grid_contains  # noqa: E402
+from radar.grid import OutsideGrid  # noqa: E402
+from radar.odim import (  # noqa: E402
+    read_odim_classification,
+    read_odim_composite,
+    read_odim_grid,
+)
+from tests.factories.odim import DE1200_WHERE  # noqa: E402
+from tests.factories.real import real_member  # noqa: E402
 from tests.wradlib_ref import (  # noqa: E402
     de1200_cell,
     de1200_cells,
@@ -29,7 +37,7 @@ from tests.wradlib_ref import (  # noqa: E402
 FIXTURE_HDF5 = Path(__file__).parent.parent / "fixtures" / "composite_rs_sample.hd5"
 FIXTURE_META = Path(__file__).parent.parent / "fixtures" / "fixture_metadata.json"
 
-YSIZE, XSIZE = RS_WHERE["ysize"], RS_WHERE["xsize"]
+YSIZE, XSIZE = DE1200_WHERE["ysize"], DE1200_WHERE["xsize"]
 
 # Named locations, so a failure reads as a place rather than a random draw.
 CITIES = {
@@ -51,12 +59,27 @@ def _fixture_where():
         }
 
 
+def _fixture_grid():
+    """The grid production reads the fixture's cells on: its own /where."""
+    if not FIXTURE_HDF5.exists():
+        pytest.skip("Fixture file not found — run scripts/create_fixture.py first")
+    return read_odim_grid(FIXTURE_HDF5)
+
+
+def _cell_or_none(grid, lat, lon):
+    try:
+        return grid.cell(lat, lon)
+    except OutsideGrid:
+        return None
+
+
 @pytest.mark.wradlib
 def test_wradlib_grid_edges_are_the_file_corners():
     """wradlib's DE1200 outer edges are exactly the file's corner attributes.
 
     ODIM defines LL/UL/UR/LR as the outer corners of the edge pixels. This ties
-    the reference grid to what DWD actually publishes, and RS_WHERE to both.
+    the reference grid to what DWD actually publishes, and the test factories'
+    DE1200_WHERE to both.
     """
     where = _fixture_where()
     edges = de1200_edge_grid_lonlat()  # (ysize + 1, xsize + 1, [lon, lat]), south-up
@@ -66,8 +89,8 @@ def test_wradlib_grid_edges_are_the_file_corners():
         assert lat == pytest.approx(where[f"{name}_lat"], abs=1e-8), name
 
     for key in ("LL_lat", "LL_lon", "xscale", "yscale", "xsize", "ysize"):
-        assert RS_WHERE[key] == pytest.approx(where[key], abs=1e-12), key
-    assert RS_WHERE["projdef"] == where["projdef"]
+        assert DE1200_WHERE[key] == pytest.approx(where[key], abs=1e-12), key
+    assert DE1200_WHERE["projdef"] == where["projdef"]
 
 
 @pytest.mark.wradlib
@@ -85,10 +108,11 @@ def test_grid_index_matches_wradlib():
     inside = (rows >= 0) & (rows < YSIZE) & (cols >= 0) & (cols < XSIZE)
     assert inside.sum() > 4500, "sample should fall mostly inside the grid"
 
+    grid = _fixture_grid()
     mismatches = [
-        (float(lat), float(lon), get_rs_grid_index(lat, lon), (int(r), int(c)))
+        (float(lat), float(lon), ours, (int(r), int(c)))
         for lat, lon, r, c in zip(lats[inside], lons[inside], rows[inside], cols[inside])
-        if get_rs_grid_index(lat, lon) != (r, c)
+        if (ours := _cell_or_none(grid, lat, lon)) != (r, c)
     ]
     assert not mismatches, (
         f"{len(mismatches)} of {inside.sum()} locations differ from wradlib, "
@@ -100,12 +124,12 @@ def test_grid_index_matches_wradlib():
 @pytest.mark.wradlib
 def test_city_cells_match_wradlib(city):
     lat, lon = CITIES[city]
-    assert get_rs_grid_index(lat, lon) == de1200_cell(lat, lon)
+    assert _fixture_grid().cell(lat, lon) == de1200_cell(lat, lon)
 
 
 @pytest.mark.wradlib
-def test_grid_contains_matches_wradlib_at_the_edges():
-    """rs_grid_contains agrees with wradlib in a band straddling every edge."""
+def test_grid_edges_match_wradlib():
+    """Our grid ends where wradlib's does, in a band straddling every edge."""
     edges = de1200_edge_grid_lonlat()
     border = np.concatenate([edges[0], edges[-1], edges[:, 0], edges[:, -1]])
     rng = np.random.default_rng(7)
@@ -116,7 +140,8 @@ def test_grid_contains_matches_wradlib_at_the_edges():
     expected = (rows >= 0) & (rows < YSIZE) & (cols >= 0) & (cols < XSIZE)
     assert 0 < expected.sum() < len(expected), "band should straddle the edge"
 
-    ours = np.array([rs_grid_contains(lat, lon) for lat, lon in zip(lats, lons)])
+    grid = _fixture_grid()
+    ours = np.array([_cell_or_none(grid, lat, lon) is not None for lat, lon in zip(lats, lons)])
     wrong = np.flatnonzero(ours != expected)
     assert not wrong.size, (
         f"{wrong.size} edge points disagree, e.g. lat/lon "
@@ -135,9 +160,7 @@ def test_location_value_matches_wradlib():
     hdf5_bytes = FIXTURE_HDF5.read_bytes()
 
     data_ours, _dataset_what = read_odim_composite(io.BytesIO(hdf5_bytes))
-    # read_odim_composite does not return the /where grid dict; the RS grid is
-    # fixed, so get_rs_grid_index uses its built-in RS_WHERE by default.
-    row_ours, col_ours = get_rs_grid_index(lat, lon)
+    row_ours, col_ours = _fixture_grid().cell(lat, lon)
 
     assert (row_ours, col_ours) == de1200_cell(lat, lon)
     assert (row_ours, col_ours) == (meta["grid_row"], meta["grid_col"])
@@ -166,3 +189,28 @@ def test_full_array_matches_wradlib():
     np.testing.assert_array_equal(np.isnan(data_ours), np.isnan(data_wrl))
     mask = ~np.isnan(data_ours)
     np.testing.assert_array_equal(data_ours[mask], data_wrl[mask])
+
+
+@pytest.mark.wradlib
+def test_real_rv_analysis_matches_wradlib():
+    """A real RV analysis decodes like wradlib's reader, cell for cell."""
+    content, _ = real_member("rv")
+    data_ours, _ = read_odim_composite(io.BytesIO(content))
+    data_wrl = scale_odim(*read_odim(content))
+
+    np.testing.assert_array_equal(np.isnan(data_ours), np.isnan(data_wrl))
+    mask = ~np.isnan(data_ours)
+    np.testing.assert_array_equal(data_ours[mask], data_wrl[mask])
+    assert np.nanmax(data_ours) > 0, "the fixture was picked for its rain"
+
+
+@pytest.mark.wradlib
+def test_real_hymecng_matches_wradlib():
+    """A real HymecNG file: our class grid is wradlib's raw grid."""
+    content, _ = real_member("hymecng")
+    raw_ours, _, moment_what = read_odim_classification(io.BytesIO(content))
+    raw_wrl, what_wrl = read_odim(content)
+
+    np.testing.assert_array_equal(raw_ours, raw_wrl)
+    assert int(moment_what["nodata"]) == int(what_wrl["nodata"])
+    assert int(moment_what["undetect"]) == int(what_wrl["undetect"])

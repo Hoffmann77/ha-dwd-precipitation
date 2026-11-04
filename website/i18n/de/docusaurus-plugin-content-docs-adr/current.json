@@ -1,0 +1,14 @@
+{
+  "version.label": {
+    "message": "Aktuell",
+    "description": "The label for version current"
+  },
+  "sidebar.adr.link.← Development": {
+    "message": "← Entwicklung",
+    "description": "The label for link '← Development' in sidebar 'adr', linking to '/development'"
+  },
+  "sidebar.adr.doc.Overview": {
+    "message": "Übersicht",
+    "description": "The label for the doc item 'Overview' in sidebar 'adr', linking to the doc README"
+  }
+}

@@ -1,6 +1,6 @@
 [project]
 name = "ha-dwd-precipitation"
-version = "2026.10.1"
+version = "2026.11.0"
 requires-python = ">=3.14.2,<3.15"
 
 [tool.uv]
@@ -19,6 +19,11 @@ conflicts = [
     [
         { group = "unit-test" },
         { group = "ha-test" },
+        { group = "wradlib-comparison" },
+    ],
+    [
+        { group = "unit-test" },
+        { group = "typecheck" },
         { group = "wradlib-comparison" },
     ],
 ]
@@ -40,8 +45,22 @@ unit-test = [
 # Installs only HA-compatible packages — validates the component runs in the
 # same environment HA uses (same Python version, same numpy/h5py pins).
 ha-test = [
-    "pytest-homeassistant-custom-component==0.13.375",
+    # HA's own test plugin (replaces pytest-homeassistant-custom-component from
+    # 2026.11). It pins neither numpy nor h5py, so both are pinned here: numpy
+    # is HA's own pin (package_constraints.txt), as in unit-test.
+    "pytest-homeassistant==2026.11.0b6",
+    # Its exact pin, spelled out: uv takes a pre-release only when named.
+    # Renovate moves the two in one PR (renovate.json).
+    "homeassistant==2026.11.0b6",
+    "numpy==2.3.2",
     "h5py==3.16.0",
+]
+
+# Pyright against HA's own types, so it needs the HA environment. The nodejs
+# extra bundles Node, so nothing is downloaded when pyright runs.
+typecheck = [
+    { include-group = "ha-test" },
+    "pyright[nodejs]==1.1.414",
 ]
 
 # Installs wradlib (+ pyproj, scipy, etc.) for parser comparison tests.
@@ -66,6 +85,16 @@ target-version = "py314"
 # Pyflakes only for now: undefined and unused names. Broader rule sets later.
 select = ["F"]
 
+[tool.pyright]
+# Run in the ha-test environment (HA's own types): see the typecheck CI job.
+include = ["custom_components"]
+pythonVersion = "3.14"
+typeCheckingMode = "basic"
+# HA entities override entity_description and its cached properties
+# (available, is_on, extra_state_attributes, ...) with plain properties by
+# design; HA type-checks that pattern with mypy, which accepts it.
+reportIncompatibleVariableOverride = false
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # "." allows `from custom_components... import` (used in ha-test job, where HA is installed).
@@ -74,11 +103,16 @@ testpaths = ["tests"]
 pythonpath = [".", "custom_components/dwd_precipitation"]
 # Network tests only when asked for (`-m live`, as the scheduled workflows
 # do); a mistyped marker is an error, not a silent no-op.
-addopts = "-m 'not live' --strict-markers"
+# -p no:respx: HA installs its httpx alias at import, which fails once respx
+# has imported httpx (pytest-homeassistant's README asks for this).
+addopts = "-m 'not live' --strict-markers -p no:respx"
+# As pytest-homeassistant's README asks.
 asyncio_mode = "auto"
-# asyncio_mode is pytest-asyncio's, which only the ha-test group installs.
+asyncio_default_fixture_loop_scope = "function"
+# Both are pytest-asyncio's, which only the ha-test group installs.
 filterwarnings = [
     "ignore:Unknown config option. asyncio_mode:pytest.PytestConfigWarning",
+    "ignore:Unknown config option. asyncio_default_fixture_loop_scope:pytest.PytestConfigWarning",
 ]
 markers = [
     "live: requires network access to DWD OpenData (scheduled, not on PRs)",

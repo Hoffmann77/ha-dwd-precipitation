@@ -1,0 +1,24 @@
+/* Theme colours of the documentation site: a rain-radar blue. */
+
+:root {
+  --ifm-color-primary: #1f6fb2;
+  --ifm-color-primary-dark: #1c64a0;
+  --ifm-color-primary-darker: #1a5e97;
+  --ifm-color-primary-darkest: #164e7d;
+  --ifm-color-primary-light: #227ac4;
+  --ifm-color-primary-lighter: #2480cd;
+  --ifm-color-primary-lightest: #3a91da;
+  --ifm-code-font-size: 95%;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme='dark'] {
+  --ifm-color-primary: #5aa9e6;
+  --ifm-color-primary-dark: #3f9ae2;
+  --ifm-color-primary-darker: #3193e0;
+  --ifm-color-primary-darkest: #1e7bc4;
+  --ifm-color-primary-light: #75b8ea;
+  --ifm-color-primary-lighter: #83bfec;
+  --ifm-color-primary-lightest: #abd3f2;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.3);
+}

@@ -22,10 +22,22 @@
       "groupName": "h5py"
     },
     {
+      "description": "pytest-homeassistant pins the HA of its own number: move both in one PR, betas included, so the suite runs on a release before it is out",
+      "matchPackageNames": ["pytest-homeassistant", "homeassistant"],
+      "groupName": "Home Assistant",
+      "ignoreUnstable": false
+    },
+    {
       "description": "numpy follows HA's pin, not PyPI (see pyproject unit-test)",
       "matchManagers": ["pep621"],
       "matchPackageNames": ["numpy"],
       "enabled": false
+    },
+    {
+      "description": "The docs site (website/): every Docusaurus package moves in one PR",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["@docusaurus/**"],
+      "groupName": "Docusaurus"
     },
     {
       "matchManagers": ["github-actions"],
