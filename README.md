@@ -2,8 +2,6 @@
 
 **English** | [Deutsch](https://github.com/Hoffmann77/ha-dwd-precipitation/blob/main/README.de.md)
 
-<img src="custom_components/dwd_precipitation/brand/icon@2x.png" alt="DWD Precipitation" width="120">
-
 # DWD Precipitation
 
 **Radar-based precipitation measurements and forecasts from the German Weather Service (DWD), for your exact location, directly in Home Assistant.**
