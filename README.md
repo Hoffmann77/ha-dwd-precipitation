@@ -97,8 +97,8 @@ After installation, restart Home Assistant. To add DWD Precipitation to your Hom
 7. Now you are able to download the integration.
 
 ### Manual installation
-1. Download the ZIP file of this repository and extract its contents.
-2. Copy the `dwd_precipitation` folder into `/config/custom_components/` in your Home Assistant directory.
+1. Download `dwd_precipitation.zip` from the [latest release](https://github.com/Hoffmann77/ha-dwd-precipitation/releases/latest).
+2. Create the folder `/config/custom_components/dwd_precipitation/` in your Home Assistant directory and extract the ZIP file into it.
 
 ### Restart Home Assistant
 1. Restart your Home Assistant.

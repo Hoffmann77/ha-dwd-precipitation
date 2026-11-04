@@ -264,6 +264,33 @@ just records the streak (via `actions/cache`) without notifying, so one-off
 measurement noise doesn't page anyone. The streak resets to zero as soon as a
 run comes back clean.
 
+## Publishing releases
+
+HACS installs from a release asset, not the source tree: `hacs.json` sets
+`zip_release` + `filename: dwd_precipitation.zip`, and
+`.github/workflows/release.yml` builds that zip. That is what gives HACS a
+download count — it reports the asset's GitHub `download_count` for the version
+it offers, so the number is per release, not cumulative.
+
+To release (including an RC): save it as a **draft**, then run the workflow
+manually with its tag. It builds from the draft's target commit, attaches the
+zip and only then publishes, so HACS never offers a release without its asset.
+It cannot be automatic: GitHub sends workflows no `created` event for drafts.
+A release published directly still gets its zip from the `published` trigger,
+but installs fail for the minute or so until it lands.
+
+- The workflow never replaces an existing zip, because re-uploading resets the
+  `download_count`. Delete the asset by hand if one really must be rebuilt.
+
+- The zip holds the *contents* of `custom_components/dwd_precipitation/` at its
+  root, with no enclosing folder: HACS extracts it straight into
+  `config/custom_components/<domain>/`.
+- The workflow stamps the tag into the zipped `manifest.json`, so the installed
+  version always matches the release even if the bump commit was forgotten.
+- HACS reads `hacs.json` from the version it offers, then uses that one manifest
+  for every version in its picker — so a release without the asset cannot be
+  installed through HACS. Backfill one with the same manual run on its tag. `hide_default_branch` is set because a branch has no asset at all.
+
 ## Grid lookup
 
 The lookup returns the cell that *contains* the location: project it, then
