@@ -16,6 +16,11 @@ DOMAIN = "dwd_precipitation"
 # the German translations add /de, where the site keeps its German pages.
 DOCS_URL = "https://hoffmann77.github.io/ha-dwd-precipitation"
 
+# DWD's open data is CC BY 4.0 and wants its source named next to the
+# information (DWDG section 7). Every value here is processed (a cell picked,
+# steps summed, timings derived), so it uses DWD's "Based on data from" form.
+ATTRIBUTION = "Based on data from Deutscher Wetterdienst (DWD)"
+
 PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR]
 
 CONF_COORDS = "coordinates"

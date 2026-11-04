@@ -1,14 +1,30 @@
-# DWD Precipitation
+<div align="center">
 
 **English** | [Deutsch](https://github.com/Hoffmann77/ha-dwd-precipitation/blob/main/README.de.md)
 
-[![Documentation](https://img.shields.io/badge/docs-read%20online-blue.svg)](https://hoffmann77.github.io/ha-dwd-precipitation/)
-[![Marketplace and HACS](https://img.shields.io/badge/Marketplace%20%26%20HACS-default%20catalog-41BDF5.svg)](https://hoffmann77.github.io/ha-dwd-precipitation/getting-started/installation)
-[![GitHub Release](https://img.shields.io/github/v/release/Hoffmann77/ha-dwd-precipitation)](https://github.com/Hoffmann77/ha-dwd-precipitation/releases/latest)
-[![Tests](https://github.com/Hoffmann77/ha-dwd-precipitation/actions/workflows/tests.yml/badge.svg)](https://github.com/Hoffmann77/ha-dwd-precipitation/actions/workflows/tests.yml)
-[![HACS Validate](https://github.com/Hoffmann77/ha-dwd-precipitation/actions/workflows/validate.yaml/badge.svg)](https://github.com/Hoffmann77/ha-dwd-precipitation/actions/workflows/validate.yaml)
+# DWD Precipitation
 
-Radar-based precipitation measurements and forecasts from the German Weather Service (DWD), for your exact location, directly in Home Assistant.
+**Radar-based precipitation measurements and forecasts from the German Weather Service (DWD), for your exact location, directly in Home Assistant.**
+
+*A community project: not made, endorsed or supported by the Deutscher Wetterdienst (DWD).*
+
+[![Marketplace and HACS](https://img.shields.io/badge/Marketplace%20%26%20HACS-default%20catalog-41BDF5.svg?style=flat-square)](https://hoffmann77.github.io/ha-dwd-precipitation/getting-started/installation)
+[![GitHub Release](https://img.shields.io/github/v/release/Hoffmann77/ha-dwd-precipitation?include_prereleases&style=flat-square)](https://github.com/Hoffmann77/ha-dwd-precipitation/releases/latest)
+[![Tests](https://img.shields.io/github/actions/workflow/status/Hoffmann77/ha-dwd-precipitation/tests.yml?branch=main&label=tests&style=flat-square)](https://github.com/Hoffmann77/ha-dwd-precipitation/actions/workflows/tests.yml)
+[![HACS Validate](https://img.shields.io/github/actions/workflow/status/Hoffmann77/ha-dwd-precipitation/validate.yaml?branch=main&label=HACS%20validate&style=flat-square)](https://github.com/Hoffmann77/ha-dwd-precipitation/actions/workflows/validate.yaml)
+[![License](https://img.shields.io/github/license/Hoffmann77/ha-dwd-precipitation?style=flat-square)](LICENSE)
+
+[**📖 Docs**](https://hoffmann77.github.io/ha-dwd-precipitation/) ·
+[Installation](https://hoffmann77.github.io/ha-dwd-precipitation/getting-started/installation) ·
+[Configuration](https://hoffmann77.github.io/ha-dwd-precipitation/getting-started/configuration) ·
+[Entities](https://hoffmann77.github.io/ha-dwd-precipitation/entities/overview) ·
+[Rain warnings](https://hoffmann77.github.io/ha-dwd-precipitation/entities/rain-warnings) ·
+[FAQ](https://hoffmann77.github.io/ha-dwd-precipitation/help/faq) ·
+[Troubleshooting](https://hoffmann77.github.io/ha-dwd-precipitation/help/troubleshooting)
+
+</div>
+
+---
 
 > [!IMPORTANT]
 > This integration **only works** for locations **within Germany** and areas immediately adjacent to the German border.
@@ -16,8 +32,6 @@ Radar-based precipitation measurements and forecasts from the German Weather Ser
 
 > [!TIP]
 > **[Read the documentation](https://hoffmann77.github.io/ha-dwd-precipitation/)** for every sensor, every option, how it works, and help with problems. Also [in German](https://hoffmann77.github.io/ha-dwd-precipitation/de/).
->
-> [Installation](https://hoffmann77.github.io/ha-dwd-precipitation/getting-started/installation) · [Configuration](https://hoffmann77.github.io/ha-dwd-precipitation/getting-started/configuration) · [Entities](https://hoffmann77.github.io/ha-dwd-precipitation/entities/overview) · [Rain warnings](https://hoffmann77.github.io/ha-dwd-precipitation/entities/rain-warnings) · [FAQ](https://hoffmann77.github.io/ha-dwd-precipitation/help/faq) · [Troubleshooting](https://hoffmann77.github.io/ha-dwd-precipitation/help/troubleshooting)
 
 ## Features
 
@@ -72,9 +86,13 @@ Enter a name and pick the location; the [configuration guide](https://hoffmann77
 
 ## Data source
 
-All data is derived from the **DWD (Deutscher Wetterdienst)**:
+All values are based on data from the **Deutscher Wetterdienst (DWD)**, from its [Open Data server](https://opendata.dwd.de/):
 
 <img src="docs/assets/dwd-logo.png" alt="Deutscher Wetterdienst Logo" width="200"/>
+
+Source: Deutscher Wetterdienst, under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) ([DWD legal notice](https://www.dwd.de/EN/service/legal_notice/legal_notice_node.html)). The integration processes the data: it reads the radar grid cell holding your location and derives totals, peaks, start and end times and rain events from it. Every entity names the source in its `attribution` attribute: "Based on data from Deutscher Wetterdienst (DWD)".
+
+This project is not made, endorsed or supported by the DWD. Its **rain warnings** are rules you set on DWD's radar forecast, not official DWD weather warnings; those are issued by the DWD itself at [dwd.de](https://www.dwd.de/).
 
 **[Current status of the DWD radar stations](https://www.dwd.de/DE/leistungen/radarniederschlag/rn_info/home_freie_radarstatus_kartendaten.html)**
 

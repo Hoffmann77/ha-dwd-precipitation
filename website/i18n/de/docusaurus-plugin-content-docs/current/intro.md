@@ -75,10 +75,11 @@ kommen etwa 30 Minuten später, sind aber genauer.
 
 :::info
 
-Dies ist ein Community-Projekt. Es steht in keiner Verbindung zum Deutschen
-Wetterdienst und wird nicht von ihm unterstützt. Alle Daten sind © DWD und
-werden gemäß den
-[Nutzungsbedingungen von DWD Open Data](https://www.dwd.de/EN/service/legal_notice/legal_notice_node.html)
-verwendet.
+Dies ist ein Community-Projekt, nicht vom Deutschen Wetterdienst erstellt,
+empfohlen oder unterstützt. Alle Werte beruhen auf Daten des Deutschen
+Wetterdienstes, verwendet unter [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), wie es die
+[rechtlichen Hinweise des DWD](https://www.dwd.de/DE/service/rechtliche_hinweise/rechtliche_hinweise_node.html)
+erlauben. Regenwarnungen sind deine eigenen Regeln, keine amtlichen
+Wetterwarnungen des DWD.
 
 :::

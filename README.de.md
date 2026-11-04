@@ -1,14 +1,30 @@
-# DWD Precipitation
+<div align="center">
 
 [English](https://github.com/Hoffmann77/ha-dwd-precipitation/blob/main/README.md) | **Deutsch**
 
-[![Dokumentation](https://img.shields.io/badge/Doku-online%20lesen-blue.svg)](https://hoffmann77.github.io/ha-dwd-precipitation/de/)
-[![Marketplace und HACS](https://img.shields.io/badge/Marketplace%20%26%20HACS-Standardkatalog-41BDF5.svg)](https://hoffmann77.github.io/ha-dwd-precipitation/de/getting-started/installation)
-[![GitHub Release](https://img.shields.io/github/v/release/Hoffmann77/ha-dwd-precipitation)](https://github.com/Hoffmann77/ha-dwd-precipitation/releases/latest)
-[![Tests](https://github.com/Hoffmann77/ha-dwd-precipitation/actions/workflows/tests.yml/badge.svg)](https://github.com/Hoffmann77/ha-dwd-precipitation/actions/workflows/tests.yml)
-[![HACS Validate](https://github.com/Hoffmann77/ha-dwd-precipitation/actions/workflows/validate.yaml/badge.svg)](https://github.com/Hoffmann77/ha-dwd-precipitation/actions/workflows/validate.yaml)
+# DWD Precipitation
 
-Radarbasierte Niederschlagsmessungen und -vorhersagen des Deutschen Wetterdienstes (DWD), für deinen genauen Standort, direkt in Home Assistant.
+**Radarbasierte Niederschlagsmessungen und -vorhersagen des Deutschen Wetterdienstes (DWD), für deinen genauen Standort, direkt in Home Assistant.**
+
+*Ein Community-Projekt: nicht vom Deutschen Wetterdienst (DWD) erstellt, empfohlen oder unterstützt.*
+
+[![Marketplace und HACS](https://img.shields.io/badge/Marketplace%20%26%20HACS-Standardkatalog-41BDF5.svg?style=flat-square)](https://hoffmann77.github.io/ha-dwd-precipitation/de/getting-started/installation)
+[![GitHub Release](https://img.shields.io/github/v/release/Hoffmann77/ha-dwd-precipitation?include_prereleases&style=flat-square)](https://github.com/Hoffmann77/ha-dwd-precipitation/releases/latest)
+[![Tests](https://img.shields.io/github/actions/workflow/status/Hoffmann77/ha-dwd-precipitation/tests.yml?branch=main&label=tests&style=flat-square)](https://github.com/Hoffmann77/ha-dwd-precipitation/actions/workflows/tests.yml)
+[![HACS Validate](https://img.shields.io/github/actions/workflow/status/Hoffmann77/ha-dwd-precipitation/validate.yaml?branch=main&label=HACS%20validate&style=flat-square)](https://github.com/Hoffmann77/ha-dwd-precipitation/actions/workflows/validate.yaml)
+[![License](https://img.shields.io/github/license/Hoffmann77/ha-dwd-precipitation?style=flat-square)](LICENSE)
+
+[**📖 Doku**](https://hoffmann77.github.io/ha-dwd-precipitation/de/) ·
+[Installation](https://hoffmann77.github.io/ha-dwd-precipitation/de/getting-started/installation) ·
+[Konfiguration](https://hoffmann77.github.io/ha-dwd-precipitation/de/getting-started/configuration) ·
+[Entitäten](https://hoffmann77.github.io/ha-dwd-precipitation/de/entities/overview) ·
+[Regenwarnungen](https://hoffmann77.github.io/ha-dwd-precipitation/de/entities/rain-warnings) ·
+[Häufige Fragen](https://hoffmann77.github.io/ha-dwd-precipitation/de/help/faq) ·
+[Fehlerbehebung](https://hoffmann77.github.io/ha-dwd-precipitation/de/help/troubleshooting)
+
+</div>
+
+---
 
 > [!IMPORTANT]
 > Diese Integration funktioniert **nur** für Standorte **in Deutschland** und in Gebieten direkt an der deutschen Grenze.
@@ -16,8 +32,6 @@ Radarbasierte Niederschlagsmessungen und -vorhersagen des Deutschen Wetterdienst
 
 > [!TIP]
 > **[Zur Dokumentation](https://hoffmann77.github.io/ha-dwd-precipitation/de/)**: jeder Sensor, jede Option, wie alles funktioniert, und Hilfe bei Problemen. Auch [auf Englisch](https://hoffmann77.github.io/ha-dwd-precipitation/).
->
-> [Installation](https://hoffmann77.github.io/ha-dwd-precipitation/de/getting-started/installation) · [Konfiguration](https://hoffmann77.github.io/ha-dwd-precipitation/de/getting-started/configuration) · [Entitäten](https://hoffmann77.github.io/ha-dwd-precipitation/de/entities/overview) · [Regenwarnungen](https://hoffmann77.github.io/ha-dwd-precipitation/de/entities/rain-warnings) · [Häufige Fragen](https://hoffmann77.github.io/ha-dwd-precipitation/de/help/faq) · [Fehlerbehebung](https://hoffmann77.github.io/ha-dwd-precipitation/de/help/troubleshooting)
 
 ## Funktionen
 
@@ -72,9 +86,13 @@ Gib einen Namen ein und wähle den Standort; die [Konfigurationsanleitung](https
 
 ## Datenquelle
 
-Alle Daten stammen vom **DWD (Deutscher Wetterdienst)**:
+Alle Werte beruhen auf Daten des **Deutschen Wetterdienstes (DWD)**, von seinem [Open-Data-Server](https://opendata.dwd.de/):
 
 <img src="docs/assets/dwd-logo.png" alt="Logo des Deutschen Wetterdienstes" width="200"/>
+
+Quelle: Deutscher Wetterdienst, unter [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) ([Rechtliche Hinweise des DWD](https://www.dwd.de/DE/service/rechtliche_hinweise/rechtliche_hinweise_node.html)). Die Integration verarbeitet die Daten: Sie liest die Gitterzelle des Radars, die deinen Standort enthält, und leitet daraus Summen, Spitzenwerte, Beginn und Ende sowie Regenereignisse ab. Jede Entität nennt die Quelle in ihrem Attribut `attribution`: „Based on data from Deutscher Wetterdienst (DWD)“ (Datenbasis: Deutscher Wetterdienst).
+
+Dieses Projekt wird nicht vom DWD erstellt, empfohlen oder unterstützt. Seine **Regenwarnungen** sind Regeln, die du auf die Radarvorhersage des DWD legst, keine amtlichen Wetterwarnungen des DWD; die gibt der DWD selbst auf [dwd.de](https://www.dwd.de/) heraus.
 
 **[Aktueller Status der Radarstationen des DWD](https://www.dwd.de/DE/leistungen/radarniederschlag/rn_info/home_freie_radarstatus_kartendaten.html)**
 

@@ -22,7 +22,11 @@ from homeassistant.helpers.entity_platform import async_get_platforms
 from pytest import approx
 
 from custom_components.dwd_precipitation import PRODUCT_CLASSES
-from custom_components.dwd_precipitation.const import CONF_DRY_STREAK_SOURCE, DOMAIN
+from custom_components.dwd_precipitation.const import (
+    ATTRIBUTION,
+    CONF_DRY_STREAK_SOURCE,
+    DOMAIN,
+)
 from custom_components.dwd_precipitation.coordinator import ProductMetadata
 from custom_components.dwd_precipitation.entity import unique_id_for
 from custom_components.dwd_precipitation.rain_events_tracker import RainEventsTracker
@@ -183,6 +187,21 @@ async def test_radolan_and_hymecng_sensors_show_their_values(make_entry, hass: H
     assert float(_state_for(hass, entry, "radolan_rw").state) == approx(3.2)
     # HymecNG's enum sensor reports the precipitation-type class label.
     assert _state_for(hass, entry, "hymecng_precipitation_type").state == "snow"
+
+
+@pytest.mark.asyncio
+async def test_every_entity_names_dwd_as_its_source(make_entry, hass: HomeAssistant) -> None:
+    """DWD's terms want the source next to the data: every entity carries it."""
+    entry = await _set_up(make_entry, hass)
+
+    entity_ids = [
+        e.entity_id
+        for e in er.async_get(hass).entities.values()
+        if e.config_entry_id == entry.entry_id and not e.disabled
+    ]
+    assert entity_ids
+    for entity_id in entity_ids:
+        assert hass.states.get(entity_id).attributes["attribution"] == ATTRIBUTION, entity_id
 
 
 @pytest.mark.asyncio
