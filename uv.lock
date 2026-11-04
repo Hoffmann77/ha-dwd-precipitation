@@ -21,9 +21,6 @@ conflicts = [[
     { package = "ha-dwd-precipitation", group = "wradlib-comparison" },
 ]]
 
-[manifest]
-overrides = [{ name = "homeassistant", specifier = "==2026.11.0" }]
-
 [[package]]
 name = "acme"
 version = "5.7.0"
@@ -1122,6 +1119,7 @@ source = { virtual = "." }
 [package.dev-dependencies]
 ha-test = [
     { name = "h5py" },
+    { name = "homeassistant" },
     { name = "numpy", version = "2.3.2", source = { registry = "https://pypi.org/simple" } },
     { name = "pytest-homeassistant" },
 ]
@@ -1130,6 +1128,7 @@ lint = [
 ]
 typecheck = [
     { name = "h5py" },
+    { name = "homeassistant" },
     { name = "numpy", version = "2.3.2", source = { registry = "https://pypi.org/simple" } },
     { name = "pyright", extra = ["nodejs"], marker = "extra == 'group-20-ha-dwd-precipitation-ha-test' or extra == 'group-20-ha-dwd-precipitation-typecheck' or (extra == 'group-20-ha-dwd-precipitation-unit-test' and extra == 'group-20-ha-dwd-precipitation-wradlib-comparison') or (extra != 'group-20-ha-dwd-precipitation-unit-test' and extra != 'group-20-ha-dwd-precipitation-wradlib-comparison')" },
     { name = "pytest-homeassistant" },
@@ -1153,12 +1152,14 @@ wradlib-comparison = [
 [package.metadata.requires-dev]
 ha-test = [
     { name = "h5py", specifier = "==3.16.0" },
+    { name = "homeassistant", specifier = "==2026.11.0b6" },
     { name = "numpy", specifier = "==2.3.2" },
     { name = "pytest-homeassistant", specifier = "==2026.11.0b6" },
 ]
 lint = [{ name = "ruff", specifier = "==0.17.1" }]
 typecheck = [
     { name = "h5py", specifier = "==3.16.0" },
+    { name = "homeassistant", specifier = "==2026.11.0b6" },
     { name = "numpy", specifier = "==2.3.2" },
     { name = "pyright", extras = ["nodejs"], specifier = "==1.1.414" },
     { name = "pytest-homeassistant", specifier = "==2026.11.0b6" },
@@ -1255,7 +1256,7 @@ wheels = [
 
 [[package]]
 name = "homeassistant"
-version = "2026.11.0"
+version = "2026.11.0b6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiodns" },
@@ -1309,8 +1310,9 @@ dependencies = [
     { name = "yarl" },
     { name = "zeroconf" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/ef/b6/565a7adb1be95c4e35aa94960c961994b5c821cbc43ee8a5cf5395265636/homeassistant-2026.11.0b6.tar.gz", hash = "sha256:28cf07add87f4b1479d61aaa75c2448f9d3b92e8e3589727b729f0825f2e19c2", size = 42011552, upload-time = "2026-11-04T16:39:34.784Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/28/0a/10c900142dfff3c8bda64e75d0077519c4ee9a3e0f18aabc67c023ac079f/homeassistant-2026.11.0-py3-none-any.whl", hash = "sha256:7ca5fbde9dea879ac7723949fc84347aac5182e6309c357b2e4973fd391b00f7", size = 67607712, upload-time = "2026-11-04T18:00:10.238Z" },
+    { url = "https://files.pythonhosted.org/packages/4f/81/04e5bdcdd3311e12141aea8b5c17832420c06b49d2fb79619eaf2ef11fc3/homeassistant-2026.11.0b6-py3-none-any.whl", hash = "sha256:3a06ec50cbc9a358d1ae0d22bf17fc30c37177b1b039800e21e9e6adf37ef1f0", size = 67604999, upload-time = "2026-11-04T16:39:26.983Z" },
 ]
 
 [[package]]

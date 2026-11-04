@@ -6,11 +6,6 @@ requires-python = ">=3.14.2,<3.15"
 [tool.uv]
 package = false  # not a distributable Python package; test in-place via pythonpath
 
-# pytest-homeassistant (ha-test) pins the HA it was built with, and only
-# betas of 2026.11 are published so far: run them against the final release
-# users have. Drop this once pytest-homeassistant 2026.11.0 is out.
-override-dependencies = ["homeassistant==2026.11.0"]
-
 # Component only runs under HA (Linux/macOS/Windows x86_64); excluding the
 # niche Windows ARM64 slice avoids uv resolving unsatisfiable transitive
 # constraints (e.g. numpy) for a platform nobody targets.
@@ -54,6 +49,9 @@ ha-test = [
     # 2026.11). It pins neither numpy nor h5py, so both are pinned here: numpy
     # is HA's own pin (package_constraints.txt), as in unit-test.
     "pytest-homeassistant==2026.11.0b6",
+    # Its exact pin, spelled out: uv takes a pre-release only when named.
+    # Renovate moves the two in one PR (renovate.json).
+    "homeassistant==2026.11.0b6",
     "numpy==2.3.2",
     "h5py==3.16.0",
 ]

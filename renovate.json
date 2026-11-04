@@ -22,6 +22,11 @@
       "groupName": "h5py"
     },
     {
+      "description": "pytest-homeassistant pins the HA of its own number: move both in one PR",
+      "matchPackageNames": ["pytest-homeassistant", "homeassistant"],
+      "groupName": "Home Assistant"
+    },
+    {
       "description": "numpy follows HA's pin, not PyPI (see pyproject unit-test)",
       "matchManagers": ["pep621"],
       "matchPackageNames": ["numpy"],

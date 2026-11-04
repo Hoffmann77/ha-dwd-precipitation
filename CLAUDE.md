@@ -514,9 +514,9 @@ pyright (basic mode, settings in `pyproject.toml` `[tool.pyright]`) on the
 component. Pyright checks against HA's own types, so it runs in the
 `typecheck` dependency group, which is `ha-test` plus pyright. `ha-test`
 is HA's own plugin, `pytest-homeassistant` (imported as
-`pytest_homeassistant.common`), whose release pins one HA version; while only
-a beta exists for a release, `override-dependencies` in `[tool.uv]` puts the
-final HA under it. It needs `-p no:respx` (in `addopts`), and pins no numpy, so
+`pytest_homeassistant.common`), each release pinning the HA version of the
+same number; Renovate moves it (a beta to its final, a final to the next
+final). It needs `-p no:respx` (in `addopts`), and pins no numpy, so
 `ha-test` pins HA's.
 
 Entities that override `async_added_to_hass` also define
