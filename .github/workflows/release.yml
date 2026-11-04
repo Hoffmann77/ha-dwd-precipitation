@@ -6,6 +6,13 @@ name: Release asset
 #
 # The zip holds the *contents* of custom_components/dwd_precipitation at its
 # root: HACS extracts it straight into config/custom_components/<domain>/.
+#
+# Preferred flow: save the release as a *draft*, then run this workflow with
+# its tag. It builds from the draft's target, attaches the zip and only then
+# publishes, so HACS never sees the release without its asset. (GitHub sends
+# no `created` event for drafts, so this cannot be automatic.) A release
+# published directly still gets its zip from the `published` trigger, a minute
+# or so late. The same manual run backfills an already published release.
 
 on:
   release:
@@ -13,11 +20,14 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing release tag to (re)build the asset for"
+        description: "Tag of a draft to finish, or of a published release to backfill"
         required: true
 
 permissions:
   contents: write
+
+concurrency:
+  group: release-asset-${{ github.event.release.tag_name || inputs.tag }}
 
 jobs:
   zip:
@@ -26,12 +36,34 @@ jobs:
     env:
       TAG: ${{ github.event.release.tag_name || inputs.tag }}
       ASSET: dwd_precipitation.zip
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
     steps:
+      # A draft's tag does not exist until it is published, so build from the
+      # commit the draft targets instead.
+      - name: Look up the release
+        id: release
+        run: |
+          gh release view "$TAG" --json isDraft,targetCommitish,assets > release.json
+          is_draft=$(jq -r .isDraft release.json)
+          has_asset=$(jq --arg a "$ASSET" '[.assets[].name] | index($a) != null' release.json)
+          if [ "$is_draft" = true ]; then
+            ref=$(jq -r .targetCommitish release.json)
+          else
+            ref="refs/tags/$TAG"
+          fi
+          echo "draft=$is_draft" >> "$GITHUB_OUTPUT"
+          echo "has_asset=$has_asset" >> "$GITHUB_OUTPUT"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "::notice::$TAG draft=$is_draft asset_present=$has_asset ref=$ref"
+
       - uses: actions/checkout@v7
+        if: steps.release.outputs.has_asset != 'true'
         with:
-          ref: ${{ env.TAG }}
+          ref: ${{ steps.release.outputs.ref }}
 
       - name: Stamp the release version into manifest.json
+        if: steps.release.outputs.has_asset != 'true'
         run: |
           python - <<'EOF'
           import json, os, pathlib
@@ -44,13 +76,22 @@ jobs:
           EOF
 
       - name: Build the zip
+        if: steps.release.outputs.has_asset != 'true'
         working-directory: custom_components/dwd_precipitation
         run: |
           find . -name __pycache__ -prune -exec rm -rf {} +
           zip -r -X "$GITHUB_WORKSPACE/$ASSET" . -x '*.pyc' 'test.py'
           unzip -l "$GITHUB_WORKSPACE/$ASSET"
 
+      # Never replace an existing asset: re-uploading resets its
+      # download_count, which is the number HACS shows. Delete it by hand
+      # first if a zip really has to be rebuilt.
       - name: Upload to the release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$TAG" "$ASSET" --clobber --repo "$GITHUB_REPOSITORY"
+        if: steps.release.outputs.has_asset != 'true'
+        run: gh release upload "$TAG" "$GITHUB_WORKSPACE/$ASSET"
+
+      # Publishing with GITHUB_TOKEN does not trigger the `published` run
+      # above again. The draft's prerelease flag is kept as set.
+      - name: Publish the draft
+        if: steps.release.outputs.draft == 'true'
+        run: gh release edit "$TAG" --draft=false
