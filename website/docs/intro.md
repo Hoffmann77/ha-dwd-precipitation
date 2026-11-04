@@ -70,8 +70,10 @@ explains the difference.
 
 :::info
 
-This is a community project. It is not affiliated with or endorsed by the
-Deutscher Wetterdienst. All data is © DWD and used under the
-[DWD Open Data terms of use](https://www.dwd.de/EN/service/legal_notice/legal_notice_node.html).
+This is a community project, not made, endorsed or supported by the
+Deutscher Wetterdienst. All values are based on data from Deutscher
+Wetterdienst, used under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) as the
+[DWD legal notice](https://www.dwd.de/EN/service/legal_notice/legal_notice_node.html) allows.
+Rain warnings are your own rules, not official DWD weather warnings.
 
 :::

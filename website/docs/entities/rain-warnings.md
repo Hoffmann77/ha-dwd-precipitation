@@ -11,6 +11,13 @@ only for a heavy burst". Add as many as you like.
 Rain warnings need no blueprint and no template: each one is a device with
 two entities that an automation can trigger on.
 
+:::note
+
+Rain warnings are your own rules on DWD's radar forecast, not official
+weather warnings of the Deutscher Wetterdienst.
+
+:::
+
 ## Adding a warning
 
 Open **Settings > Devices & services > DWD Precipitation**, then select

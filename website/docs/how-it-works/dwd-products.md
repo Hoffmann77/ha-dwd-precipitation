@@ -67,8 +67,14 @@ the integration talks to `opendata.dwd.de` only.
 
 ## Terms of use
 
-The data is © Deutscher Wetterdienst and used under the
-[DWD Open Data terms of use](https://www.dwd.de/EN/service/legal_notice/legal_notice_node.html).
+The data is © Deutscher Wetterdienst and used under
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), as the
+[DWD legal notice](https://www.dwd.de/EN/service/legal_notice/legal_notice_node.html) allows.
+DWD asks for its source next to the data, and for processed data a note
+that it was processed: every entity carries the attribution "Based on data
+from Deutscher Wetterdienst (DWD)", which Home Assistant shows in the
+entity's details. The integration is not made, endorsed or supported by
+the DWD, and its rain warnings are not official DWD weather warnings.
 DWD publishes the
 [current status of its radar stations](https://www.dwd.de/DE/leistungen/radarniederschlag/rn_info/home_freie_radarstatus_kartendaten.html),
 which explains most gaps in the data.

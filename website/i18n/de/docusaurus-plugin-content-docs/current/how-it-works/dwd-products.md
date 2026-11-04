@@ -77,8 +77,15 @@ bleibt. Kein anderer Dienst ist beteiligt: Die Integration spricht nur mit
 
 ## Nutzungsbedingungen {#terms-of-use}
 
-Die Daten sind © Deutscher Wetterdienst und werden gemäß den
-[Nutzungsbedingungen von DWD Open Data](https://www.dwd.de/EN/service/legal_notice/legal_notice_node.html)
-verwendet. Der DWD veröffentlicht den
+Die Daten sind © Deutscher Wetterdienst und werden unter
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) verwendet, wie es die
+[rechtlichen Hinweise des DWD](https://www.dwd.de/DE/service/rechtliche_hinweise/rechtliche_hinweise_node.html)
+erlauben. Der DWD verlangt die Quellenangabe direkt bei den Daten, bei
+verarbeiteten Daten mit einem Hinweis auf die Verarbeitung: Jede Entität
+trägt die Quellenangabe „Based on data from Deutscher Wetterdienst (DWD)“
+(Datenbasis: Deutscher Wetterdienst), die Home Assistant in den Details der
+Entität zeigt. Die Integration wird nicht vom DWD erstellt, empfohlen oder
+unterstützt, und ihre Regenwarnungen sind keine amtlichen Wetterwarnungen
+des DWD. Der DWD veröffentlicht den
 [aktuellen Status seiner Radarstationen](https://www.dwd.de/DE/leistungen/radarniederschlag/rn_info/home_freie_radarstatus_kartendaten.html),
 der die meisten Lücken in den Daten erklärt.
