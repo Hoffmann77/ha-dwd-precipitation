@@ -48,10 +48,10 @@ ha-test = [
     # HA's own test plugin (replaces pytest-homeassistant-custom-component from
     # 2026.11). It pins neither numpy nor h5py, so both are pinned here: numpy
     # is HA's own pin (package_constraints.txt), as in unit-test.
-    "pytest-homeassistant==2026.11.0b6",
+    "pytest-homeassistant==2026.11.0",
     # Its exact pin, spelled out: uv takes a pre-release only when named.
     # Renovate moves the two in one PR (renovate.json).
-    "homeassistant==2026.11.0b6",
+    "homeassistant==2026.11.0",
     "numpy==2.3.2",
     "h5py==3.16.0",
 ]
