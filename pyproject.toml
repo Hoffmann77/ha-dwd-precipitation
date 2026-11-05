@@ -50,7 +50,8 @@ ha-test = [
     # is HA's own pin (package_constraints.txt), as in unit-test.
     "pytest-homeassistant==2026.11.0",
     # Its exact pin, spelled out: uv takes a pre-release only when named.
-    # Renovate moves the two in one PR (renovate.json).
+    # Renovate moves it on pytest-homeassistant's versions, in the same PR
+    # (renovate.json): HA is on PyPI first, its plugin hours later.
     "homeassistant==2026.11.0",
     "numpy==2.3.2",
     "h5py==3.16.0",

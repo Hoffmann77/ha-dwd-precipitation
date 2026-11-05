@@ -544,7 +544,9 @@ is HA's own plugin, `pytest-homeassistant` (imported as
 `pytest_homeassistant.common`), each release pinning the HA version of the
 same number; Renovate moves the two together, to every beta as well as
 every final (`ignoreUnstable: false`), so the suite runs on a release
-before it is out. It needs `-p no:respx` (in `addopts`), and pins no numpy, so
+before it is out. Renovate tracks only the plugin's versions, and a custom
+manager moves the `homeassistant` pin on them: HA reaches PyPI hours before
+its plugin, and a group alone would bump HA by itself in the meantime. It needs `-p no:respx` (in `addopts`), and pins no numpy, so
 `ha-test` pins HA's.
 
 Keep pyright at 0

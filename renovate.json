@@ -9,6 +9,15 @@
       "matchStrings": ["\"(?<depName>h5py)>=(?<currentValue>[^\"]+)\""],
       "datasourceTemplate": "pypi",
       "versioningTemplate": "pep440"
+    },
+    {
+      "description": "The homeassistant pin follows pytest-homeassistant, which pins the HA of its own number and is published hours after it: tracking the plugin's versions moves the pin only once both exist",
+      "customType": "regex",
+      "managerFilePatterns": ["/(^|/)pyproject\\.toml$/"],
+      "matchStrings": ["\"homeassistant==(?<currentValue>[^\"]+)\""],
+      "depNameTemplate": "pytest-homeassistant",
+      "datasourceTemplate": "pypi",
+      "versioningTemplate": "pep440"
     }
   ],
   "packageRules": [
@@ -22,10 +31,16 @@
       "groupName": "h5py"
     },
     {
-      "description": "pytest-homeassistant pins the HA of its own number: move both in one PR, betas included, so the suite runs on a release before it is out",
-      "matchPackageNames": ["pytest-homeassistant", "homeassistant"],
+      "description": "pytest-homeassistant pins the HA of its own number: one PR moves both pins (homeassistant through the custom manager), betas included, so the suite runs on a release before it is out",
+      "matchPackageNames": ["pytest-homeassistant"],
       "groupName": "Home Assistant",
       "ignoreUnstable": false
+    },
+    {
+      "description": "homeassistant moves with the custom manager: on its own PyPI versions it would be bumped before its test plugin exists",
+      "matchManagers": ["pep621"],
+      "matchPackageNames": ["homeassistant"],
+      "enabled": false
     },
     {
       "description": "numpy follows HA's pin, not PyPI (see pyproject unit-test)",
