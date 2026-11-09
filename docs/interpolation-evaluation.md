@@ -1,6 +1,7 @@
 # Interpolation evaluation: design
 
-Status: **design agreed, not yet implemented.**
+Status: **design agreed; implementation in progress** (see "Implementation
+order" at the end).
 
 ## Question
 
@@ -40,7 +41,8 @@ in it ships with the integration.
   5-minute accumulation (`ACRR`, mm). Lead L covers T+L-5 to T+L.
 - **Kept on OpenData for ~48 h** (576 files per product observed on
   2026-10-09). Anything not logged within that window is lost for good.
-- 0.8 MB (dry) to ~6 MB (wet) per tar.
+- 0.9 to 4.9 MB per tar, 2.25 MB on average (all 576 files on OpenData on
+  2026-11-09).
 
 ### Gauges
 
@@ -52,7 +54,9 @@ in it ships with the integration.
   in-situ measurements, not radar or satellite derived.
 - Positions from the station description / `Metadaten_Geographie_*` (4
   decimals, ~10 m). **Not** from the instrument metadata, which has only 2
-  decimals (~1 km). Positions are matched by date range, since stations move.
+  decimals (~1 km). Stations move now and then; the selection takes only
+  stations at their current position since 2025, so one position per station
+  holds for the whole evaluation.
 - To verify during implementation: whether `MESS_DATUM` labels the start or
   the end of each minute. An off-by-one here shifts every pairing by a minute.
 
@@ -65,7 +69,7 @@ three jobs internally.
 
 | Job | When (UTC) | What |
 |---|---|---|
-| Radar | every 5 min | List RV on OpenData; for every release of the last 48 h not yet in the database, download, read the 5x5 window around each station for all 25 members, write. |
+| Radar | every 5 min | List RV on OpenData; for every release of the last 48 h not yet in the database, download the whole tar, read each of the 25 members once, cut the 5x5 window around each station out of it, write. |
 | Gauges | daily, after 03:30 | Refresh the last few days of 1-minute data from `recent/` (updated ~02:00), sum to 5-minute windows, upsert. |
 | Evaluate | from the 3rd of each month, 04:00 | For every completed month without a result, score it, write `results/YYYY-MM.json` + `.md`, commit and push to the `eval-results` branch. |
 
@@ -80,15 +84,37 @@ A tar is written to a temp file and only marked as logged once every member
 has been read, so an interrupted download never looks like data. A failing
 job is logged and retried on its next turn; it never stops the process.
 
+### Reading the grid
+
+Each member is read **whole, once** (`read_odim_composite` from
+`radar/odim.py`, the reader the test tiers use as their oracle), and the
+windows of all stations are cut out of that array. Reading 150 small slices
+instead would make libhdf5 inflate the grid's single compressed chunk once
+per slice (it is larger than h5py's default chunk cache), i.e. 150 times per
+member instead of once.
+
+The station's cell is found **on the grid the file itself describes**
+(`read_odim_grid`, `Grid.cell`), as the integration does (ADR 0010), not on a
+copy of DWD's grid. Each distinct grid is stored once (`grids`), with every
+station's cell and its position inside the cell on it (`station_cells`), and
+each release points at the grid it was read on. If DWD ever moves or resizes
+the grid, old and new releases both stay correct.
+
 ## Database (SQLite, WAL mode)
 
 ```
-stations(station_id PK, name, lat, lon, altitude, row, col,
-         frac_x, frac_y,            -- position inside the cell, 0..1
-         valid_from, valid_to)
+stations(station_id PK, name, lat, lon, altitude, state)
+
+grids(grid_id PK, description UNIQUE)   -- the file's /where, as JSON
+
+station_cells(grid_id, station_id,
+              row, col,             -- the cell holding the station
+              frac_x, frac_y,       -- position inside it: 0 = west/south edge
+              PRIMARY KEY (grid_id, station_id))
 
 releases(release PK,                -- nominal release time, UTC
-         logged_at, n_members)      -- n_members < 25 means a damaged release
+         grid_id, logged_at,
+         n_members)                 -- n_members < 25 means a damaged release
 
 radar(release, lead, station_id,
       c00 .. c44,                   -- 5x5 window, row-major, centre = c22
@@ -108,10 +134,26 @@ gauge(station_id, window_end,       -- 5-minute window ending at window_end
   lost — misses (dry forecast, wet gauge) are reconstructed at evaluation.
 - Pairing: radar row (release T, lead L) is compared with the gauge window
   ending at T+L.
+- A station whose 5x5 window does not fit on the grid (too close to its edge)
+  is left out of that grid's `station_cells` and so never logged.
+
+Connection settings, applied on every open:
+
+- `journal_mode=WAL`, so the evaluation can read while the radar job writes;
+  `synchronous=NORMAL` (safe with WAL, and much faster); a `busy_timeout`, so
+  concurrent access waits instead of failing.
+- **One transaction per release:** all its rows and its `releases` entry are
+  written together, so a release is stored completely or not at all.
+- `STRICT` tables, so a value of the wrong type is refused rather than stored.
+- `INSERT ... ON CONFLICT DO UPDATE` for gauge data, which `recent/` revises.
+- The schema version lives in `PRAGMA user_version`; the service creates or
+  migrates the schema itself on start-up.
+
+Python's built-in `sqlite3`, plain SQL, no ORM.
 
 Estimated size (not yet measured): ~3-5 GB per year with the sparse rule; the
-gauge table is negligible. Download traffic is the larger cost, ~10-20 GB per
-month, independent of the window size.
+gauge table is negligible. Download traffic is the larger cost: 288 tars a
+day at ~2.25 MB is ~20 GB per month, independent of the window size.
 
 ## Evaluation
 
@@ -190,10 +232,20 @@ this repository only; nothing is pushed to `main`.
 - Integration code is reused directly (`from radar.odim import ...` with
   `custom_components/dwd_precipitation` on `PYTHONPATH`, as the parser tests
   do), so Home Assistant is never imported.
-- Configuration through environment variables in the compose file, all with
-  defaults: data directory, push target (branch `eval-results`), git author.
-- Volumes: `./data` -> `/data` (SQLite, on the host disk); the deploy key
-  mounted read-only.
+- Configuration through environment variables, all with defaults, set in an
+  optional `.env` file next to `compose.yaml`:
+
+  | Variable | Default | What |
+  |---|---|---|
+  | `PRECIP_EVAL_DATA` | `./data` | Host directory for the SQLite database |
+  | `PRECIP_EVAL_DEPLOY_KEY` | `./deploy_key` | Host path of the deploy key's private half |
+  | `PRECIP_EVAL_UID` / `PRECIP_EVAL_GID` | `1000` | User the container runs as; must be able to write the data directory |
+
+- Volumes: the data directory -> `/data`; the deploy key, read-only.
+- **The data directory must be on a local disk**, not a network share
+  (NFS/SMB): SQLite's WAL mode relies on file locking and shared memory that
+  network file systems do not provide reliably.
+- The container runs as a non-root user (the UID above).
 - `TZ=UTC`; logs go to stdout (`docker compose logs`). A Docker healthcheck
   reads a heartbeat the scheduler writes each loop, so a hung process shows
   as `unhealthy` and is visible in `docker ps`.
@@ -214,23 +266,26 @@ has to be run by hand on the server.
 ## Repository layout
 
 ```
-custom_components/dwd_precipitation/radar/odim.py
-    + read_odim_composite_window()   one hyperslab read for a window;
-                                     reused later by an interpolation option
 scripts/precip_eval/                 package: __main__ (the scheduler loop,
                                      the container's only entry point), db,
-                                     rv, gauges, stations, metrics, report,
-                                     publish (git push)
+                                     radar_job, windows, scheduler, stations;
+                                     later gauges, metrics, report, publish
 scripts/precip_eval/stations.csv     the committed station list
+scripts/precip_eval/select_stations.py
+                                     development tool that generates it
 deploy/precip-eval/                  Dockerfile, compose.yaml
-tests/precip_eval/                   window read, pairing, sparse rule,
-                                     metrics on synthetic data
+tests/precip_eval/                   windows, sparse rule, database, radar
+                                     job against the RV fixture; run with the
+                                     parser tier in CI
 ```
+
+The integration's code is not changed: the evaluation only imports
+`radar.odim` and `radar.urls`.
 
 ## Implementation order
 
-1. `read_odim_composite_window` + tests against the existing fixture.
-2. Station selection → commit `stations.csv`.
+1. Windows on the file's own grid + tests against the RV fixture.
+2. Station selection -> commit `stations.csv`.
 3. Scheduler loop + radar job with gap-filling; tested against live OpenData.
 4. Dockerfile + compose; deploy, logging starts (the 48 h window makes this
    the urgent part). Gauges and evaluate are no-ops until implemented.
