@@ -25,7 +25,7 @@ in it ships with the integration.
 | Cadence | **Every release** (5 min) | |
 | Stations | **~150, selected automatically**, stratified over region and altitude, fixed seed; list committed as `stations.csv` | Representative and reproducible. |
 | Ground truth | **DWD CDC 1-minute precipitation**, summed to the RV step window | Matches RV's 5-minute steps exactly; the 10-minute series would force pairs of steps. |
-| Gauge source | `recent/` (daily, rolling ~500 days) | Gauge data never expires within the evaluation window, so it is fetched after the fact rather than logged live. |
+| Gauge source | `now/` (yesterday and today, hourly), `recent/` for older days | Gauge data does not expire like RV, so it needs no live logging; `now/` is small and follows DWD's revisions, `recent/` (~5 MB per station) only fills days the service was not running for. |
 | Gauge QC | **`QN = 3` only** (automatic control and correction) | `recent/` has not had DWD's manual QC; `historical/` (yearly) has. |
 | Re-evaluation | **None.** Results stay as first computed from `recent/`; each result records that. | |
 | Winter | **December-February reported as a separate block** | Weighing gauges under-catch snow. A split by sub-zero hours would need a second dataset (CDC air temperature) and is deferred. |
@@ -46,10 +46,14 @@ in it ships with the integration.
 
 ### Gauges
 
-- `https://opendata.dwd.de/climate_environment/CDC/observations_germany/climate/1_minute/precipitation/recent/`
-- One zip per station (`1minutenwerte_nieder_<id>_akt.zip`); 1,370 stations
-  had current 1-minute data on 2026-10-09.
-- Columns: `STATIONS_ID;MESS_DATUM;QN;RS_01;RS_IND_01`, UTC, mm in 0.01 steps.
+- `https://opendata.dwd.de/climate_environment/CDC/observations_germany/climate/1_minute/precipitation/`
+  `now/` and `recent/`, one zip per station (`1minutenwerte_nieder_<id>_now.zip`
+  / `_akt.zip`); 1,370 stations had current 1-minute data on 2026-10-09.
+- `now/` (~8 KB) holds yesterday 00:00 to about half an hour ago, refreshed
+  hourly. `recent/` (~5.2 MB) holds 2023-01-01 to yesterday, refreshed daily.
+- Columns: `STATIONS_ID;MESS_DATUM;QN;RS_01;RS_IND_01`, UTC, mm in 0.01 steps,
+  `-999` for a missing value. The newest minutes come as QN 2 and become QN 3
+  within hours, once DWD's automatic check has run.
 - Weighing gauges (e.g. OTT Pluvio, rain[e]H3), opening 1 m above ground —
   in-situ measurements, not radar or satellite derived.
 - Positions from the station description / `Metadaten_Geographie_*` (4
@@ -57,8 +61,16 @@ in it ships with the integration.
   decimals (~1 km). Stations move now and then; the selection takes only
   stations at their current position since 2025, so one position per station
   holds for the whole evaluation.
-- To verify during implementation: whether `MESS_DATUM` labels the start or
-  the end of each minute. An off-by-one here shifts every pairing by a minute.
+- **What the timestamp means depends on the instrument** (the dataset
+  description, "Considerations for applications"): for rain[e]H3 it is the
+  end of the minute; an OTT Pluvio lags about 5 minutes, so its value
+  stamped 11:50 belongs to 11:45 (DWD stations since November 2008). Of the
+  150 stations, 122 have a rain[e]H3 now, 25 an OTT Pluvio (Pluvio, Pluvio²,
+  L, S) and 3 an RG 100; many switched from Pluvio to rain[e]H3 in 2019-2020.
+  Windows are therefore stored as stamped, and the instrument history kept
+  next to them; the evaluation shifts Pluvio windows by one step, and also
+  measures the lag itself (radar lead 0 against the gauge at -10..+10 min)
+  per instrument, so a wrong assumption shows instead of skewing the scores.
 
 ## Pipeline
 
@@ -70,7 +82,7 @@ three jobs internally.
 | Job | When (UTC) | What |
 |---|---|---|
 | Radar | every 5 min | List RV on OpenData; for every release of the last 48 h not yet in the database, download the whole tar, read each of the 25 members once, cut the 5x5 window around each station out of it, write. |
-| Gauges | daily, after 03:30 | Refresh the last few days of 1-minute data from `recent/` (updated ~02:00), sum to 5-minute windows, upsert. |
+| Gauges | every 3 h, at :20 | Per station: read `now/`, sum to 5-minute windows, upsert; any complete day before yesterday still missing comes from `recent/`, at most once a day per station. Refreshes the instrument history once a day. Starts once a release is logged, from that day on. |
 | Evaluate | from the 3rd of each month, 04:00 | For every completed month without a result, score it, write `results/YYYY-MM.json` + `.md`, commit and push to the `eval-results` branch. |
 
 **Every job is "catch up", not "run at time X".** Each one works out from the
@@ -120,9 +132,18 @@ radar(release, lead, station_id,
       c00 .. c44,                   -- 5x5 window, row-major, centre = c22
       PRIMARY KEY (release, lead, station_id))
 
-gauge(station_id, window_end,       -- 5-minute window ending at window_end
-      mm, qn, n_minutes,            -- n_minutes < 5 means incomplete
+gauge(station_id, window_end,       -- minutes stamped window_end-4 .. window_end
+      amount,                       -- hundredths of a mm (the gauge's resolution)
+      qn,                           -- lowest quality level of its minutes
+      n_minutes,                    -- minutes with a value; < 5 means incomplete
       PRIMARY KEY (station_id, window_end))
+
+gauge_days(station_id, day,         -- a UTC day read from a file covering it
+           source, fetched_at)      -- whole: a window missing then has no value
+
+instruments(station_id, valid_from, valid_to, name)
+
+job_state(key, value)               -- when a rate-limited fetch was last done
 ```
 
 - Cell values are stored as **integer thousandths of a mm** (the ODIM
@@ -134,7 +155,8 @@ gauge(station_id, window_end,       -- 5-minute window ending at window_end
   "not read". Nothing is
   lost — misses (dry forecast, wet gauge) are reconstructed at evaluation.
 - Pairing: radar row (release T, lead L) is compared with the gauge window
-  ending at T+L.
+  ending at T+L, or at T+L+5 min for a station that had an OTT Pluvio that
+  day. A day's windows end after its midnight and at the next one.
 - A station whose 5x5 window does not fit on the grid (too close to its edge)
   is left out of that grid's `station_cells` and so never logged.
 
@@ -146,7 +168,9 @@ Connection settings, applied on every open:
 - **One transaction per release:** all its rows and its `releases` entry are
   written together, so a release is stored completely or not at all.
 - `STRICT` tables, so a value of the wrong type is refused rather than stored.
-- `INSERT ... ON CONFLICT DO UPDATE` for gauge data, which `recent/` revises.
+- `INSERT ... ON CONFLICT DO UPDATE` for gauge data: a window read again from
+  `now/` replaces the stored one, so the last revision DWD published while
+  the day was in `now/` is the one kept (no later re-evaluation).
 - The schema version lives in `PRAGMA user_version`; the service creates or
   migrates the schema itself on start-up.
 
@@ -307,5 +331,8 @@ The integration's code is not changed: the evaluation only imports
 4. **Done.** Dockerfile + compose; built and run locally (data directory
    ownership, clean stop, resume after restart, healthcheck). Deploy, and
    logging starts — the 48 h window makes this the urgent part.
-5. Gauge job.
+5. **Done.** Gauge job: `now/` every 3 h, `recent/` for older gaps,
+   instrument history; tested against live files. The first start fetches
+   `recent/` once per station (~780 MB for 150) for the days logged before
+   the gauge job first ran.
 6. Evaluate job + report + push; first result once a full month is logged.

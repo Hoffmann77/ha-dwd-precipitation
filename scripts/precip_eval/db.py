@@ -69,6 +69,50 @@ MIGRATIONS: tuple[str, ...] = (
         PRIMARY KEY (release, lead, station_id)
     ) STRICT, WITHOUT ROWID;
     """,
+    """
+    -- 5-minute gauge sums from DWD's 1-minute series, each window ending at
+    -- window_end (Unix seconds UTC) and holding the minutes stamped
+    -- window_end-4 min .. window_end, as DWD stamps them: unshifted, whatever
+    -- the instrument (see instruments). amount is in hundredths of a mm, the
+    -- gauge's resolution; qn the lowest quality level of its minutes;
+    -- n_minutes how many of its 5 minutes have a value.
+    CREATE TABLE gauge (
+        station_id INTEGER NOT NULL,
+        window_end INTEGER NOT NULL,
+        amount     INTEGER NOT NULL,
+        qn         INTEGER NOT NULL,
+        n_minutes  INTEGER NOT NULL,
+        PRIMARY KEY (station_id, window_end)
+    ) STRICT, WITHOUT ROWID;
+
+    -- The UTC days whose windows were all read from a file covering the whole
+    -- day: a window missing on such a day has no value, not "not fetched".
+    CREATE TABLE gauge_days (
+        station_id INTEGER NOT NULL,
+        day        TEXT NOT NULL,      -- YYYY-MM-DD
+        source     TEXT NOT NULL,      -- 'now' or 'recent'
+        fetched_at INTEGER NOT NULL,
+        PRIMARY KEY (station_id, day)
+    ) STRICT, WITHOUT ROWID;
+
+    -- Each station's precipitation instrument history (DWD's
+    -- Metadaten_Geraete_Niederschlagshoehe). What a timestamp means depends on
+    -- it: rain[e]H3 stamps the end of the minute, OTT Pluvio lags about 5 min.
+    CREATE TABLE instruments (
+        station_id INTEGER NOT NULL,
+        valid_from TEXT NOT NULL,      -- YYYYMMDD
+        valid_to   TEXT NOT NULL,      -- YYYYMMDD, as DWD gives it
+        name       TEXT NOT NULL,
+        PRIMARY KEY (station_id, valid_from)
+    ) STRICT, WITHOUT ROWID;
+
+    -- When something was last done, for the jobs that must not repeat it on
+    -- every turn (key -> Unix seconds).
+    CREATE TABLE job_state (
+        key   TEXT PRIMARY KEY,
+        value INTEGER NOT NULL
+    ) STRICT;
+    """,
 )
 
 SCHEMA_VERSION = len(MIGRATIONS)
@@ -190,4 +234,78 @@ def store_release(
         conn.execute(
             "INSERT INTO releases (release, grid_id, logged_at, leads_present) VALUES (?, ?, ?, ?)",
             (release, grid, logged_at, leads_present),
+        )
+
+
+def first_release(conn: sqlite3.Connection) -> int | None:
+    """Return the oldest logged release (Unix seconds), None before the first."""
+    return conn.execute("SELECT min(release) FROM releases").fetchone()[0]
+
+
+def job_state(conn: sqlite3.Connection, key: str) -> int | None:
+    """Return when ``key`` was last done (Unix seconds), None if never."""
+    row = conn.execute("SELECT value FROM job_state WHERE key = ?", (key,)).fetchone()
+    return None if row is None else row[0]
+
+
+def set_job_state(conn: sqlite3.Connection, key: str, value: int) -> None:
+    """Record that ``key`` was done at ``value`` (Unix seconds)."""
+    conn.execute(
+        "INSERT INTO job_state (key, value) VALUES (?, ?)"
+        " ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+        (key, value),
+    )
+
+
+def complete_days(conn: sqlite3.Connection, station_id: int) -> set[str]:
+    """Return the days (YYYY-MM-DD) a station's gauge windows are complete for."""
+    return {
+        d for (d,) in conn.execute("SELECT day FROM gauge_days WHERE station_id = ?", (station_id,))
+    }
+
+
+def store_gauge(
+    conn: sqlite3.Connection,
+    station_id: int,
+    windows: Iterable[tuple[int, int, int, int]],
+    days: Iterable[str],
+    source: str,
+    fetched_at: int,
+) -> None:
+    """Store a station's gauge windows and the days they complete, together.
+
+    ``windows`` are (window_end, amount, qn, n_minutes). A window read again
+    replaces the stored one: DWD revises its newest minutes, and raises their
+    quality level once checked.
+
+    """
+    with transaction(conn):
+        conn.executemany(
+            """
+            INSERT INTO gauge (station_id, window_end, amount, qn, n_minutes)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT (station_id, window_end) DO UPDATE SET
+                amount = excluded.amount, qn = excluded.qn, n_minutes = excluded.n_minutes
+            """,
+            [(station_id, *w) for w in windows],
+        )
+        conn.executemany(
+            """
+            INSERT INTO gauge_days (station_id, day, source, fetched_at) VALUES (?, ?, ?, ?)
+            ON CONFLICT (station_id, day) DO UPDATE SET
+                source = excluded.source, fetched_at = excluded.fetched_at
+            """,
+            [(station_id, d, source, fetched_at) for d in days],
+        )
+
+
+def store_instruments(
+    conn: sqlite3.Connection, station_id: int, periods: Iterable[tuple[str, str, str]]
+) -> None:
+    """Replace a station's instrument history with ``periods`` (from, to, name)."""
+    with transaction(conn):
+        conn.execute("DELETE FROM instruments WHERE station_id = ?", (station_id,))
+        conn.executemany(
+            "INSERT INTO instruments (station_id, valid_from, valid_to, name) VALUES (?, ?, ?, ?)",
+            [(station_id, *p) for p in periods],
         )

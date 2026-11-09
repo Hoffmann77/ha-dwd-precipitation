@@ -14,7 +14,7 @@ import signal
 import threading
 from datetime import timedelta
 
-from . import db, radar_job
+from . import db, gauges, radar_job
 from .config import Config
 from .scheduler import Job, run_forever, touch
 from .stations import load_stations
@@ -57,6 +57,14 @@ def main() -> None:
             # past each 5-minute mark finds the release of the mark before.
             interval=timedelta(minutes=5),
             offset=timedelta(seconds=30),
+        ),
+        Job(
+            "gauges",
+            lambda: gauges.run(conn, session, stations, stop),
+            # now/ is refreshed hourly and holds yesterday and today, so every
+            # 3 hours keeps each day's final revision with a day to spare.
+            interval=timedelta(hours=3),
+            offset=timedelta(minutes=20),
         ),
     ]
     run_forever(jobs, stop, config.heartbeat)
