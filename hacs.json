@@ -2,5 +2,9 @@
   "name": "DWD Precipitation",
   "render_readme": true,
   "content_in_root": false,
-  "country": "DE"
+  "zip_release": true,
+  "filename": "dwd_precipitation.zip",
+  "hide_default_branch": true,
+  "country": "DE",
+  "homeassistant": "2025.4.0"
 }

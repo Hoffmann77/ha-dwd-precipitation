@@ -1,0 +1,22 @@
+{
+  "title": {
+    "message": "DWD Precipitation",
+    "description": "The title in the navbar"
+  },
+  "item.label.Docs": {
+    "message": "Doku",
+    "description": "Navbar item with label Docs"
+  },
+  "item.label.Development": {
+    "message": "Entwicklung",
+    "description": "Navbar item with label Development"
+  },
+  "item.label.Changelog": {
+    "message": "Versionshinweise",
+    "description": "Navbar item with label Changelog"
+  },
+  "item.label.GitHub": {
+    "message": "GitHub",
+    "description": "Navbar item with label GitHub"
+  }
+}

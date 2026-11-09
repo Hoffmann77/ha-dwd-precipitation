@@ -1,0 +1,43 @@
+name: Docs build
+
+# Builds the documentation site (website/, both locales) on every PR that
+# touches it, so a broken link, a broken sidebar or a page that does not
+# compile fails here rather than in the release deploy. The en/de page parity
+# is a pytest in tests/parser/ (tests.yml).
+
+on:
+  pull_request:
+    paths:
+      - "website/**"
+      - "docs/adr/**"
+      - ".github/workflows/docs-*.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build docs
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: website/.nvmrc
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      # onBrokenLinks/onBrokenAnchors/onBrokenMarkdownLinks are "throw" in
+      # docusaurus.config.js, so this fails on any of them.
+      - name: Build (en + de)
+        run: npm run build

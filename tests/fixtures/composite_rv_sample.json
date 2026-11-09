@@ -1,0 +1,24 @@
+{
+  "product": "rv",
+  "source_ts": "2026-10-13T18:45:00Z",
+  "member": "_000 (the analysis)",
+  "cells": [
+    {
+      "kind": "wet",
+      "row": 584,
+      "col": 247,
+      "lat": 51.049048818981774,
+      "lon": 5.972303091403009,
+      "value": 1.544
+    },
+    {
+      "kind": "nodata",
+      "row": 0,
+      "col": 0,
+      "lat": 55.858389752371465,
+      "lon": 1.4721964849605338,
+      "value": null
+    }
+  ],
+  "note": "lat/lon is the centre of (row, col); value is what the production reader returns there (mm, None for nodata) for RV, the raw class index for HymecNG."
+}

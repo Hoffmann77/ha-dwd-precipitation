@@ -1,6 +1,6 @@
 [project]
 name = "ha-dwd-precipitation"
-version = "2026.10.0"
+version = "2026.11.0"
 requires-python = ">=3.14.2,<3.15"
 
 [tool.uv]
@@ -21,6 +21,11 @@ conflicts = [
         { group = "ha-test" },
         { group = "wradlib-comparison" },
     ],
+    [
+        { group = "unit-test" },
+        { group = "typecheck" },
+        { group = "wradlib-comparison" },
+    ],
 ]
 
 [dependency-groups]
@@ -28,7 +33,10 @@ conflicts = [
 # numpy/aiohttp are pulled so radar/* and utils.py import without HA installed.
 unit-test = [
     "pytest",
-    "numpy",
+    # HA's own pin, so the parser tier decodes with the numpy users run.
+    # Renovate leaves it alone; tests/integration/test_dependencies.py fails
+    # when a HA bump moves numpy, which is the cue to update it here.
+    "numpy==2.3.2",
     "aiohttp",
     "requests==2.34.2",
     "h5py==3.16.0",
@@ -37,18 +45,55 @@ unit-test = [
 # Installs only HA-compatible packages — validates the component runs in the
 # same environment HA uses (same Python version, same numpy/h5py pins).
 ha-test = [
-    "pytest-homeassistant-custom-component==0.13.372",
+    # HA's own test plugin (replaces pytest-homeassistant-custom-component from
+    # 2026.11). It pins neither numpy nor h5py, so both are pinned here: numpy
+    # is HA's own pin (package_constraints.txt), as in unit-test.
+    "pytest-homeassistant==2026.11.0",
+    # Its exact pin, spelled out: uv takes a pre-release only when named.
+    # Renovate moves the two in one PR (renovate.json).
+    "homeassistant==2026.11.0",
+    "numpy==2.3.2",
     "h5py==3.16.0",
+]
+
+# Pyright against HA's own types, so it needs the HA environment. The nodejs
+# extra bundles Node, so nothing is downloaded when pyright runs.
+typecheck = [
+    { include-group = "ha-test" },
+    "pyright[nodejs]==1.1.414",
 ]
 
 # Installs wradlib (+ pyproj, scipy, etc.) for parser comparison tests.
 # Kept separate because wradlib's heavy deps are not part of the HA ecosystem.
 wradlib-comparison = [
     "pytest",
-    "wradlib==2.9.6",
+    "wradlib==2.9.8",
     "requests==2.34.2",
     "h5py==3.16.0",
 ]
+
+# Lint only: ruff, nothing imported. Not in the conflicts list above, so it
+# can be synced on its own (`uv run --only-group lint ruff check`).
+lint = [
+    "ruff==0.17.3",
+]
+
+[tool.ruff]
+target-version = "py314"
+
+[tool.ruff.lint]
+# Pyflakes only for now: undefined and unused names. Broader rule sets later.
+select = ["F"]
+
+[tool.pyright]
+# Run in the ha-test environment (HA's own types): see the typecheck CI job.
+include = ["custom_components"]
+pythonVersion = "3.14"
+typeCheckingMode = "basic"
+# HA entities override entity_description and its cached properties
+# (available, is_on, extra_state_attributes, ...) with plain properties by
+# design; HA type-checks that pattern with mypy, which accepts it.
+reportIncompatibleVariableOverride = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -56,7 +101,19 @@ testpaths = ["tests"]
 # "custom_components/dwd_precipitation" allows `from radar.odim import` without triggering
 # the HA-importing custom_components/dwd_precipitation/__init__.py (used in wradlib job).
 pythonpath = [".", "custom_components/dwd_precipitation"]
+# Network tests only when asked for (`-m live`, as the scheduled workflows
+# do); a mistyped marker is an error, not a silent no-op.
+# -p no:respx: HA installs its httpx alias at import, which fails once respx
+# has imported httpx (pytest-homeassistant's README asks for this).
+addopts = "-m 'not live' --strict-markers -p no:respx"
+# As pytest-homeassistant's README asks.
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+# Both are pytest-asyncio's, which only the ha-test group installs.
+filterwarnings = [
+    "ignore:Unknown config option. asyncio_mode:pytest.PytestConfigWarning",
+    "ignore:Unknown config option. asyncio_default_fixture_loop_scope:pytest.PytestConfigWarning",
+]
 markers = [
     "live: requires network access to DWD OpenData (scheduled, not on PRs)",
     "wradlib: requires wradlib installed",

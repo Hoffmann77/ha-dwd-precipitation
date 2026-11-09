@@ -1,7 +1,8 @@
 name: HA version compatibility
 
-# Version-drift monitor: runs the integration tier against the pinned, latest,
-# and dev pytest-homeassistant-custom-component (which tracks HA releases).
+# Version-drift monitor: runs the integration tier against the latest and dev
+# HA release, with the pytest-homeassistant built for it. The version
+# pyproject pins is what tests.yml runs on every PR and push to main.
 # Scheduled (never gates PRs); opens/updates a tracking issue on failure.
 on:
   schedule:
@@ -16,34 +17,33 @@ jobs:
   ha-compat:
     name: Integration @ ${{ matrix.name }}
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     continue-on-error: ${{ matrix.experimental }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: pinned
-            phacc: "==0.13.336"
-            ha_dev: false
-            experimental: false
           - name: latest
-            phacc: ""
             ha_dev: false
             experimental: false
           - name: dev
-            phacc: ""
             ha_dev: true
             experimental: true
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
       - name: Install HA test dependencies
-        run: uv sync --only-group ha-test
-      - name: Override HA test library version
+        run: uv sync --locked --only-group ha-test
+      - name: Upgrade the HA test library
         run: |
-          if [ -n "${{ matrix.phacc }}" ]; then
-            uv pip install "pytest-homeassistant-custom-component${{ matrix.phacc }}"
-          else
-            uv pip install -U pytest-homeassistant-custom-component
+          # The plugin pins the HA it was built with, so pick the one for the
+          # latest HA release, or its newest beta until that is out. Never a
+          # bare -U: the newest *stable* pytest-homeassistant on PyPI was an
+          # unrelated 2020 package (0.1.3) until 2026.11.0 is published.
+          HA=$(curl -fsS https://pypi.org/pypi/homeassistant/json | jq -r .info.version)
+          if ! uv pip install "pytest-homeassistant==$HA"; then
+            echo "homeassistant==$HA" > "$RUNNER_TEMP/ha-override.txt"
+            uv pip install --prerelease=allow --override "$RUNNER_TEMP/ha-override.txt" "pytest-homeassistant<=$HA"
           fi
           if [ "${{ matrix.ha_dev }}" = "true" ]; then
             uv pip install -U "homeassistant @ git+https://github.com/home-assistant/core@dev" || true
@@ -59,7 +59,7 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           TITLE="HA compatibility check failing (${{ matrix.name }})"
-          BODY="The integration tier failed against the ${{ matrix.name }} pytest-homeassistant-custom-component. A newer HA release may have broken the integration. Run: $RUN_URL"
+          BODY="The integration tier failed against the ${{ matrix.name }} Home Assistant. A newer HA release may have broken the integration. Run: $RUN_URL"
           num=$(gh issue list --state open --search "$TITLE in:title" --json number --jq '.[0].number // empty')
           if [ -n "$num" ]; then
             gh issue comment "$num" --body "$BODY"
