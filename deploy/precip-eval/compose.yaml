@@ -1,0 +1,25 @@
+# The interpolation evaluation service: start once with `docker compose up -d`
+# in this directory; it then runs on its own (docs/interpolation-evaluation.md).
+# Settings go in an optional .env file next to this one.
+services:
+  precip-eval:
+    build:
+      context: ../..
+      dockerfile: deploy/precip-eval/Dockerfile
+      args:
+        PRECIP_EVAL_COMMIT: ${PRECIP_EVAL_COMMIT:-unknown}
+    image: precip-eval
+    restart: unless-stopped
+    environment:
+      PRECIP_EVAL_UID: ${PRECIP_EVAL_UID:-1000}
+      PRECIP_EVAL_GID: ${PRECIP_EVAL_GID:-1000}
+    volumes:
+      # The SQLite database. Must be a local disk, not a network share.
+      - ${PRECIP_EVAL_DATA:-./data}:/data
+    # Lets the current release finish before the container stops.
+    stop_grace_period: 1m
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

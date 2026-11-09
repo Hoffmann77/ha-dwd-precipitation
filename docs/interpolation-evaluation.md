@@ -112,9 +112,9 @@ station_cells(grid_id, station_id,
               frac_x, frac_y,       -- position inside it: 0 = west/south edge
               PRIMARY KEY (grid_id, station_id))
 
-releases(release PK,                -- nominal release time, UTC
+releases(release PK,                -- nominal release time, Unix seconds UTC
          grid_id, logged_at,
-         n_members)                 -- n_members < 25 means a damaged release
+         leads_present)             -- bit k set: the member of lead 5k was read
 
 radar(release, lead, station_id,
       c00 .. c44,                   -- 5x5 window, row-major, centre = c22
@@ -128,9 +128,10 @@ gauge(station_id, window_end,       -- 5-minute window ending at window_end
 - Cell values are stored as **integer thousandths of a mm** (the ODIM
   resolution), so the scaled value round-trips exactly; nodata is `NULL`.
   SQLite stores 0 and 1 in zero payload bytes, so mostly-dry windows are cheap.
-- **Sparse:** a radar row whose 25 cells are all 0 is not stored. For a
-  release present in `releases`, a missing row *means* an all-dry window;
-  for a release absent from `releases`, it means "not logged". Nothing is
+- **Sparse:** a radar row whose 25 cells are all 0 is not stored. For a lead
+  set in its release's `leads_present`, a missing row *means* an all-dry
+  window; for a lead not set, or a release absent from `releases`, it means
+  "not read". Nothing is
   lost — misses (dry forecast, wet gauge) are reconstructed at evaluation.
 - Pairing: radar row (release T, lead L) is compared with the gauge window
   ending at T+L.
@@ -151,8 +152,10 @@ Connection settings, applied on every open:
 
 Python's built-in `sqlite3`, plain SQL, no ORM.
 
-Estimated size (not yet measured): ~3-5 GB per year with the sparse rule; the
-gauge table is negligible. Download traffic is the larger cost: 288 tars a
+Measured size: ~4.6 KB per release on a mostly dry night (~100 wet windows
+over the 25 leads, i.e. ~4 stations wet), ~84 KB on a wet evening (~810 wet
+windows, ~32 stations), so roughly **0.5-10 GB per year** depending on the
+weather; the gauge table is negligible. Download traffic is the larger cost: 288 tars a
 day at ~2.25 MB is ~20 GB per month, independent of the window size.
 
 ## Evaluation
@@ -223,9 +226,10 @@ this repository only; nothing is pushed to `main`.
 - **`deploy/precip-eval/compose.yaml`** builds the image from the repository
   checkout and runs it with `restart: unless-stopped`. Start it once with
   `docker compose up -d`; update with `git pull` and the same command.
-- Image: official **`python:3.14-slim`**, **`uv`** (copied from the
-  `ghcr.io/astral-sh/uv` image, pinned), `git` and `openssh-client` for the
-  push. No cron or supercronic — scheduling is in the Python process.
+- Image: official **`python:3.14-slim`** and **`uv`** (copied from the
+  `ghcr.io/astral-sh/uv` image, pinned). `git` and `openssh-client` are added
+  with the publish step, which is the first to need them. No cron or
+  supercronic — scheduling is in the Python process.
 - Dependencies from a new `precip-eval` group in `pyproject.toml` (`numpy`,
   `h5py`, `requests`), resolved through the existing `uv.lock`. Everything
   else is standard library.
@@ -241,24 +245,35 @@ this repository only; nothing is pushed to `main`.
   | `PRECIP_EVAL_DEPLOY_KEY` | `./deploy_key` | Host path of the deploy key's private half |
   | `PRECIP_EVAL_UID` / `PRECIP_EVAL_GID` | `1000` | User the container runs as; must be able to write the data directory |
 
-- Volumes: the data directory -> `/data`; the deploy key, read-only.
+- Volumes: the data directory -> `/data`; with the publish step, the deploy
+  key, read-only.
 - **The data directory must be on a local disk**, not a network share
   (NFS/SMB): SQLite's WAL mode relies on file locking and shared memory that
   network file systems do not provide reliably.
-- The container runs as a non-root user (the UID above).
+- The service runs as a non-root user (the UID above). The entrypoint starts
+  as root only to hand `/data` to that user — Docker creates a missing bind
+  mount directory as root — and then drops to it with `setpriv`.
+- Container logs are rotated (3 x 10 MB), and `stop_grace_period` gives the
+  current release a minute to finish when the container is stopped.
 - `TZ=UTC`; logs go to stdout (`docker compose logs`). A Docker healthcheck
   reads a heartbeat the scheduler writes each loop, so a hung process shows
   as `unhealthy` and is visible in `docker ps`.
-- The code commit is baked in at build time (build arg) for the provenance
-  field.
+- The code commit is passed in at build time (build arg
+  `PRECIP_EVAL_COMMIT`) for the provenance field. Open: the build context
+  excludes `.git`, so with a plain `docker compose up -d --build` it is
+  `unknown`; to be settled with the publish step, which needs a clone of the
+  repository anyway.
 
 ### One-time setup
 
 1. Clone the repository on the server.
-2. Create an SSH key pair; add the public key to the GitHub repository as a
-   **deploy key with write access**; put the private key next to the compose
-   file (path set in `compose.yaml`).
-3. `docker compose up -d` in `deploy/precip-eval/`.
+2. `docker compose up -d --build` in `deploy/precip-eval/`.
+
+With the publish step, one more: create an SSH key pair, add the public key
+to the GitHub repository as a **deploy key with write access**, and put the
+private key next to the compose file (`PRECIP_EVAL_DEPLOY_KEY`).
+
+To update: `git pull`, then the same `docker compose up -d --build`.
 
 The station list is generated during development and committed, so nothing
 has to be run by hand on the server.
@@ -284,10 +299,13 @@ The integration's code is not changed: the evaluation only imports
 
 ## Implementation order
 
-1. Windows on the file's own grid + tests against the RV fixture.
-2. Station selection -> commit `stations.csv`.
-3. Scheduler loop + radar job with gap-filling; tested against live OpenData.
-4. Dockerfile + compose; deploy, logging starts (the 48 h window makes this
-   the urgent part). Gauges and evaluate are no-ops until implemented.
+1. **Done.** Windows on the file's own grid + tests against the RV fixture.
+2. **Done.** Station selection -> `stations.csv` (150 stations, 43 boxes,
+   all four altitude bands).
+3. **Done.** Scheduler loop + radar job with gap-filling; tested against live
+   OpenData.
+4. **Done.** Dockerfile + compose; built and run locally (data directory
+   ownership, clean stop, resume after restart, healthcheck). Deploy, and
+   logging starts — the 48 h window makes this the urgent part.
 5. Gauge job.
 6. Evaluate job + report + push; first result once a full month is logged.

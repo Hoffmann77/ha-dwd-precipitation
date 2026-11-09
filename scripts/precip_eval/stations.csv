@@ -1,0 +1,151 @@
+station_id,name,lat,lon,altitude,state
+78,Alfhausen,52.4853,7.9125,64,Niedersachsen
+259,Müllheim,47.8064,7.6387,275,Baden-Württemberg
+275,Balderschwang,47.4650,10.1043,1039,Bayern
+298,Barth,54.3405,12.7108,3,Mecklenburg-Vorpommern
+312,Baumgarten,53.8149,11.8818,50,Mecklenburg-Vorpommern
+390,"Berleburg, Bad-Stünzel",50.9837,8.3683,611,Nordrhein-Westfalen
+479,Wächtersbach,50.2435,9.2892,138,Hessen
+504,Lübbenau/Spreewald-Bischdorf,51.7982,13.9716,79,Brandenburg
+596,Boltenhagen,54.0027,11.1908,15,Mecklenburg-Vorpommern
+714,Briesen (Mark)-Neu Madlitz,52.3653,14.2474,46,Brandenburg
+753,Bucha,50.8700,11.5022,305,Thüringen
+755,"Buchen, Kr. Neckar-Odenwald",49.5182,9.3213,340,Baden-Württemberg
+791,Bordelum,54.6328,8.9370,5,Schleswig-Holstein
+833,Neuhausen/Erzgeb.-Rauschenbach,50.6951,13.4975,615,Sachsen
+1048,Dresden-Klotzsche,51.1278,13.7543,228,Sachsen
+1052,Möckern-Drewitz,52.2174,12.1641,80,Sachsen-Anhalt
+1078,Düsseldorf,51.2960,6.7686,37,Nordrhein-Westfalen
+1130,Eggebek,54.6282,9.3649,18,Schleswig-Holstein
+1214,Elzach-Fisnacht,48.2012,8.1088,431,Baden-Württemberg
+1346,Feldberg/Schwarzwald,47.8748,8.0038,1486,Baden-Württemberg
+1357,Fichtelberg/Oberfranken-Hüttstadl,49.9807,11.8376,655,Bayern
+1358,Fichtelberg,50.4285,12.9534,1213,Sachsen
+1468,Freudenstadt,48.4538,8.4090,797,Baden-Württemberg
+1495,Friedrichsruhe-Goldenbow,53.5389,11.7607,52,Mecklenburg-Vorpommern
+1602,Ohlsbach,48.4330,7.9930,177,Baden-Württemberg
+1642,Gilching,48.1085,11.2781,550,Bayern
+1710,"Gottleuba, Bad/Osterzgebirge",50.8371,13.9343,430,Sachsen
+1750,Grebenstein,51.4511,9.4138,190,Hessen
+1757,Greifswald,54.0967,13.4056,2,Mecklenburg-Vorpommern
+1770,Tangerhütte-Grieben,52.4233,11.9660,38,Sachsen-Anhalt
+1792,Groß Berßen,52.7553,7.4815,27,Niedersachsen
+1827,Großenbrode,54.3726,11.0828,4,Schleswig-Holstein
+1832,Großer Arber,49.1129,13.1338,1436,Bayern
+1870,Grünstadt,49.5665,8.1780,160,Rheinland-Pfalz
+1888,Gülzow-Prüzen-Parum,53.8119,12.1140,10,Mecklenburg-Vorpommern
+1981,Hamburg-Neuwiedenthal,53.4776,9.8957,4,Hamburg
+2027,Harsewinkel,51.9753,8.2094,63,Nordrhein-Westfalen
+2044,Harzgerode,51.6520,11.1366,404,Sachsen-Anhalt
+2115,Helgoland,54.1750,7.8920,4,Schleswig-Holstein
+2174,Herzberg,51.6255,10.3695,236,Niedersachsen
+2278,Hohenbucko,51.7640,13.4700,131,Brandenburg
+2323,"Bevern, Kr. Holzminden",51.8529,9.4953,110,Niedersachsen
+2376,Büchlberg-Tannöd,48.6549,13.5077,455,Bayern
+2416,Isen-Westach,48.2022,12.0382,549,Bayern
+2438,Uckerland-Karlstein,53.4277,13.8167,41,Brandenburg
+2518,Groß Kiesow-Schlagtow,54.0117,13.4999,34,Mecklenburg-Vorpommern
+2595,Kirn,49.7890,7.4853,181,Rheinland-Pfalz
+2600,Kitzingen,49.7363,10.1781,193,Bayern
+2618,Kleiner Inselsberg,50.8458,10.4803,732,Thüringen
+2667,Köln/Bonn,50.8645,7.1575,91,Nordrhein-Westfalen
+2689,Königsmoor,53.2279,9.6527,40,Niedersachsen
+2822,Lamstedt,53.6369,9.0979,26,Niedersachsen
+3081,Espelkamp-Isenstedt,52.3452,8.6477,65,Nordrhein-Westfalen
+3146,Malk Göhren,53.2141,11.3686,32,Mecklenburg-Vorpommern
+3238,Mellenthin-Dewichow,53.9497,13.9742,3,Mecklenburg-Vorpommern
+3278,Metzingen,48.5377,9.2734,354,Baden-Württemberg
+3342,Moormerland-Neermoor,53.3110,7.4329,0,Niedersachsen
+3418,Ehingen-Kirchen,48.2754,9.6355,594,Baden-Württemberg
+3448,Neckargemünd-Kleingemünd,49.3945,8.8045,117,Baden-Württemberg
+3473,Neuruppin-Gühlen Glienicke,53.0528,12.7562,89,Brandenburg
+3513,Neuhaus am Rennweg,50.5003,11.1345,845,Thüringen
+3631,Norderney,53.7123,7.1519,12,Niedersachsen
+3700,Oberleichtersbach-Modlos,50.2661,9.7727,472,Bayern
+3740,Lohmen/Sachsen,50.9933,13.9807,195,Sachsen
+3853,Ovelgönne,53.3819,8.4493,3,Niedersachsen
+3875,Parsberg/Oberpfalz-Eglwang,49.1510,11.6897,549,Bayern
+3881,Schwedt/Oder-Passow,53.1420,14.1074,12,Brandenburg
+3965,Süderholz-Neuendorf,54.1034,13.1533,6,Mecklenburg-Vorpommern
+4127,Reichshof-Eckenhagen,50.9906,7.6958,347,Nordrhein-Westfalen
+4185,Riedenburg,48.9555,11.7280,363,Bayern
+4248,Rohr/Mittelfranken-Dechendorf,49.3082,10.9183,402,Bayern
+4352,Sagard-Vorwerk,54.5160,13.5307,5,Mecklenburg-Vorpommern
+4393,Sankt Peter-Ording,54.3279,8.6031,5,Schleswig-Holstein
+4412,Hohe Börde-Schackensleben,52.1980,11.4218,95,Sachsen-Anhalt
+4445,Wernigerode-Schierke,51.7659,10.6533,614,Sachsen-Anhalt
+4490,Schmelz-Hüttersdorf,49.4149,6.8360,223,Saarland
+4493,Schmidgaden,49.4116,12.0760,417,Bayern
+4546,Schönsee-Dietersdorf,49.5273,12.5705,684,Bayern
+4601,Essel,52.6797,9.6524,28,Niedersachsen
+4617,Obere Firstalm/Schlierseer Berge,47.6705,11.8539,1373,Bayern
+4748,Sondershausen,51.3691,10.8800,185,Thüringen
+4755,Sonnen,48.6819,13.7351,847,Bayern
+4849,Steinfurt-Burgsteinfurt,52.1173,7.3411,64,Nordrhein-Westfalen
+4850,Steingaden-Lauterbach,47.7112,10.8758,779,Bayern
+4920,Beverstedt,53.4252,8.8040,4,Niedersachsen
+4997,Starkenberg-Tegkwitz,50.9771,12.3419,196,Thüringen
+5000,Teisendorf,47.8526,12.8282,498,Bayern
+5014,Worpswede-Hüttenbusch,53.2758,8.9857,7,Niedersachsen
+5058,Sprenge,53.6893,10.3657,56,Schleswig-Holstein
+5161,Untergriesbach-Glotzing,48.5599,13.7495,573,Bayern
+5162,Untergriesbach-Schaibing,48.5995,13.6465,495,Bayern
+5397,Weiden,49.6662,12.1844,440,Bayern
+5470,Fahrenzhausen,48.3631,11.5635,459,Bayern
+5516,Fehmarn,54.5283,11.0606,3,Schleswig-Holstein
+5555,Trebbin-Thyrow,52.2534,13.2361,46,Brandenburg
+5616,Winterspelt,50.2282,6.2071,426,Rheinland-Pfalz
+5619,Wipperfürth-Gardeweg,51.1637,7.4234,360,Nordrhein-Westfalen
+5688,Dachsberg-Wolpadingen,47.7004,8.1057,881,Baden-Württemberg
+5750,Zeitz,51.0314,12.1495,264,Sachsen-Anhalt
+5762,Zernien,53.0704,10.8831,83,Niedersachsen
+5839,Emden,53.3881,7.2287,-0,Niedersachsen
+5943,Rosenthal-Bielatal,50.8377,14.0719,462,Sachsen
+6154,Commerau-Königswartha,51.3272,14.3061,136,Sachsen
+6158,Weidenbach-Weiherschneidbach,49.2249,10.6085,454,Bayern
+6159,Dörpen,52.9542,7.3197,8,Niedersachsen
+6191,Kirchberg/Niederbayern -Zell,48.9023,13.1442,684,Bayern
+6203,Ramsau-Schwarzeck/Schmuck,47.6279,12.9015,1088,Bayern
+6258,Friedrichshafen-Unterraderach,47.6845,9.4409,461,Baden-Württemberg
+6259,Großerlach-Mannenweiler,49.0210,9.6033,524,Baden-Württemberg
+6262,Schwäbisch Gmünd-Weiler,48.7695,9.8737,412,Baden-Württemberg
+6263,Singen,47.7738,8.8219,445,Baden-Württemberg
+6264,Brilon-Thülen,51.4140,8.6500,457,Nordrhein-Westfalen
+6268,Uhlstädt-Kirchhasel-Niederkrossen,50.7577,11.5178,173,Thüringen
+6296,"Moos,Kr. Deggendorf-Maxmühle",48.7751,12.9578,320,Bayern
+6297,Pleiskirchen,48.3014,12.6025,450,Bayern
+6301,Untergschwend/Österreich,47.5067,10.5019,1040,Tirol
+6303,Willingen/Hochsauerland,51.2915,8.5981,584,Hessen
+6310,Karlshagen,54.1049,13.8239,1,Mecklenburg-Vorpommern
+6313,Breckerfeld-Wengeberg,51.2488,7.4672,440,Nordrhein-Westfalen
+6323,Meisburg,50.0971,6.6746,526,Rheinland-Pfalz
+6333,Hüttgeswasen,49.7286,7.1289,650,Rheinland-Pfalz
+7077,Penzlin-Groß Lukow,53.5255,13.0161,54,Mecklenburg-Vorpommern
+7139,Einöllen,49.6112,7.6426,303,Rheinland-Pfalz
+7230,Möckmühl/Jagst,49.3078,9.3606,170,Baden-Württemberg
+7298,Hattstedt,54.5268,9.0425,4,Schleswig-Holstein
+7355,Großhartmannsdorf (Unterer Großh. Teic,50.8125,13.3441,492,Sachsen
+7360,Hermsdorf/Erzgebirge,50.7598,13.6376,719,Sachsen
+7361,Scharnhorst-Marwede,52.7363,10.3440,73,Niedersachsen
+7372,Osterburg (Altmark)-Ballerstedt,52.7321,11.7123,37,Sachsen-Anhalt
+7378,Bedburg-Weiler Hohenholz,51.0149,6.5173,101,Nordrhein-Westfalen
+7389,Heckelberg-Brunow,52.7461,13.8427,83,Brandenburg
+7403,Leutkirch-Herlazhofen,47.7955,10.0325,672,Baden-Württemberg
+7425,Rinteln-Volksen,52.1384,9.1119,216,Niedersachsen
+7427,Padenstedt (Pony-Park),54.0188,9.9255,17,Schleswig-Holstein
+7436,Schönwald,48.1004,8.1973,1025,Baden-Württemberg
+13777,Helmstedt-Emmerstedt,52.2467,10.9592,109,Niedersachsen
+14042,Leimersdorf-Nierendorf,50.5849,7.1455,150,Rheinland-Pfalz
+14045,Heidenfahrt,50.0069,8.0915,88,Rheinland-Pfalz
+14351,Geretsried (Feuerwehrschule),47.8529,11.4999,610,Bayern
+15823,Merzalben,49.2752,7.8021,514,Rheinland-Pfalz
+15836,Müden-Flettmar,52.5394,10.3286,48,Niedersachsen
+15837,Neuenhaus,52.5074,6.9655,14,Niedersachsen
+15838,Neuenkirchen-Vörden,52.5023,8.0525,39,Niedersachsen
+16012,Mügeln-Niedergoseln,51.2341,13.0646,149,Sachsen
+16014,Geithain-Niedergräfenhain,51.0576,12.6342,201,Sachsen
+17455,Berlin-Gatow,52.4890,13.1810,31,Berlin
+17472,Berlin-Oberschöneweide,52.4630,13.5120,34,Berlin
+17485,Berlin-Lichterfelde,52.4400,13.3270,40,Berlin
+19172,Wacken,54.0246,9.3880,48,Schleswig-Holstein
+19856,Schönau am Königssee,47.6134,12.9819,625,Bayern

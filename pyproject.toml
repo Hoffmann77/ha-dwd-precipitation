@@ -26,6 +26,12 @@ conflicts = [
         { group = "typecheck" },
         { group = "wradlib-comparison" },
     ],
+    # Same pins as unit-test, so it conflicts with wradlib's numpy just as
+    # unit-test does; without this, the lock would hold wradlib to HA's numpy.
+    [
+        { group = "precip-eval" },
+        { group = "wradlib-comparison" },
+    ],
 ]
 
 [dependency-groups]
@@ -70,6 +76,15 @@ wradlib-comparison = [
     "wradlib==2.9.8",
     "requests==2.34.2",
     "h5py==3.16.0",
+]
+
+# The interpolation evaluation service (scripts/precip_eval, deployed with
+# deploy/precip-eval): the integration's own pins, so it reads radar files
+# with the numpy and h5py users run.
+precip-eval = [
+    "numpy==2.3.2",
+    "h5py==3.16.0",
+    "requests==2.34.2",
 ]
 
 # Lint only: ruff, nothing imported. Not in the conflicts list above, so it

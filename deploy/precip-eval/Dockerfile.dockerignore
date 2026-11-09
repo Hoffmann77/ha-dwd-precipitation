@@ -1,0 +1,8 @@
+# The build context is the repository root; send only what the image copies.
+*
+!pyproject.toml
+!uv.lock
+!custom_components/dwd_precipitation/radar
+!scripts/precip_eval
+!deploy/precip-eval/entrypoint.sh
+**/__pycache__

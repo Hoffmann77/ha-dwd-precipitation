@@ -19,6 +19,9 @@ conflicts = [[
     { package = "ha-dwd-precipitation", group = "typecheck" },
     { package = "ha-dwd-precipitation", group = "unit-test" },
     { package = "ha-dwd-precipitation", group = "wradlib-comparison" },
+], [
+    { package = "ha-dwd-precipitation", group = "precip-eval" },
+    { package = "ha-dwd-precipitation", group = "wradlib-comparison" },
 ]]
 
 [[package]]
@@ -1090,7 +1093,7 @@ name = "h5py"
 version = "3.16.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy", version = "2.3.2", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-20-ha-dwd-precipitation-ha-test' or extra == 'group-20-ha-dwd-precipitation-typecheck' or extra == 'group-20-ha-dwd-precipitation-unit-test' or extra != 'group-20-ha-dwd-precipitation-wradlib-comparison'" },
+    { name = "numpy", version = "2.3.2", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-20-ha-dwd-precipitation-ha-test' or extra == 'group-20-ha-dwd-precipitation-precip-eval' or extra == 'group-20-ha-dwd-precipitation-typecheck' or extra == 'group-20-ha-dwd-precipitation-unit-test' or extra != 'group-20-ha-dwd-precipitation-wradlib-comparison'" },
     { name = "numpy", version = "2.5.4", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-20-ha-dwd-precipitation-wradlib-comparison' or (extra == 'group-20-ha-dwd-precipitation-ha-test' and extra == 'group-20-ha-dwd-precipitation-unit-test') or (extra == 'group-20-ha-dwd-precipitation-typecheck' and extra == 'group-20-ha-dwd-precipitation-unit-test')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/db/33/acd0ce6863b6c0d7735007df01815403f5589a21ff8c2e1ee2587a38f548/h5py-3.16.0.tar.gz", hash = "sha256:a0dbaad796840ccaa67a4c144a0d0c8080073c34c76d5a6941d6818678ef2738", size = 446526, upload-time = "2026-03-06T13:49:08.07Z" }
@@ -1128,11 +1131,16 @@ ha-test = [
 lint = [
     { name = "ruff" },
 ]
+precip-eval = [
+    { name = "h5py" },
+    { name = "numpy", version = "2.3.2", source = { registry = "https://pypi.org/simple" } },
+    { name = "requests" },
+]
 typecheck = [
     { name = "h5py" },
     { name = "homeassistant" },
     { name = "numpy", version = "2.3.2", source = { registry = "https://pypi.org/simple" } },
-    { name = "pyright", extra = ["nodejs"], marker = "extra == 'group-20-ha-dwd-precipitation-ha-test' or extra == 'group-20-ha-dwd-precipitation-typecheck' or (extra != 'group-20-ha-dwd-precipitation-unit-test' and extra != 'group-20-ha-dwd-precipitation-wradlib-comparison') or (extra == 'group-20-ha-dwd-precipitation-unit-test' and extra == 'group-20-ha-dwd-precipitation-wradlib-comparison')" },
+    { name = "pyright", extra = ["nodejs"], marker = "extra == 'group-20-ha-dwd-precipitation-ha-test' or extra == 'group-20-ha-dwd-precipitation-typecheck' or (extra == 'group-20-ha-dwd-precipitation-precip-eval' and extra == 'group-20-ha-dwd-precipitation-wradlib-comparison') or (extra != 'group-20-ha-dwd-precipitation-unit-test' and extra != 'group-20-ha-dwd-precipitation-wradlib-comparison') or (extra == 'group-20-ha-dwd-precipitation-unit-test' and extra == 'group-20-ha-dwd-precipitation-wradlib-comparison')" },
     { name = "pytest-homeassistant" },
 ]
 unit-test = [
@@ -1159,6 +1167,11 @@ ha-test = [
     { name = "pytest-homeassistant", specifier = "==2026.11.0" },
 ]
 lint = [{ name = "ruff", specifier = "==0.17.3" }]
+precip-eval = [
+    { name = "h5py", specifier = "==3.16.0" },
+    { name = "numpy", specifier = "==2.3.2" },
+    { name = "requests", specifier = "==2.34.2" },
+]
 typecheck = [
     { name = "h5py", specifier = "==3.16.0" },
     { name = "homeassistant", specifier = "==2026.11.0" },
@@ -2039,7 +2052,7 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "boto3" },
     { name = "envs" },
-    { name = "pyjwt", extra = ["crypto"], marker = "extra == 'group-20-ha-dwd-precipitation-ha-test' or extra == 'group-20-ha-dwd-precipitation-typecheck' or (extra != 'group-20-ha-dwd-precipitation-unit-test' and extra != 'group-20-ha-dwd-precipitation-wradlib-comparison') or (extra == 'group-20-ha-dwd-precipitation-unit-test' and extra == 'group-20-ha-dwd-precipitation-wradlib-comparison')" },
+    { name = "pyjwt", extra = ["crypto"], marker = "extra == 'group-20-ha-dwd-precipitation-ha-test' or extra == 'group-20-ha-dwd-precipitation-typecheck' or (extra == 'group-20-ha-dwd-precipitation-precip-eval' and extra == 'group-20-ha-dwd-precipitation-wradlib-comparison') or (extra != 'group-20-ha-dwd-precipitation-unit-test' and extra != 'group-20-ha-dwd-precipitation-wradlib-comparison') or (extra == 'group-20-ha-dwd-precipitation-unit-test' and extra == 'group-20-ha-dwd-precipitation-wradlib-comparison')" },
     { name = "requests" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/26/67/3975cf257fcc04903686ef87d39be386d894a0d8182f43d37e9cbfc9609f/pycognito-2024.5.1.tar.gz", hash = "sha256:e211c66698c2c3dc8680e95107c2b4a922f504c3f7c179c27b8ee1ab0fc23ae4", size = 31182, upload-time = "2024-05-16T10:02:28.766Z" }

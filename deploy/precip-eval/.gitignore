@@ -1,0 +1,4 @@
+# Local state of a deployment, never committed.
+data/
+.env
+deploy_key

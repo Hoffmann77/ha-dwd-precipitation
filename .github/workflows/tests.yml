@@ -51,6 +51,10 @@ jobs:
         run: uv sync --locked --only-group unit-test
       - name: Run parser unit tests
         run: uv run pytest tests/parser -v
+      # The interpolation evaluation service (scripts/precip_eval): HA-free,
+      # no network, and on the same pins, so it shares this job's install.
+      - name: Run evaluation service tests
+        run: uv run pytest tests/precip_eval -v
 
   # HA config flow + entry/coordinator/sensor/product logic — validates the integration.
   integration-tests:
