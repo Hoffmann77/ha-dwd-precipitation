@@ -1,7 +1,7 @@
 """End-to-end integration test — entry setup → coordinators → sensor states.
 
 Requires the ha-test dependency group (Linux only):
-  pytest-homeassistant-custom-component imports homeassistant.runner which
+  pytest-homeassistant imports homeassistant.runner which
   imports fcntl, a POSIX-only module not available on Windows.
 
 Run with:
@@ -22,10 +22,18 @@ from homeassistant.helpers.entity_platform import async_get_platforms
 from pytest import approx
 
 from custom_components.dwd_precipitation import PRODUCT_CLASSES
-from custom_components.dwd_precipitation.const import CONF_DRY_STREAK_SOURCE, DOMAIN
+from custom_components.dwd_precipitation.const import (
+    ATTRIBUTION,
+    CONF_DRY_STREAK_SOURCE,
+    DOMAIN,
+)
 from custom_components.dwd_precipitation.coordinator import ProductMetadata
 from custom_components.dwd_precipitation.entity import unique_id_for
 from custom_components.dwd_precipitation.rain_events_tracker import RainEventsTracker
+from custom_components.dwd_precipitation.sensor import (
+    PrecipitationTotalSensor,
+    TimespanWithoutPrecipitationSensor,
+)
 from tests.entity_ids import (
     NEW_SINCE_2026_10_0,
     RELEASED_2026_10_0_IDS,
@@ -236,6 +244,21 @@ async def test_radolan_and_hymecng_sensors_show_their_values(make_entry, hass: H
     assert float(_state_for(hass, entry, "radolan_rw").state) == approx(3.2)
     # HymecNG's enum sensor reports the precipitation-type class label.
     assert _state_for(hass, entry, "hymecng_precipitation_type").state == "snow"
+
+
+@pytest.mark.asyncio
+async def test_every_entity_names_dwd_as_its_source(make_entry, hass: HomeAssistant) -> None:
+    """DWD's terms want the source next to the data: every entity carries it."""
+    entry = await _set_up(make_entry, hass)
+
+    entity_ids = [
+        e.entity_id
+        for e in er.async_get(hass).entities.values()
+        if e.config_entry_id == entry.entry_id and not e.disabled
+    ]
+    assert entity_ids
+    for entity_id in entity_ids:
+        assert hass.states.get(entity_id).attributes["attribution"] == ATTRIBUTION, entity_id
 
 
 @pytest.mark.asyncio
@@ -502,6 +525,33 @@ async def test_renamed_sensor_keeps_an_existing_entity_id(make_entry, hass: Home
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("cls", "entity_id"),
+    [
+        (PrecipitationTotalSensor, "sensor.home_precipitation_total"),
+        (TimespanWithoutPrecipitationSensor, "sensor.home_timespan_without_precipitation"),
+    ],
+)
+async def test_changing_an_entity_id_does_not_add_the_entity_again(
+    make_entry, hass: HomeAssistant, cls, entity_id: str
+) -> None:
+    """The restoring sensors opt in to HA 2026.11's in-place entity id change.
+
+    Without async_entity_id_changed, HA removes and re-adds an entity of a
+    custom integration that overrides async_added_to_hass, rerunning its
+    restore and catch-up.
+    """
+    await _set_up(make_entry, hass)
+    with patch.object(cls, "async_added_to_hass", AsyncMock()) as added:
+        er.async_get(hass).async_update_entity(entity_id, new_entity_id=f"{entity_id}_renamed")
+        await hass.async_block_till_done()
+
+    added.assert_not_awaited()
+    assert hass.states.get(entity_id) is None
+    assert hass.states.get(f"{entity_id}_renamed") is not None
+
+
+@pytest.mark.asyncio
 async def test_removing_the_entry_deletes_its_rain_events_store(
     make_entry,
     hass: HomeAssistant, hass_storage
@@ -632,7 +682,7 @@ async def test_restored_dry_streak_is_corrected_for_rain_during_downtime(
 ) -> None:
     """The anchor restored from days ago moves forward if RW/SF saw rain since."""
     from homeassistant.core import State
-    from pytest_homeassistant_custom_component.common import (
+    from pytest_homeassistant.common import (
         mock_restore_cache_with_extra_data,
     )
 
@@ -670,7 +720,7 @@ async def test_restart_checks_the_rw_hours_the_dry_streak_did_not_watch(
     """A downtime is a gap: the RW hours between the restored watched_until
     and RS's first reading are fetched in the background after setup."""
     from homeassistant.core import State
-    from pytest_homeassistant_custom_component.common import (
+    from pytest_homeassistant.common import (
         mock_restore_cache_with_extra_data,
     )
 

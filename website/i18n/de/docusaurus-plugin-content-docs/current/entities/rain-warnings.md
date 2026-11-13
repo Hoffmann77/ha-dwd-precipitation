@@ -12,6 +12,13 @@ anlegen.
 Regenwarnungen brauchen weder Blueprint noch Template: Jede ist ein Gerät mit
 zwei Entitäten, auf die eine Automation auslösen kann.
 
+:::note
+
+Regenwarnungen sind deine eigenen Regeln auf der Radarvorhersage des DWD,
+keine amtlichen Wetterwarnungen des Deutschen Wetterdienstes.
+
+:::
+
 ## Die Warnung des Orts {#location-warning}
 
 Jeder Ort hat eine Regenwarnung eingebaut, ohne dass du etwas anlegen musst:

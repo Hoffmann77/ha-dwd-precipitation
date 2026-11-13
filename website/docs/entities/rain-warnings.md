@@ -11,6 +11,13 @@ only for a heavy burst". Add as many as you like.
 Rain warnings need no blueprint and no template: each one is a device with
 two entities that an automation can trigger on.
 
+:::note
+
+Rain warnings are your own rules on DWD's radar forecast, not official
+weather warnings of the Deutscher Wetterdienst.
+
+:::
+
 ## The location's own warning {#location-warning}
 
 Every location has one rain warning built in, without adding anything: the

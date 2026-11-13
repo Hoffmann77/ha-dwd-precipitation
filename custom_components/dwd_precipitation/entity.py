@@ -13,7 +13,7 @@ from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN
+from .const import ATTRIBUTION, DOMAIN
 from .coordinator import BaseProductUpdateCoordinator, ProductMetadata
 from .radar.rain_warning import RainWarning, Verdict
 
@@ -60,6 +60,7 @@ def unique_id_for(entry_id: str, key: str) -> str:
 class DwdCoordinatorEntity(CoordinatorEntity[BaseProductUpdateCoordinator]):
     """Base coordinator entity shared by all DWD Precipitation platforms."""
 
+    _attr_attribution = ATTRIBUTION
     _attr_has_entity_name = True
 
     def __init__(

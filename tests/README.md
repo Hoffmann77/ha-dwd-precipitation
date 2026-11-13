@@ -68,7 +68,7 @@ Files are named for what they test, so the pattern says where a test belongs:
 uv run --group unit-test pytest tests/parser
 uv run --group wradlib-comparison pytest tests/reference
 
-# HA runtime (Linux only — pytest-homeassistant-custom-component imports fcntl)
+# HA runtime (Linux only — pytest-homeassistant imports fcntl)
 uv run --group ha-test pytest tests/integration
 
 # Live source check (hits DWD OpenData; normally only runs on a schedule)
@@ -114,7 +114,7 @@ uv run --group unit-test pytest tests
 - `live-wradlib.yml` — daily; our parser vs. wradlib on live files; opens/updates
   an issue on failure.
 - `ha-compat.yml` — weekly; integration tier against the latest / dev
-  `pytest-homeassistant-custom-component`; opens an issue on failure (dev is
+  `pytest-homeassistant`; opens an issue on failure (dev is
   experimental / non-blocking).
 - `hassfest.yaml`, `validate.yaml` — daily HA manifest + HACS structural validation.
 - `release-delay.yml` — scheduled; checks each product's `RELEASE_DELAY` against

@@ -14,7 +14,7 @@ from unittest.mock import patch
 
 import numpy as np
 import pytest
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.dwd_precipitation import coordinator as coordinator_mod
 from custom_components.dwd_precipitation import products

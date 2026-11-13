@@ -779,6 +779,19 @@ class PrecipitationTotalSensor(DwdCoordinatorEntity, RestoreEntity, SensorEntity
             pending=list(self._pending),
         )
 
+    @callback
+    def async_entity_id_changed(self, old_entity_id: str) -> None:
+        """Opt in to HA renaming the entity id in place (2026.11+).
+
+        Nothing here is keyed on the entity id (log messages and task names
+        read it when used), so there is nothing to update. Without this, HA
+        removes and re-adds an entity that overrides async_added_to_hass,
+        which reruns the restore; that fallback goes in 2027.11. Older HA
+        never calls it.
+
+        """
+        super().async_entity_id_changed(old_entity_id)
+
     async def async_added_to_hass(self) -> None:
         """Restore the total and count whatever was released in the meantime.
 
@@ -1219,6 +1232,19 @@ class TimespanWithoutPrecipitationSensor(
         """
         self._process()
         super()._handle_coordinator_update()
+
+    @callback
+    def async_entity_id_changed(self, old_entity_id: str) -> None:
+        """Opt in to HA renaming the entity id in place (2026.11+).
+
+        Nothing here is keyed on the entity id (log messages and task names
+        read it when used), so there is nothing to update. Without this, HA
+        removes and re-adds an entity that overrides async_added_to_hass,
+        which reruns the restore; that fallback goes in 2027.11. Older HA
+        never calls it.
+
+        """
+        super().async_entity_id_changed(old_entity_id)
 
     async def async_added_to_hass(self) -> None:
         """Restore the anchor and correct it for any rain during downtime.

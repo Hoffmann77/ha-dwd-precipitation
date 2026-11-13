@@ -208,7 +208,7 @@ const config = {
           },
         ],
         copyright:
-          'Radar data: Deutscher Wetterdienst (DWD). This is a community project, not affiliated with or endorsed by the DWD.',
+          'Based on data from Deutscher Wetterdienst (DWD), CC BY 4.0. A community project, not made, endorsed or supported by the DWD.',
       },
       prism: {
         theme: prismThemes.github,

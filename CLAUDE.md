@@ -408,6 +408,33 @@ just records the streak (via `actions/cache`) without notifying, so one-off
 measurement noise doesn't page anyone. The streak resets to zero as soon as a
 run comes back clean.
 
+## Publishing releases
+
+HACS installs from a release asset, not the source tree: `hacs.json` sets
+`zip_release` + `filename: dwd_precipitation.zip`, and
+`.github/workflows/release.yml` builds that zip. That is what gives HACS a
+download count — it reports the asset's GitHub `download_count` for the version
+it offers, so the number is per release, not cumulative.
+
+To release (including an RC): save it as a **draft**, then run the workflow
+manually with its tag. It builds from the draft's target commit, attaches the
+zip and only then publishes, so HACS never offers a release without its asset.
+It cannot be automatic: GitHub sends workflows no `created` event for drafts.
+A release published directly still gets its zip from the `published` trigger,
+but installs fail for the minute or so until it lands.
+
+- The workflow never replaces an existing zip, because re-uploading resets the
+  `download_count`. Delete the asset by hand if one really must be rebuilt.
+
+- The zip holds the *contents* of `custom_components/dwd_precipitation/` at its
+  root, with no enclosing folder: HACS extracts it straight into
+  `config/custom_components/<domain>/`.
+- The workflow stamps the tag into the zipped `manifest.json`, so the installed
+  version always matches the release even if the bump commit was forgotten.
+- HACS reads `hacs.json` from the version it offers, then uses that one manifest
+  for every version in its picker — so a release without the asset cannot be
+  installed through HACS. Backfill one with the same manual run on its tag. `hide_default_branch` is set because a branch has no asset at all.
+
 ## Grid lookup
 
 Every product reads the cell holding the location on the grid **its own file
@@ -510,12 +537,12 @@ HACS itself and moves its installs over on its own. What either needs:
 `hacs.json` in the root (no install or update without it; its
 `homeassistant` is the minimum HA version per release), a `version` in
 `manifest.json` equal to the release tag, published GitHub releases, and the
-brand icon (in `home-assistant/brands` for now). hassfest and the HACS action
-(`validate.yaml`) check both files. The manifest has no `categories` yet: the
-catalog passes them to the Marketplace for browsing (`weather_alerts` fits),
-but the hassfest action's image still rejects the key ("not a valid option at
-'categories'", October 2026), although core's `dev` accepts it. Add it once
-hassfest passes with it; until then the HACS action only warns. The install buttons pass the lowercase
+brand images (`custom_components/dwd_precipitation/brand/`). hassfest and the HACS action
+(`validate.yaml`) check both files. The manifest's `categories` is
+`weather_alerts.forecasts`, as for core's `met`: the catalog passes it to the
+Marketplace for browsing. hassfest accepts the key from 2026.11 (an unknown
+category only warns for a custom integration); the HACS action warns without
+it and fails on an unknown one. The install buttons pass the lowercase
 category (`category=integration`): `marketplace_repository` for 2026.11 and
 newer, `hacs_repository` for older versions, where it opens HACS.
 
@@ -524,13 +551,26 @@ newer, `hacs_repository` for older versions, where it opens HACS.
 Besides the three test tiers, CI (`tests.yml`) runs ruff (F rules only) and
 pyright (basic mode, settings in `pyproject.toml` `[tool.pyright]`) on the
 component. Pyright checks against HA's own types, so it runs in the
-`typecheck` dependency group, which is `ha-test` plus pyright. Keep it at 0
+`typecheck` dependency group, which is `ha-test` plus pyright. `ha-test`
+is HA's own plugin, `pytest-homeassistant` (imported as
+`pytest_homeassistant.common`), each release pinning the HA version of the
+same number; Renovate moves the two together, to every beta as well as
+every final (`ignoreUnstable: false`), so the suite runs on a release
+before it is out. It needs `-p no:respx` (in `addopts`), and pins no numpy, so
+`ha-test` pins HA's.
+
+Keep pyright at 0
 errors: fix a finding, or ignore it on its line with the reason. The one
 such case is the config flow's `vol.Schema`, which HA's annotations call
 `probatio.Schema`; HA installs probatio as voluptuous at runtime, and
 importing probatio ourselves would break every HA from before that alias.
 `reportIncompatibleVariableOverride` is off: HA entities override
 `entity_description` and their cached properties by design.
+
+Entities that override `async_added_to_hass` also define
+`async_entity_id_changed` (calling only `super()`): that opts them in to HA
+2026.11's in-place entity id change instead of a remove and re-add, the
+fallback HA drops in 2027.11.
 
 ## Documentation site
 

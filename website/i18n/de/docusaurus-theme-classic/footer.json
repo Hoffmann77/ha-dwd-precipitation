@@ -44,7 +44,7 @@
     "description": "The label of footer link with label=DWD terms of use linking to https://www.dwd.de/EN/service/copyright/copyright_node.html"
   },
   "copyright": {
-    "message": "Radardaten: Deutscher Wetterdienst (DWD). Ein Community-Projekt, nicht mit dem DWD verbunden und nicht von ihm unterstützt.",
+    "message": "Datenbasis: Deutscher Wetterdienst (DWD), CC BY 4.0. Ein Community-Projekt, nicht vom DWD erstellt, empfohlen oder unterstützt.",
     "description": "The footer copyright"
   }
 }
