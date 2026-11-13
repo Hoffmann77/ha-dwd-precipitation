@@ -107,6 +107,39 @@ picks one of two answers:
   forecast, after which nothing more is expected within the horizon.
   Steadier, but it stays `unknown` longer.
 
+## Rain around the location {#rain-nearby}
+
+With [*Evaluate the area around the location*](../getting-started/configuration.md#neighbourhood)
+on (the default), RV also reads the cells around the location. Both sensors
+count rain above *Only count rain heavier than*, but never below 0.3 mm/h:
+around the location there are many more cells to catch a speck of trace
+rain.
+
+**Nearest precipitation** is the distance (km) to the nearest rain within
+5 km in the latest analysis; `0` when it rains on the location's own cell,
+`unknown` when there is none within 5 km.
+
+| Attribute | Meaning |
+|-----------|---------|
+| `bearing` | Where the rain is, in degrees (0 north, 90 east); `null` on the own cell |
+| `direction` | The same as a compass point: `N`, `NE`, `E`, ... |
+| `approaching` | `true` while the rain within 10 km moves towards the location |
+| `closest_approach_km` | How close the rain's track comes to the location |
+| `closest_approach_in` | In how many minutes; `0` when it is already moving away |
+
+Where the rain heads is worked out from the first half hour of the forecast:
+the centre of the rain within 10 km is followed from step to step. It is
+approaching when it moves at 3 km/h or more and its track passes within
+1 km of the location. Rain that stands still, passes further away or is
+moving away is not.
+
+**Precipitation start nearby** is like `Precipitation start`, for rain
+within about 1.5 km (the own cell and its eight neighbours). It follows the
+[*Show start and end as*](../getting-started/configuration.md#start-and-end-format)
+setting. With the option on, each step of `forecast_5min` also has
+`area_value` (the wettest cell within 1.5 km, mm) and `event_value` (what the
+[rain events](rain-events.md#what-counts-as-rain) follow).
+
 ## Precipitation expected
 
 **Precipitation expected** is a binary sensor: `on` if rain is forecast

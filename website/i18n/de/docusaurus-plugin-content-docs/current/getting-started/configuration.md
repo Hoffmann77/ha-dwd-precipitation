@@ -56,9 +56,11 @@ Download wird automatisch wiederholt.
 | [Regenvorhersage](#rain-forecast) | [Nur Regen zählen, der stärker ist als](#rain-detection-threshold) | 0 mm/h |
 | | [Beginn und Ende anzeigen als](#start-and-end-format) | Uhrzeit |
 | | [„Niederschlagsende“ zeigt](#end-algorithm) | die erste trockene Pause |
+| | [Umgebung des Standorts auswerten](#neighbourhood) | an |
 | [Zeitraum ohne Niederschlag](#timespan-without-precipitation) | [Regen, der die Zählung zurücksetzt](#dry-streak-threshold) | 1,0 mm |
 | | [Gemessen mit](#dry-streak-source) | Radar und Regenmessern (RW) |
-| [Regenereignisse und Regenwarnungen](#rain-events-and-rain-warnings) | [Sensor „Regenereignisse“ hinzufügen](#track-rain-events) | aus |
+| [Regenereignisse und Regenwarnungen](#rain-events-and-rain-warnings) | [Regenwarnung für diesen Ort hinzufügen](#location-warning) | an |
+| | [Sensor „Regenereignisse“ hinzufügen](#track-rain-events) | aus |
 | | [Nur Regen zählen, der stärker ist als](#rain-event-threshold) | 0,1 mm/h |
 | [Erweitert](#advanced-options) | [Technische Details zu den Sensoren hinzufügen](#technical-details) | aus |
 | | [Vergangene Stunde in die stündliche Regenreihe aufnehmen](#past-hour-in-the-series) | aus |
@@ -97,6 +99,24 @@ Sensor (`at` oder `minutes_until`).
 
 Die Vorhersage des DWD reicht nur zwei Stunden weit. Dauert der Regen länger,
 ist der Sensor in beiden Fällen `unknown`.
+
+### Umgebung des Standorts auswerten {#neighbourhood}
+
+Eine einzelne 1-km-Radarzelle ist eine Punktprobe: Ein Schauer ein paar
+hundert Meter daneben wird übersehen. Ist die Option an (Standard), werden
+auch die Zellen rund um den Standort gelesen:
+
+- Zwei Sensoren kommen hinzu, [*Nächster Niederschlag* und
+  *Niederschlagsbeginn Umkreis*](../entities/radvor-rv.md#rain-nearby).
+- [Regenereignisse](../entities/rain-events.md) und
+  [Regenwarnungen](../entities/rain-warnings.md) zählen Regen im Umkreis von
+  etwa 1,5 km, aber nur, solange die Vorhersage ihn **auf den Standort zu**
+  bewegt. Regen, der vorbeizieht oder sich entfernt, zählt nur dort, wo er
+  für die eigene Zelle vorhergesagt ist; ein Schauer, der die Umgebung nur
+  streift, löst also keine Warnung aus.
+
+Ausgeschaltet wird nur die eigene Zelle genutzt, und die beiden Sensoren
+werden entfernt.
 
 ## Zeitraum ohne Niederschlag {#timespan-without-precipitation}
 
@@ -138,6 +158,13 @@ der Integration mit **Regenwarnung hinzufügen** hinzu (siehe
 [Regenwarnungen](#rain-warnings) oben). Der Abschnitt ist aufgeklappt, wenn
 der Sensor `Regenereignisse` an ist oder der Standort eine Regenwarnung hat,
 sonst eingeklappt.
+
+### Regenwarnung für diesen Ort hinzufügen {#location-warning}
+
+Gibt dem Ort seine eigene [Regenwarnung](../entities/rain-warnings.md#location-warning):
+den Sensor `Regenwarnung` und den Regler `Vorwarnzeit Regenwarnung`, ohne
+Mindestmengen. Standardmäßig an, damit ein Blueprint sofort eine Warnung zum
+Lesen hat. Schalte sie aus, wenn du nur selbst angelegte Warnungen nutzt.
 
 ### Sensor „Regenereignisse“ hinzufügen {#track-rain-events}
 

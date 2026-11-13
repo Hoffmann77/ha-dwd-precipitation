@@ -19,6 +19,19 @@ keine amtlichen Wetterwarnungen des Deutschen Wetterdienstes.
 
 :::
 
+## Die Warnung des Orts {#location-warning}
+
+Jeder Ort hat eine Regenwarnung eingebaut, ohne dass du etwas anlegen musst:
+den Sensor **Regenwarnung** (`sensor.home_rain_warning` an einem Ort `Home`)
+mit denselben Zuständen und Attributen wie die
+[Status-Entität](#entities) einer Warnung, und den Regler **Vorwarnzeit
+Regenwarnung** (30 Minuten, bis du ihn verschiebst). Sie hat keine
+Mindestmengen und meldet daher jedes Regenereignis; welche davon eine
+Nachricht wert sind, entscheidet ein Blueprint wie *DWD Regenwarnung*.
+Abschalten kannst du sie mit
+[*Regenwarnung für diesen Ort hinzufügen*](../getting-started/configuration.md#location-warning)
+in den Optionen; beide Entitäten werden dann entfernt.
+
 ## Eine Warnung hinzufügen {#adding-a-warning}
 
 Öffne **Einstellungen > Geräte & Dienste > DWD Precipitation** und wähle am
@@ -38,7 +51,9 @@ Lass alle Mindestwerte leer, um vor jedem Regenereignis gewarnt zu werden.
 Um eine Warnung später zu ändern, öffne ihr Menü am Eintrag und wähle
 **Neu konfigurieren**. Löschst du sie, verschwinden ihr Gerät und ihre
 Entitäten. Hinzufügen, Ändern und Löschen einer Warnung lädt die Integration
-neu; die Werte sind nach ein paar Sekunden wieder da.
+neu; die Werte sind nach ein paar Sekunden wieder da. Die Vorwarnzeit allein
+lässt sich auch am Regler **Vorwarnzeit** der Warnung ändern (siehe unten);
+das wirkt sofort und lädt nichts neu.
 
 ## Entitäten {#entities}
 
@@ -49,6 +64,7 @@ Eine Warnung `Wäsche` am Standort `Home` ist das Gerät `Home Wäsche` mit:
 |---------|-------------|----------|
 | Regenwarnung | `binary_sensor.home_wasche_rain_warning` | `on`, solange es regnet oder gleich regnet, sonst `off` |
 | Regenwarnung Status | `sensor.home_wasche_rain_warning_status` | `dry`, `soon` oder `rain` |
+| Vorwarnzeit | `number.home_wasche_lead_time` | die Vorwarnzeit in Minuten, 5 bis 120; Verstellen ändert die Warnung sofort und speichert den Wert in ihren Einstellungen |
 
 Der Status-Sensor trägt die Details als Attribute; die An/Aus-Entität hat
 keine.
@@ -73,10 +89,13 @@ Radarvorhersage veraltet ist, wie die anderen Vorhersagesensoren.
 |----------|--------------|
 | `event_id` | Die ID des Regenereignisses, um das es geht, wie in [Regenereignisse](rain-events.md#events) |
 | `start` | Wann dieses Ereignis beginnt (oder begonnen hat), ISO-8601 in UTC |
+| `end` | Wann es voraussichtlich endet, ISO-8601 in UTC; bei `beyond_horizon` nur das Ende der Vorhersage |
+| `beyond_horizon` | `true`, solange das Ereignis über den Vorhersagehorizont (etwa zwei Stunden) hinausgeht, sein Ende also offen ist |
 | `mm` | Seine Summe: bisher gemessen plus vorhergesagt, in mm |
 | `peak_1h` | Der Regen in seiner nassesten Stunde, in mm |
 | `peak_10min` | Der Regen in seinen nassesten 10 Minuten, in mm |
 | `type` | Die gemessene Niederschlagsart des Ereignisses, etwa `rain` oder `snow`, wie in [Regenereignisse](rain-events.md); `null`, solange es nur vorhergesagt ist, da der DWD keine Art vorhersagt |
+| `expected_type` | Der gemessene `type`, sobald es ihn gibt; davor eine Schätzung: die Art des nächstgelegenen Niederschlags, den das Radar im Umkreis von 5 km sieht, etwa `snow`, wenn Schnee heranzieht. `null`, wenn dort keiner ist |
 
 Alle sind `null`, solange der Status `dry` ist, und keines wird im Verlauf
 aufgezeichnet.
@@ -88,7 +107,11 @@ die Integration für den Standort verfolgt, dieselben, die der Sensor
 [Regenereignisse](rain-events.md) zeigt. Was als Regen zählt, legt daher die
 Option
 [*Nur Regen zählen, der stärker ist als*](../getting-started/configuration.md#rain-event-threshold)
-im Abschnitt *Regenereignisse und Regenwarnungen* fest, und die Vorhersage reicht zwei Stunden voraus.
+im Abschnitt *Regenereignisse und Regenwarnungen* fest, und die Vorhersage reicht zwei Stunden voraus. Mit
+[*Umgebung des Standorts auswerten*](../getting-started/configuration.md#neighbourhood)
+zählt auch Regen im Umkreis von etwa 1,5 km, aber nur, solange er auf den
+Standort zuzieht; ein Schauer, der vorbeizieht oder sich entfernt, warnt nur,
+wenn er für die eigene Zelle vorhergesagt ist.
 
 - Die Vorlaufzeit zählt ab dem Moment, in dem die Radardaten in Home
   Assistant ankommen. Sie kommen alle 5 Minuten, daher kann eine Warnung bis

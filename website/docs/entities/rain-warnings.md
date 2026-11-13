@@ -18,6 +18,18 @@ weather warnings of the Deutscher Wetterdienst.
 
 :::
 
+## The location's own warning {#location-warning}
+
+Every location has one rain warning built in, without adding anything: the
+sensor **Rain warning** (`sensor.home_rain_warning` at a location `Home`),
+with the same states and attributes as a warning's
+[status entity](#entities), and the slider **Rain warning lead time** (30
+minutes until you move it). It has no minimums, so it reports every rain
+event; a blueprint such as *DWD Regenwarnung* decides which ones are worth a
+message. Turn it off with
+[*Add a rain warning for this location*](../getting-started/configuration.md#location-warning)
+in the options; both entities are then removed.
+
 ## Adding a warning
 
 Open **Settings > Devices & services > DWD Precipitation**, then select
@@ -37,7 +49,9 @@ Leave all minimums empty to be warned about every rain event.
 To change a warning later, open its menu on the entry and select
 **Reconfigure**. Deleting it removes its device and entities. Adding,
 changing or deleting a warning reloads the integration; the values come back
-within a few seconds.
+within a few seconds. The lead time alone can also be changed with the
+warning's **Lead time** slider (see below), which takes effect at once and
+reloads nothing.
 
 ## Entities
 
@@ -49,6 +63,7 @@ warning: a warning `Laundry` at the location `Home` is the device
 |--------|-----------|--------|
 | Rain warning | `binary_sensor.home_laundry_rain_warning` | `on` while it rains or is about to, `off` otherwise |
 | Rain warning status | `sensor.home_laundry_rain_warning_status` | `dry`, `soon` or `rain` |
+| Lead time | `number.home_laundry_lead_time` | the lead time in minutes, 5 to 120; moving it changes the warning at once and saves the value in the warning's settings |
 
 The status sensor has the details as attributes; the on/off entity has none.
 
@@ -71,10 +86,13 @@ is out of date, like the other forecast sensors.
 |-----------|-------------|
 | `event_id` | The id of the rain event the warning is about, as in [Rain events](rain-events.md#events) |
 | `start` | When that event starts (or started), ISO-8601 in UTC |
+| `end` | When it is forecast to end, ISO-8601 in UTC; with `beyond_horizon` only the end of the forecast |
+| `beyond_horizon` | `true` while the event lasts past the forecast horizon (about two hours), so its end is open |
 | `mm` | Its total: measured so far plus forecast, in mm |
 | `peak_1h` | The rain in its wettest hour, in mm |
 | `peak_10min` | The rain in its wettest 10 minutes, in mm |
 | `type` | The measured precipitation type of the event, such as `rain` or `snow`, as in [Rain events](rain-events.md); `null` while it is only forecast, since DWD forecasts no type |
+| `expected_type` | The measured `type` once there is one; before that an estimate: the type of the nearest precipitation the radar sees within 5 km of the location, such as `snow` when snow is approaching. `null` when there is none |
 
 All of them are `null` while the status is `dry`, and none is recorded in
 history.
@@ -87,7 +105,11 @@ integration tracks for the location, the same events the
 option
 [*Only count rain heavier than*](../getting-started/configuration.md#rain-event-threshold)
 in the *Rain events and rain warnings* section,
-and the forecast reaches two hours ahead.
+and the forecast reaches two hours ahead. With
+[*Evaluate the area around the location*](../getting-started/configuration.md#neighbourhood)
+on, rain within about 1.5 km counts too, but only while it moves towards the
+location; a shower that passes by or moves away warns only if it is forecast
+on the location's own cell.
 
 - The lead time counts from when the radar data arrives in Home Assistant.
   The data comes every 5 minutes, so a warning can turn on up to 5 minutes
