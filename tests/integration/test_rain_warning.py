@@ -553,7 +553,7 @@ async def test_the_location_warnings_slider_moves_its_lead_time(make_entry, hass
 
 
 async def test_the_location_warnings_lead_time_is_restored(make_entry, hass: HomeAssistant) -> None:
-    from pytest_homeassistant_custom_component.common import mock_restore_cache_with_extra_data
+    from pytest_homeassistant.common import mock_restore_cache_with_extra_data
     from homeassistant.core import State
 
     entry = make_entry()

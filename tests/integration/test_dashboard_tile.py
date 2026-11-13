@@ -13,7 +13,7 @@ import yaml
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.template import Template
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 TILE = Path(__file__).parents[2] / "dashboards/dwd_regenwarnung_kachel.yaml"
 S = "sensor.home_waesche_rain_warning_status"

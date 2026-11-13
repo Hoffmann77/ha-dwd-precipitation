@@ -13,7 +13,7 @@ from pathlib import Path
 
 from homeassistant.setup import async_setup_component
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import async_mock_service, async_fire_time_changed
+from pytest_homeassistant.common import async_mock_service, async_fire_time_changed
 
 BP = Path(__file__).parents[2] / "blueprints/automation/dwd/dwd_regenwarnung.yaml"
 S = "sensor.home_waesche_rain_warning_status"
