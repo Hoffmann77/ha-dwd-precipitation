@@ -396,7 +396,7 @@ class RadvorRS(RadvorProduct):
 
     RELEASE_INTERVAL = timedelta(minutes=5)
 
-    RELEASE_DELAY = timedelta(minutes=4, seconds=10)
+    RELEASE_DELAY = timedelta(minutes=4, seconds=15)
 
     RELEASE_OFFSET = timedelta()
 
@@ -838,10 +838,10 @@ class HymecNG(WholeFileProduct):
 
     RELEASE_INTERVAL = timedelta(minutes=5)
 
-    # DWD publishes each file ~2 min after its nominal time; wait a little longer
-    # so the coordinator does not fetch before it appears (checked by
-    # scripts/check_release_delay.py).
-    RELEASE_DELAY = timedelta(minutes=3)
+    # DWD publishes each file ~3.5 min after its nominal time (mean 3m27s, none
+    # under 3m04s, measured 2026-11); the coordinator must not fetch before it
+    # appears (checked by scripts/check_release_delay.py).
+    RELEASE_DELAY = timedelta(minutes=3, seconds=30)
 
     RELEASE_OFFSET = timedelta()
 

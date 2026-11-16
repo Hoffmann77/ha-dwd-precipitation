@@ -386,7 +386,8 @@ scheduled) averages the *observed* availability delay across a rolling window of
 recent files — for each file, its `Last-Modified` header (authoritative GMT)
 minus the nominal timestamp in its name — and flags any product the instant its
 mean lag exceeds its configured `RELEASE_DELAY` — the harmful direction, where
-the coordinator fetches before DWD has published (`--grace`, in seconds, defaults to 0). It
+the coordinator fetches before DWD has published (`--grace`, in seconds, defaults to 0; the workflow passes `-10`, flagging a
+mean within 10 s of `RELEASE_DELAY`). It
 imports the product classes and checks their own constants, so it runs in the
 `ha-test` environment.
 

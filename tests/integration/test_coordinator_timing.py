@@ -76,12 +76,12 @@ async def test_overlapping_refreshes_fetch_once(make_coordinator, hass) -> None:
 
 
 async def test_rs_track_time_change_args(make_coordinator):
-    """RS: 5-min cadence, +4m10s availability → all hours, minutes {4,9,…,59}, sec 10."""
+    """RS: 5-min cadence, +4m15s availability → all hours, minutes {4,9,…,59}, sec 15."""
     coord = make_coordinator(RadvorRS)
     args = coord.track_time_change_args
     assert len(args) == 1
     entry = args[0]
-    assert entry["second"] == 10
+    assert entry["second"] == 15
     assert entry["hour"] == list(range(24))
     assert entry["minute"] == [4, 9, 14, 19, 24, 29, 34, 39, 44, 49, 54, 59]
 
@@ -138,14 +138,14 @@ async def test_rs_rides_out_one_late_release(make_coordinator):
     coord = make_coordinator(RadvorRS)
     coord.curr_release = datetime(2026, 9, 17, 6, 35, tzinfo=UTC)
 
-    # 06:40 is due at 06:44:10; RS keeps trying for it until 06:50:10.
-    assert coord._stale_deadline() == datetime(2026, 9, 17, 6, 50, 10, tzinfo=UTC)
+    # 06:40 is due at 06:44:15; RS keeps trying for it until 06:50:15.
+    assert coord._stale_deadline() == datetime(2026, 9, 17, 6, 50, 15, tzinfo=UTC)
 
-    for moment in ("06:44:10", "06:45:10", "06:46:20", "06:49:10"):
+    for moment in ("06:44:15", "06:45:15", "06:46:20", "06:49:15"):
         now = datetime.strptime(f"2026-09-17 {moment}", "%Y-%m-%d %H:%M:%S")
         assert coord._data_is_stale(now.replace(tzinfo=UTC)) is False, moment
 
-    assert coord._data_is_stale(datetime(2026, 9, 17, 6, 54, 10, tzinfo=UTC)) is True
+    assert coord._data_is_stale(datetime(2026, 9, 17, 6, 54, 15, tzinfo=UTC)) is True
 
 
 @pytest.mark.parametrize("cls", PRODUCT_CLASSES)
@@ -694,7 +694,7 @@ async def test_fetch_jitter_keeps_the_schedule_on_whole_seconds(make_coordinator
         args = coord.track_time_change_args
 
         assert len(args) == 1
-        assert args[0]["second"] == 10 + seconds
+        assert args[0]["second"] == 15 + seconds
 
 
 def test_retry_jitter_stays_within_bounds():
