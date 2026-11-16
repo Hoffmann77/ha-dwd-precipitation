@@ -17,11 +17,11 @@ seinem Termin plus dieser Verzögerung ab:
 | Produkt | Termine | Veröffentlicht etwa | Abgerufen um |
 |---------|---------|---------------------|--------------|
 | RADVOR RS, RV | alle 5 min (:00, :05, …) | 4 min später | :04, :09, … |
-| HymecNG | alle 5 min | 3 min später | :03, :08, … |
-| RADOLAN RW | stündlich, zur vollen Stunde | 28 min später | :28 |
-| RADOLAN RW, 10-Minuten-Läufe¹ | alle 10 min | 28 min später | :08, :18, … |
-| RADOLAN SF | stündlich um :50 | 31 min später | :21 |
-| RADOLAN SF, gestern | täglich um 23:50 deutscher Ortszeit | 31 min später | 00:21 Ortszeit |
+| HymecNG | alle 5 min | 3½ min später | :03, :08, … |
+| RADOLAN RW | stündlich, zur vollen Stunde | 27 min später | :27 |
+| RADOLAN RW, 10-Minuten-Läufe¹ | alle 10 min | 27 min später | :07, :17, … |
+| RADOLAN SF | stündlich um :50 | 30 min später | :20 |
+| RADOLAN SF, gestern | täglich um 23:50 deutscher Ortszeit | 30 min später | 00:20 Ortszeit |
 
 ¹ Wird nur abgerufen, wenn
 [Zeitraum ohne Niederschlag](../entities/dry-streak.md) RW zählt.

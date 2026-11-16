@@ -26,7 +26,7 @@ aktuell und eignet sich daher auch für Automationen wie „wie viel Regen seit
 heute Morgen“. Diesen Sensor solltest du nutzen.
 
 Die Statistiken von Home Assistant sehen jede Stunde etwa eine halbe Stunde
-nach ihrem Ende (11:00–12:00 wird gegen 12:28 addiert), daher rutscht nur die
+nach ihrem Ende (11:00–12:00 wird gegen 12:27 addiert), daher rutscht nur die
 letzte Stunde eines Tages in den nächsten.
 
 ## Niederschlag gesamt täglich {#precipitation-total-daily}

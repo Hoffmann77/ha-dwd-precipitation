@@ -6,7 +6,7 @@ Status: accepted (2026.11.0)
 
 2026.10.0 shipped two `TOTAL_INCREASING` sensors, `Precipitation total
 (hourly)` from RW and `Precipitation total (daily)` from `sf_2350`. HA's
-statistics see each hour one hour late (11:00-12:00 is added at ~12:28), so
+statistics see each hour one hour late (11:00-12:00 is added at ~12:27), so
 RW's total only lets the last hour of a day spill into the next, while every
 day's rain in the daily one lands in the *next* day's statistics.
 

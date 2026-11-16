@@ -300,7 +300,7 @@ are `TOTAL_INCREASING` and keyed on the release timestamp, never on the value
 changing: two equally wet hours are two releases, and a release seen twice is
 counted once. RW backs `Precipitation total`, the one to use: it is up to date
 within the hour, and HA's statistics see each hour one hour late (11:00-12:00
-is added at ~12:28), so only the last hour of a day spills into the next.
+is added at ~12:27), so only the last hour of a day spills into the next.
 `sf_2350` backs the daily one, whose rain every day lands in the *next* day's
 statistics; it stays (removing it would orphan users' entities), but
 `entity_registry_enabled_default=False`. That only
@@ -483,8 +483,8 @@ Read in their **HDF5 edition** (`raa01-<p>_10000-<yymmddHHMM>-dwd---bin.hdf5`),
 which is ODIM_H5 on DE1200 like RS, with `_parse` reading
 `read_odim_composite_at` (ACRR, gain 0.1, nodata 65535 -> NaN -> `None`). The
 legacy binary edition (.bz2, national 900x900 grid) is not read; ADR 0004 has
-the switch, how the two editions compare, and why SF's `RELEASE_DELAY` is
-31 min.
+the switch, how the two editions compare, and why SF's `RELEASE_DELAY` was
+31 min (30 min 10 s since 2026-11).
 
 ## The radar/ directory
 
@@ -660,7 +660,7 @@ product, and its values are product keys, so `async_setup_entry` binds the
 entity to `coordinators[source]` directly (options reload the entry, so
 binding once at setup is enough):
 
-- `rw` — RW, gauge-adjusted, ~28 min late, counted from its **10-minute
+- `rw` — RW, gauge-adjusted, ~27 min late, counted from its **10-minute
   runs** (`rw_10min`, see "RW 10-minute runs"): the reset shows up to an hour
   sooner than with the hourly run alone, at the same adjustment. The reading
   is `amount`; the reset time is its `source_timestamp`, the end of that
@@ -702,7 +702,7 @@ DWD runs RW every 10 minutes, each run the hour ending at that :x0.
 `RadolanRW` (`rw`) reads the run ending on the hour, so every value is a clock
 hour; `RadolanRW10` (`rw_10min`) is the same file family on a 10-minute grid
 (same URL pattern, same parsing, HDF5 edition). Both have a `RELEASE_DELAY` of
-28 min, since every run minute is published alike (ADR 0002 has the measurement).
+27 min, since every run minute is published alike (ADR 0002 has the measurement).
 
 - **Why :00.** Only a clock hour can be called "previous hour" and line up
   with HA's hourly statistics, and the :00 run is as complete, as timely and

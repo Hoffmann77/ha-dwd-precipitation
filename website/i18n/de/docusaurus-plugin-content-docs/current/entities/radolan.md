@@ -16,7 +16,7 @@ am Boden misst. Die Integration liest zwei RADOLAN-Produkte:
 
 | Sensor | Einheit | Zeitfenster | Verfügbar |
 |--------|---------|-------------|-----------|
-| **Niederschlag vorige Stunde** | mm | die letzte volle Stunde, z. B. 11:00–12:00 | etwa 30 Minuten nach Ende der Stunde (12:28) |
+| **Niederschlag vorige Stunde** | mm | die letzte volle Stunde, z. B. 11:00–12:00 | etwa 30 Minuten nach Ende der Stunde (12:27) |
 | **Niederschlag letzte 24h** | mm | die 24 Stunden bis zur letzten Minute :50 | etwa 30 Minuten nach :50 |
 | **Niederschlag gestern** | mm | der vorige Kalendertag, deutsche Ortszeit | einmal täglich, gegen 00:20 |
 

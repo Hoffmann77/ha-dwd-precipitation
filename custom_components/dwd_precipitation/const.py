@@ -109,7 +109,7 @@ CONF_DRY_STREAK_SOURCE = "dry_streak_source"
 
 # Which product's past-hour total resets the dry streak. Both are 60-minute
 # totals in mm, so the reset threshold means the same thing either way.
-# "rw" = RW, gauge-adjusted: its 10-minute runs (RW_SLIDING_KEY), ~28 min late.
+# "rw" = RW, gauge-adjusted: its 10-minute runs (RW_SLIDING_KEY), ~27 min late.
 # "rs" = RS _000, radar only, a rolling hour refreshed every 5 minutes.
 DRY_STREAK_SOURCE_RW = "rw"
 DRY_STREAK_SOURCE_RS = "rs"

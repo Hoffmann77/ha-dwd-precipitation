@@ -64,7 +64,7 @@ eine andere Entität vergeben, es gibt also keine Konflikte.
 `Niederschlag vorige Stunde` (früher *Precipitation last 1h*) war bisher die
 Stunde bis :50. Jetzt ist es die letzte volle Stunde, etwa 11:00–12:00, die zu
 den Stundenstatistiken von Home Assistant passt. Der Wert kommt etwa
-28 Minuten nach der vollen Stunde.
+27 Minuten nach der vollen Stunde.
 
 `Niederschlag gesamt` wechselt mit auf volle Stunden. Eine aus einer älteren
 Version übernommene Summe wechselt bei ihrer ersten Aktualisierung und lässt

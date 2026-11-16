@@ -978,7 +978,8 @@ class RadolanRW(RadolanProduct):
 
     RELEASE_INTERVAL = timedelta(hours=1)
 
-    RELEASE_DELAY = timedelta(minutes=28)
+    # Mean 26m12s, latest 27m11s (24 files, 2026-11).
+    RELEASE_DELAY = timedelta(minutes=27)
 
     RELEASE_OFFSET = timedelta()
 
@@ -1005,8 +1006,8 @@ class RadolanRW10(RadolanRW):
     RELEASE_INTERVAL = timedelta(minutes=10)
 
     # Observed ~25.7 min after each run's end, every run minute alike (288
-    # runs, 2026-10-13), like the hourly runs it includes.
-    RELEASE_DELAY = timedelta(minutes=28)
+    # runs, 2026-10-13), like the hourly runs it includes, so it keeps RW's delay.
+    RELEASE_DELAY = timedelta(minutes=27)
 
     RELEASE_OFFSET = timedelta()
 
@@ -1032,9 +1033,9 @@ class RadolanSF(RadolanProduct):
     RELEASE_INTERVAL = timedelta(hours=1)
 
     # The HDF5 edition appears ~29.3 min after the window ends (48 files,
-    # 2026-10-10..12), ~2.5 min after the legacy binary one; 31 keeps the
-    # same ~2 min margin RW has.
-    RELEASE_DELAY = timedelta(minutes=31)
+    # 2026-10-10..12), ~2.5 min after the legacy binary one. Remeasured
+    # 2026-11: mean 26m41s, latest 28m02s (24 files).
+    RELEASE_DELAY = timedelta(minutes=30, seconds=10)
 
     RELEASE_OFFSET = timedelta(minutes=50)
 
@@ -1051,7 +1052,7 @@ class RadolanSFLastYesterday(RadolanSF):
 
     RELEASE_INTERVAL = timedelta(hours=24)
 
-    RELEASE_DELAY = timedelta(minutes=31)
+    RELEASE_DELAY = timedelta(minutes=30, seconds=10)
 
     RELEASE_OFFSET = timedelta(hours=23, minutes=50)
 
