@@ -1035,7 +1035,7 @@ class RadolanSF(RadolanProduct):
     # The HDF5 edition appears ~29.3 min after the window ends (48 files,
     # 2026-10-10..12), ~2.5 min after the legacy binary one. Remeasured
     # 2026-11: mean 26m41s, latest 28m02s (24 files).
-    RELEASE_DELAY = timedelta(minutes=30, seconds=10)
+    RELEASE_DELAY = timedelta(minutes=30, seconds=30)
 
     RELEASE_OFFSET = timedelta(minutes=50)
 
@@ -1052,7 +1052,7 @@ class RadolanSFLastYesterday(RadolanSF):
 
     RELEASE_INTERVAL = timedelta(hours=24)
 
-    RELEASE_DELAY = timedelta(minutes=30, seconds=10)
+    RELEASE_DELAY = timedelta(minutes=30, seconds=30)
 
     RELEASE_OFFSET = timedelta(hours=23, minutes=50)
 

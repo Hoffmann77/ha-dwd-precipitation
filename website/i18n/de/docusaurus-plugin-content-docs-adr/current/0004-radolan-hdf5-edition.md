@@ -34,5 +34,5 @@ binäre, daher beträgt der `RELEASE_DELAY` von SF 31 min.
 
 Nachtrag (2026-11): `scripts/check_release_delay.py` hat für SF im Mittel
 26 min 41 s gemessen (spätestens 28 min 02 s, 24 Dateien), daher beträgt der
-`RELEASE_DELAY` von SF jetzt 30 min 10 s und der von RW 27 min (im Mittel
+`RELEASE_DELAY` von SF jetzt 30 min 30 s und der von RW 27 min (im Mittel
 26 min 12 s, spätestens 27 min 11 s).

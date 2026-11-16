@@ -20,8 +20,8 @@ seinem Termin plus dieser Verzögerung ab:
 | HymecNG | alle 5 min | 3½ min später | :03, :08, … |
 | RADOLAN RW | stündlich, zur vollen Stunde | 27 min später | :27 |
 | RADOLAN RW, 10-Minuten-Läufe¹ | alle 10 min | 27 min später | :07, :17, … |
-| RADOLAN SF | stündlich um :50 | 30 min später | :20 |
-| RADOLAN SF, gestern | täglich um 23:50 deutscher Ortszeit | 30 min später | 00:20 Ortszeit |
+| RADOLAN SF | stündlich um :50 | 30½ min später | :20 |
+| RADOLAN SF, gestern | täglich um 23:50 deutscher Ortszeit | 30½ min später | 00:20 Ortszeit |
 
 ¹ Wird nur abgerufen, wenn
 [Zeitraum ohne Niederschlag](../entities/dry-streak.md) RW zählt.

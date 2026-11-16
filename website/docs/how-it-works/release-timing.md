@@ -20,8 +20,8 @@ delay:
 | HymecNG | every 5 min | 3½ min later | :03, :08, … |
 | RADOLAN RW | hourly, on the hour | 27 min later | :27 |
 | RADOLAN RW, 10-minute runs¹ | every 10 min | 27 min later | :07, :17, … |
-| RADOLAN SF | hourly at :50 | 30 min later | :20 |
-| RADOLAN SF, yesterday | daily at 23:50 German local time | 30 min later | 00:20 local time |
+| RADOLAN SF | hourly at :50 | 30½ min later | :20 |
+| RADOLAN SF, yesterday | daily at 23:50 German local time | 30½ min later | 00:20 local time |
 
 ¹ Only fetched when [Timespan without precipitation](../entities/dry-streak.md)
 counts RW.

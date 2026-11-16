@@ -484,7 +484,7 @@ which is ODIM_H5 on DE1200 like RS, with `_parse` reading
 `read_odim_composite_at` (ACRR, gain 0.1, nodata 65535 -> NaN -> `None`). The
 legacy binary edition (.bz2, national 900x900 grid) is not read; ADR 0004 has
 the switch, how the two editions compare, and why SF's `RELEASE_DELAY` was
-31 min (30 min 10 s since 2026-11).
+31 min (30 min 30 s since 2026-11).
 
 ## The radar/ directory
 
