@@ -88,6 +88,9 @@ is the `DWD_LOCATIONS` environment variable.
 
 `scripts/check_release_delay.py` averages the observed delay of recent files
 (their `Last-Modified` header minus the nominal time in the name) and flags a
-product whose mean exceeds its configured `RELEASE_DELAY`. The workflow opens
+product whose mean exceeds its configured `RELEASE_DELAY` by more than
+`--grace` seconds (default 0). Files later than twice the median delay are
+listed in the job summary with their time and URL, so they can be checked by
+hand; they do not change the verdict. The workflow opens
 or updates a tracking issue only when a product is flagged on two
 consecutive runs, so one-off noise does not page anyone.
