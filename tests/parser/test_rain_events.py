@@ -598,6 +598,57 @@ def test_nodata_steps_are_not_refetched():
     assert steps_to_fill(sim.state, at("12:05")) == []
 
 
+def test_measured_holds_the_two_hours_ending_at_base():
+    sim = Sim()
+    rain = lambda t: round((t - DAY).total_seconds() / 3600 % 1, 3)  # noqa: E731
+    views = sim.run("11:00", "14:00", rain)
+
+    view = views["14:00"]
+    assert view["measured_start"] == iso("12:00")
+    assert len(view["measured"]) == 24
+    assert view["measured"] == [rain(at("12:05") + k * STEP) for k in range(24)]
+    # steps is unchanged: the published hour, then the forecast.
+    assert view["steps"][:12] == view["measured"][12:]
+    assert view["steps_start"] == iso("13:00")
+
+
+def test_measured_shows_unknown_steps_as_null():
+    sim = Sim()
+    # Started at 13:00, and DWD no longer served the hour before it.
+    sim.unfillable |= {at("12:00") + k * STEP for k in range(1, 12)}
+    sim.run("13:00", "14:00", DRY)
+    view = sim.release(at("14:05"), DRY)
+    assert view["measured"] == [None] * 10 + [0.0] * 14  # 12:10-12:55 unknown
+    assert view["history_complete"] is True  # the published hour is complete
+
+
+def test_keeping_two_hours_changes_no_event(monkeypatch):
+    """The longer retention is for `measured` only: every event comes out the
+    same as with the published hour alone."""
+    import radar.rain_events as rain_events
+
+    truth = combine(steady(1.0, "12:10", "12:40"), steady(0.5, "13:20", "15:00"))
+    forecast = combine(truth, steady(1.0, "15:30", "15:50"))
+
+    def events(steps: int) -> dict:
+        monkeypatch.setattr(rain_events, "MEASURED_STEPS", steps)
+        sim = Sim()
+        sim.unfillable.add(at("13:35"))
+        views = sim.run("11:30", "16:30", truth, forecast, skip=["13:35"])
+        return {t: (v["events"], v["last_ended"]) for t, v in views.items()}
+
+    kept = events(24)
+    assert any(evts for evts, _ in kept.values()) and any(ended for _, ended in kept.values())
+    assert kept == events(12)
+
+
+def test_measured_is_a_view_key():
+    """The Rain events sensor leaves every view key out of the recorder."""
+    from radar.rain_events import VIEW_KEYS
+
+    assert {"measured_start", "measured"} <= set(VIEW_KEYS)
+
+
 def test_overall_status_prefers_ongoing_and_ignores_unseen():
     from radar.rain_events import NO_EVENT, overall_status
 

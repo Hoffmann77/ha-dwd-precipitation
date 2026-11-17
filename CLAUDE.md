@@ -787,7 +787,12 @@ type fetch; `RainEventsSensor` in sensor.py is the entity.
 
 - **Steps.** The measured step ending at T is the RV analysis (lead 0) of
   release T, and no other release has it, so the integration keeps measured
-  steps itself. The published series is 12 measured + 24 forecast steps. A step
+  steps itself. The published series is 12 measured + 24 forecast steps; the
+  tracker keeps at least `MEASURED_STEPS` (24, two hours), published on their
+  own as `measured_start` + `measured`, so a blueprint can reach back to the
+  newest RW hour. That is retention only (`_prune`): the timeline, the fill
+  and the events still use the published hour and `_keep_from`, and a test
+  asserts the events are the same with 12. A step
   is wet strictly above `wet_step_milli(rain_event_threshold)` thousandths
   (integer arithmetic; selects exactly the steps above option/12).
 - **Recomputed, not accumulated.** The state keeps every measured step from

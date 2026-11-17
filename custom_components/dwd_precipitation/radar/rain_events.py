@@ -41,6 +41,12 @@ SCHEMA = 1
 
 STEP = timedelta(minutes=LEAD_STEP)
 WINDOW_STEPS = STEPS_PER_HOUR  # measured steps published: the hour ending at T
+# Measured steps kept and published as ``measured``: two hours ending at T.
+# Enough to reach back to the newest RW hour, which ends up to ~85 minutes
+# before T, so a blueprint can join RW hours and radar steps without a gap.
+# Only retention: the events still see the published hour and their own
+# steps (WINDOW_STEPS, _keep_from), whatever is kept beyond it.
+MEASURED_STEPS = 2 * STEPS_PER_HOUR
 FORECAST_STEPS = len(LEADS) - 1  # leads 5..120
 PAIR_STEPS = 2
 
@@ -143,6 +149,8 @@ class RainEventsView(TypedDict):
     steps_start: str
     steps: list[float | None]
     history_complete: bool
+    measured_start: str
+    measured: list[float | None]
     events: list[EventView]
     last_ended: EndedRecord | None
 
@@ -439,6 +447,11 @@ def window_start(base: datetime) -> datetime:
 
     """
     return base - (WINDOW_STEPS - 1) * STEP
+
+
+def measured_from(base: datetime) -> datetime:
+    """Return the end of the oldest step kept for ``measured`` (T - 115 min)."""
+    return base - (MEASURED_STEPS - 1) * STEP
 
 
 def steps_to_fill(state: RainEventsState, base: datetime) -> list[datetime]:
@@ -1043,13 +1056,16 @@ def _reset_events_if_needed(state: RainEventsState, base: datetime, wet_milli: i
 
 
 def _prune(state: RainEventsState, base: datetime) -> None:
-    """Drop the measured steps no event and no published window needs.
+    """Drop the measured steps no event and no published series needs.
 
-    Steps known to have no data are kept only while they are in the window.
+    The steps of ``measured`` (two hours) are kept even when no event needs
+    them. Steps known to have no data are kept only while they are in the
+    window.
 
     """
     keep = _keep_from(state, base)
-    state.measured = {t: v for t, v in state.measured.items() if keep <= t <= base}
+    kept_from = min(keep, measured_from(base))
+    state.measured = {t: v for t, v in state.measured.items() if kept_from <= t <= base}
     state.nodata = {t for t in state.nodata if t >= window_start(base)}
     # Types may be ahead of base (HymecNG is usually adopted first).
     state.types = {t: v for t, v in state.types.items() if t >= keep}
@@ -1204,8 +1220,9 @@ def _publish(
     """Return the view of the events as they now stand.
 
     The sensor's attributes: the events by start, the published steps (12
-    measured, 24 forecast) and whether the measured hour is complete, and the
-    last ended event.
+    measured, 24 forecast) and whether the measured hour is complete, the
+    last two hours of measured steps on their own (``measured``, 24 steps,
+    None where unknown), and the last ended event.
 
     """
     events_view: list[EventView] = []
@@ -1225,6 +1242,8 @@ def _publish(
         "steps_start": iso(timeline.start(timeline.series_start)),
         "steps": steps,
         "history_complete": all(v is not None for v in steps[:WINDOW_STEPS]),
+        "measured_start": iso(measured_from(base) - STEP),
+        "measured": [state.measured.get(measured_from(base) + k * STEP) for k in range(MEASURED_STEPS)],
         "events": events_view,
         "last_ended": state.last_ended,
     }

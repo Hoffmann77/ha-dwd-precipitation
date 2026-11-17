@@ -158,6 +158,8 @@ wet_step_mm: 0.008
 steps_start: "2026-10-12T14:00:00+00:00"
 steps: [0.0, 0.0, …, 0.6, 0.9, …, 0.3, 0.0, …]   # 36 Werte
 history_complete: true
+measured_start: "2026-10-12T13:00:00+00:00"
+measured: [0.0, 0.0, …, 0.6, 0.9, …]   # 24 Werte
 events:
   - id: "20261012t1400-0"
     status: ongoing
@@ -200,6 +202,8 @@ last_ended: null
 | `steps_start` | Der Beginn des ersten Schritts in `steps`, eine Stunde vor `base`. |
 | `steps` | Der Regen jedes 5-Minuten-Schritts in mm: zuerst die 12 gemessenen bis `base`, dann die 24 vorhergesagten. `steps[i]` umfasst die 5 Minuten ab `steps_start` + 5 × i Minuten. `null` heißt: keine Daten für diesen Schritt. Der vorhergesagte Teil ist derselbe wie `forecast_5min` von [`Niederschlag erwartet`](radvor-rv.md#precipitation-expected). |
 | `history_complete` | `true`, wenn alle 12 gemessenen Schritte Daten haben. |
+| `measured_start` | Der Beginn des ersten Schritts in `measured`, zwei Stunden vor `base`. |
+| `measured` | Die 24 gemessenen Schritte der letzten zwei Stunden bis `base`, in mm; `null`, wo ein Schritt keine Daten hat. Die letzten 12 sind der gemessene Teil von `steps`. Zusammen mit dem [`Stündlichen Niederschlagsverlauf`](hourly-history.md) kann ein Blueprint die Stunden des DWD mit den Radarschritten nach der neuesten von ihnen verbinden, die bis zu etwa 85 Minuten vor `base` endete. |
 | `events` | Die bevorstehenden, laufenden und `unseen`-Ereignisse, das früheste zuerst. Leer, wenn kein Regen in Sicht ist. |
 | `last_ended` | Das zuletzt beendete Ereignis oder `null`. Siehe [last_ended](#last_ended). |
 
