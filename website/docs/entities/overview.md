@@ -59,6 +59,7 @@ window ended about 3 to 10 minutes earlier. See
 | Precipitation total | `sensor.<name>_precipitation_total` | mm | hourly | [Running totals](totals.md) |
 | Precipitation total daily¹ | `sensor.<name>_precipitation_total_daily` | mm | daily | [Running totals](totals.md) |
 | Timespan without precipitation | `sensor.<name>_timespan_without_precipitation` | d | 5 or 10 min | [Timespan without precipitation](dry-streak.md) |
+| Hourly precipitation history⁴ | `sensor.<name>_hourly_precipitation_history` | time | hourly | [Hourly precipitation history](hourly-history.md) |
 | Rain events² | `sensor.<name>_rain_events` | state | 5 min | [Rain events](rain-events.md) |
 | Rain warning³ | `binary_sensor.<name>_<warning>_rain_warning` | on/off | 5 min | [Rain warnings](rain-warnings.md) |
 | Rain warning status³ | `sensor.<name>_<warning>_rain_warning_status` | state | 5 min | [Rain warnings](rain-warnings.md) |
@@ -66,6 +67,7 @@ window ended about 3 to 10 minutes earlier. See
 ¹ Disabled by default on installs set up from 2026.11.0 on.
 ² Only with the option *Add the "Rain events" sensor* on.
 ³ One pair per rain warning you add, on its own device.
+⁴ Only with the option *Add the "Hourly precipitation history" sensor* on.
 
 ## Radar only or gauge-adjusted
 

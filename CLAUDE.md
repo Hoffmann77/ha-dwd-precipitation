@@ -33,6 +33,9 @@ dry_streak.py         Pure "days without rain" logic: the persisted anchor
                       payload + threshold/downtime-correction helpers and the
                       unwatched RW hours of a gap, used by the
                       TimespanWithoutPrecipitationSensor in sensor.py.
+hourly_history.py     HourlyHistory: the entry's RW hours (store, fill,
+                      view) for the "Hourly precipitation history" sensor;
+                      owned by the RW coordinator (see "Hourly history").
 precipitation_total.py
                       Pure running-total logic: the persisted total payload
                       (with its pending backfill), the reading filter, and the
@@ -847,6 +850,42 @@ type fetch; `RainEventsSensor` in sensor.py is the entity.
 - **Threshold.** `rain_event_threshold` is independent of
   `precipitation_threshold` (no `max()`); changing it drops the events (new
   ids) but keeps the measured steps and `last_ended`.
+
+## Hourly history
+
+`Hourly precipitation history` (`sensor.<device>_hourly_precipitation_history`,
+key `radolan_rw_history`, diagnostic) publishes the RW clock hours the entry
+keeps, for blueprints that sum rain over many hours (ADR 0014):
+
+- **Opt-in, three options** (section `hourly_precipitation_history`; the
+  section name must not be an option key): `hourly_history` (default off),
+  `hourly_history_hours` (1-168, default 72) and `hourly_history_fetch`
+  (default on). Off removes the entity from the registry and setup deletes
+  the store, like Rain events.
+- **Owned by the RW coordinator** (`RadolanRW.history`), never by an entity:
+  the total can be disabled, and the history must not depend on it. Not on
+  `RadolanRW10`, which inherits from `RadolanRW`: its sliding hours are not
+  clock hours.
+- **Kept, not fetched again.** `_async_on_new_release` records the adopted
+  hour; `RadolanRW.async_fetch_release` records every hour another caller
+  downloads (the total's backfill, the dry streak's gap check) and answers an
+  hour already held from the history, with the clock-hour window as metadata.
+  That is the one exception to `async_fetch_release` having no side effects.
+- **Fill.** With the fetch option, every adopted release starts a background
+  round fetching the missing hours OpenData still keeps (`RW_KEPT`, in
+  `const.py`), newest first; the first failure ends it (one INFO per run of
+  failures) and the next release retries. The fill downloads through
+  `_async_fetch_hour`, past the lookup.
+- **View.** The window ends at the newest RW hour *due*
+  (`grid.at_or_before(now - release_delay)`), so a late hour shows in
+  `missing` instead of vanishing. `hours` maps each held hour's end to its mm
+  (`None`: no data for the cell); `missing` lists the rest; `hours_kept`.
+  The state is the newest hour held. Always available: the hours held stay
+  valid while DWD is late. All three attributes are unrecorded.
+- **Persistence.** One `Store` per entry (`hourly_history_store()`), on the
+  entry's `SaveDeadline`, written 10 s after a fill round that added hours,
+  at unload, and deleted in `async_remove_entry`. A store that cannot be read
+  is discarded with a warning; the fill refetches what OpenData keeps.
 
 ## Rain warnings
 

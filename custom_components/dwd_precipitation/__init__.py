@@ -22,6 +22,7 @@ from .options import (
 from .radar.rain_warning import RainWarning
 from .utils import DownloadCache
 from .const import CONF_DRY_STREAK_SOURCE, LEGACY_DRY_STREAK_SOURCE, PLATFORMS
+from .hourly_history import HourlyHistory
 from .rain_events_tracker import RainEventsTracker
 from .save_deadline import SaveDeadline
 from .products import (
@@ -110,6 +111,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: DwdConfigEntry) -> bool:
     save_deadline = SaveDeadline()
     if isinstance(rv, RadvorRV) and rv.rain_tracker is not None:
         rv.rain_tracker.save_deadline = save_deadline
+    rw = by_key.get(RadolanRW.PRODUCT_KEY)
+    if isinstance(rw, RadolanRW) and rw.history is not None:
+        rw.history.save_deadline = save_deadline
 
     # Refresh every product concurrently. async_refresh() records a failure on
     # the coordinator instead of raising, so one dead product cannot veto the
@@ -150,6 +154,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: DwdConfigEntry) -> bool:
         # tracker stored, so using it again starts clean rather than from a
         # state days out of date.
         await RainEventsTracker.async_remove(hass, entry.entry_id)
+    if not options.hourly_history:
+        # Likewise the hourly history: turning it on again starts clean.
+        await HourlyHistory.async_remove(hass, entry.entry_id)
 
     entry.runtime_data = DwdRuntimeData(
         by_key,
@@ -211,8 +218,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: DwdConfigEntry) -> bool
     """Unload a config entry.
 
     Called when the entry is disabled, deleted or reloaded. Removes the sensor
-    platforms; the coordinators cancel their timers and the rain-events tracker
-    saves its state through callbacks they registered with the entry, so
+    platforms; the coordinators cancel their timers, and the rain-events
+    tracker and the hourly history save their state through callbacks they registered with the entry, so
     nothing needs doing here for them.
 
     """
@@ -222,10 +229,12 @@ async def async_unload_entry(hass: HomeAssistant, entry: DwdConfigEntry) -> bool
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Delete what the entry stored when it is removed.
 
-    Called once, after the user deletes the entry. Only the rain-events tracker
-    keeps a file of its own (a Store per entry); the totals and the dry streak
-    live in Home Assistant's restore state, which goes with the entities.
-    Deleting the file here means a removed entry leaves nothing behind.
+    Called once, after the user deletes the entry. The rain-events tracker and
+    the hourly history keep files of their own (a Store each per entry); the
+    totals and the dry streak live in Home Assistant's restore state, which
+    goes with the entities. Deleting the files here means a removed entry
+    leaves nothing behind.
 
     """
     await RainEventsTracker.async_remove(hass, entry.entry_id)
+    await HourlyHistory.async_remove(hass, entry.entry_id)

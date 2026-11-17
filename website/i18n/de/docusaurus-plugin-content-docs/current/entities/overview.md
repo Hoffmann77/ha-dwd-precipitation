@@ -65,6 +65,7 @@ erscheint, ist dieses Fenster schon etwa 3 bis 10 Minuten vorbei. Siehe
 | Niederschlag gesamt | `sensor.<name>_precipitation_total` | mm | stündlich | [Laufende Summen](totals.md) |
 | Niederschlag gesamt täglich¹ | `sensor.<name>_precipitation_total_daily` | mm | täglich | [Laufende Summen](totals.md) |
 | Zeitraum ohne Niederschlag | `sensor.<name>_timespan_without_precipitation` | d | 5 oder 10 min | [Zeitraum ohne Niederschlag](dry-streak.md) |
+| Stündlicher Niederschlagsverlauf⁴ | `sensor.<name>_hourly_precipitation_history` | Zeit | stündlich | [Stündlicher Niederschlagsverlauf](hourly-history.md) |
 | Regenereignisse² | `sensor.<name>_rain_events` | Zustand | 5 min | [Regenereignisse](rain-events.md) |
 | Regenwarnung³ | `binary_sensor.<name>_<warnung>_rain_warning` | an/aus | 5 min | [Regenwarnungen](rain-warnings.md) |
 | Regenwarnung Status³ | `sensor.<name>_<warnung>_rain_warning_status` | Zustand | 5 min | [Regenwarnungen](rain-warnings.md) |
@@ -73,6 +74,7 @@ erscheint, ist dieses Fenster schon etwa 3 bis 10 Minuten vorbei. Siehe
 deaktiviert.
 ² Nur mit eingeschalteter Option *Sensor „Regenereignisse“ hinzufügen*.
 ³ Ein Paar pro Regenwarnung, die du hinzufügst, auf einem eigenen Gerät.
+⁴ Nur mit eingeschalteter Option *Sensor „Stündlicher Niederschlagsverlauf“ hinzufügen*.
 
 ## Nur Radar oder angeeicht {#radar-only-or-gauge-adjusted}
 

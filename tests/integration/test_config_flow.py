@@ -322,11 +322,12 @@ async def test_options_form_has_one_section_per_group(make_entry, hass: HomeAssi
 
 
 @pytest.mark.parametrize(
-    ("options", "warnings", "rain_events_collapsed"),
+    ("options", "warnings", "rain_events_collapsed", "history_collapsed"),
     [
-        ({}, [], True),
-        ({"rain_events": True}, [], False),
-        ({}, [_WARNING], False),
+        ({}, [], True, True),
+        ({"rain_events": True}, [], False, True),
+        ({}, [_WARNING], False, True),
+        ({"hourly_history": True}, [], True, False),
     ],
 )
 async def test_options_form_opens_the_sections_that_matter(
@@ -335,8 +336,10 @@ async def test_options_form_opens_the_sections_that_matter(
     options: dict,
     warnings: list,
     rain_events_collapsed: bool,
+    history_collapsed: bool,
 ) -> None:
-    """The rain-events section opens only when the entry tracks rain events."""
+    """The rain-events section opens only when the entry tracks rain events,
+    the hourly history's only when it is on."""
     entry = make_entry(options, minor_version=2, subentries_data=warnings)
 
     result = await hass.config_entries.options.async_init(entry.entry_id)
@@ -346,6 +349,7 @@ async def test_options_form_opens_the_sections_that_matter(
         "rain_forecast": False,
         "dry_streak": False,
         "rain_event_tracking": rain_events_collapsed,
+        "hourly_precipitation_history": history_collapsed,
         "advanced_options": True,
     }
 
