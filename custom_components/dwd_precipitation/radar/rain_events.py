@@ -217,6 +217,10 @@ class RainEventsState:
     types: dict[datetime, str] = field(default_factory=dict)
     # Steps whose HymecNG file had no type for the cell: not refetched.
     type_nodata: set[datetime] = field(default_factory=set)
+    # Steps filled after they had left the published hour (record_late):
+    # shown in ``measured``, but unknown to the events, which had already
+    # been judged without them.
+    late: set[datetime] = field(default_factory=set)
     # Upcoming, ongoing and unseen events (internal records).
     events: list[dict[str, Any]] = field(default_factory=list)
     last_ended: EndedRecord | None = None
@@ -249,6 +253,7 @@ class RainEventsState:
             "nodata": sorted(iso(t) for t in self.nodata),
             "types": {iso(t): label for t, label in sorted(self.types.items())},
             "type_nodata": sorted(iso(t) for t in self.type_nodata),
+            "late": sorted(iso(t) for t in self.late),
             "events": [_event_to_json(e) for e in self.events],
             "last_ended": self.last_ended,
             "ended_spans": [[iso(a), iso(b)] for a, b in self.ended_spans],
@@ -277,6 +282,7 @@ class RainEventsState:
             nodata={_required_time(t) for t in raw.get("nodata") or []},
             types=_types(raw.get("types")),
             type_nodata={_required_time(t) for t in raw.get("type_nodata") or []},
+            late={_required_time(t) for t in raw.get("late") or []},
             events=[_event_from_json(e) for e in raw.get("events") or []],
             last_ended=_with_type(_optional(raw.get("last_ended"), dict, "last_ended")),
             ended_spans=[
@@ -472,6 +478,39 @@ def steps_to_fill(state: RainEventsState, base: datetime) -> list[datetime]:
     return out
 
 
+def late_steps_to_fill(
+    state: RainEventsState, base: datetime, after: datetime | None
+) -> list[datetime]:
+    """Return the unknown steps of ``measured`` before the window, newest first.
+
+    Only the steps ending after ``after``, the end of the newest RW hour the
+    entry holds: older ones are covered by that hour, so a blueprint never
+    needs them. None (no RW hour held) gives none. Filled with record_late.
+
+    """
+    if after is None:
+        return []
+    t = window_start(base) - STEP
+    out = []
+    while t >= measured_from(base) and t > after:
+        if state.measured.get(t) is None and t not in state.nodata:
+            out.append(t)
+        t -= STEP
+    return out
+
+
+def record_late(state: RainEventsState, step_end: datetime, value: float | None) -> None:
+    """Store a step filled after it left the published hour.
+
+    It shows in ``measured``, but the events keep treating it as unknown:
+    they were judged without it, and a value arriving now must not move an
+    event's start or amounts after they were published.
+
+    """
+    record_measured(state, step_end, value)
+    state.late.add(step_end)
+
+
 def record_measured(
     state: RainEventsState, step_end: datetime, value: float | None
 ) -> None:
@@ -593,6 +632,16 @@ class _Timeline:
         return self.kinds[i] == UNKNOWN and i < self.series_start
 
 
+def _event_step(state: RainEventsState, t: datetime) -> float | None:
+    """Return the measured step ending at ``t`` as the events see it.
+
+    A step filled late (record_late) stays unknown to them: they were judged
+    without it.
+
+    """
+    return None if t in state.late else state.measured.get(t)
+
+
 def _keep_from(state: RainEventsState, base: datetime) -> datetime:
     """Return the end of the oldest measured step still needed.
 
@@ -631,7 +680,7 @@ def _build_timeline(
 
     t = first
     while t <= base:
-        value = state.measured.get(t)
+        value = _event_step(state, t)
         values.append(value)
         kinds.append(
             UNKNOWN if value is None else WET if is_wet(value, wet_milli) else DRY
@@ -777,7 +826,7 @@ def _onset_view(
         if t > base:
             break
         expected += value or 0.0
-        observed += state.measured.get(t) or 0.0
+        observed += _event_step(state, t) or 0.0
     return {
         "base": snapshot["base"],
         "start": snapshot["start"],
@@ -1059,14 +1108,16 @@ def _prune(state: RainEventsState, base: datetime) -> None:
     """Drop the measured steps no event and no published series needs.
 
     The steps of ``measured`` (two hours) are kept even when no event needs
-    them. Steps known to have no data are kept only while they are in the
-    window.
+    them. Steps known to have no data are kept only while ``measured`` shows
+    them, and the late marks with their steps.
 
     """
     keep = _keep_from(state, base)
     kept_from = min(keep, measured_from(base))
     state.measured = {t: v for t, v in state.measured.items() if kept_from <= t <= base}
-    state.nodata = {t for t in state.nodata if t >= window_start(base)}
+    # Kept for ``measured`` too, so the late fill does not refetch them.
+    state.nodata = {t for t in state.nodata if t >= min(window_start(base), measured_from(base))}
+    state.late = {t for t in state.late if t >= kept_from}
     # Types may be ahead of base (HymecNG is usually adopted first).
     state.types = {t: v for t, v in state.types.items() if t >= keep}
     state.type_nodata = {t for t in state.type_nodata if t >= window_start(base)}

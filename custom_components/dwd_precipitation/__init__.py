@@ -114,6 +114,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: DwdConfigEntry) -> bool:
     rw = by_key.get(RadolanRW.PRODUCT_KEY)
     if isinstance(rw, RadolanRW) and rw.history is not None:
         rw.history.save_deadline = save_deadline
+        # Rain events fill their measured steps back to the newest RW hour,
+        # when the history may fetch: the two then join without a gap.
+        if (
+            isinstance(rv, RadvorRV)
+            and rv.rain_tracker is not None
+            and options.hourly_history_fetch
+        ):
+            rv.rain_tracker.attach_rw_hours(rw.history.newest_held)
 
     # Refresh every product concurrently. async_refresh() records a failure on
     # the coordinator instead of raising, so one dead product cannot veto the

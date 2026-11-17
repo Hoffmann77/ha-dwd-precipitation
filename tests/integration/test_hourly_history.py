@@ -283,6 +283,27 @@ async def test_the_entry_stores_share_one_deadline(make_entry, hass: HomeAssista
     await hass.async_block_till_done()
 
 
+@pytest.mark.parametrize(("fetch", "attached"), [(True, True), (False, False)])
+@pytest.mark.asyncio
+async def test_rain_events_fill_back_to_rw_only_when_fetching(
+    make_entry, hass: HomeAssistant, freezer, fetch: bool, attached: bool
+) -> None:
+    freezer.move_to("2026-11-17 12:30:00+00:00")
+    entry = make_entry({**ON, "rain_events": True, "hourly_history_fetch": fetch})
+    with _patched_products():
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    coordinators = entry.runtime_data.coordinators
+    tracker = coordinators["rv"].rain_tracker
+    assert (tracker._newest_rw_hour is not None) is attached
+    if attached:
+        assert tracker._newest_rw_hour() == coordinators["rw"].history.newest_held() == T
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
 @pytest.mark.asyncio
 async def test_turning_it_off_removes_the_sensor_and_the_store(make_entry, hass: HomeAssistant, freezer, hass_storage) -> None:
     freezer.move_to("2026-11-17 12:30:00+00:00")

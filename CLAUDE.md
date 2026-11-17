@@ -792,7 +792,14 @@ type fetch; `RainEventsSensor` in sensor.py is the entity.
   own as `measured_start` + `measured`, so a blueprint can reach back to the
   newest RW hour. That is retention only (`_prune`): the timeline, the fill
   and the events still use the published hour and `_keep_from`, and a test
-  asserts the events are the same with 12. A step
+  asserts the events are the same with 12. With an hourly history that may
+  fetch, setup lends the tracker the newest RW hour held
+  (`attach_rw_hours`), and the fill round also fetches the unknown steps of
+  `measured` after it (`late_steps_to_fill`), after the published hour's
+  analyses and types, within the same budget. They are recorded with
+  `record_late`: shown in `measured`, but in `state.late`, which
+  `_event_step` turns into unknown for every event computation, so a value
+  arriving after the events were judged never moves one. A step
   is wet strictly above `wet_step_milli(rain_event_threshold)` thousandths
   (integer arithmetic; selects exactly the steps above option/12).
 - **Recomputed, not accumulated.** The state keeps every measured step from

@@ -77,6 +77,19 @@ current one each hour, and those
 after a downtime. Hours the history already holds are never downloaded again
 for those sensors.
 
+## Together with Rain events
+
+The newest hour ends about 30 to 90 minutes before now. For the time after
+it, the [`Rain events`](rain-events.md) sensor has the radar's 5-minute steps
+of the last two hours in its `measured` attribute, and its forecast in
+`steps`. A blueprint that needs the rain up to now, or up to two hours ahead,
+adds those after the newest hour: the hours end on the full hour and the
+steps on 5-minute marks, so nothing is counted twice.
+
+With *Fetch missing data from DWD* on, radar steps missed after the newest
+hour (for example during a restart) are fetched too. Steps in `measured`
+before the newest hour may stay `null`; the hour covers them.
+
 ## Example: the rain of the last 6 hours
 
 ```jinja

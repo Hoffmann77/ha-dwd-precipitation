@@ -13,6 +13,8 @@ from radar.rain_events import (
     RainEventsState,
     STEP,
     at_stake,
+    late_steps_to_fill,
+    record_late,
     record_measured,
     record_type,
     steps_to_fill,
@@ -640,6 +642,54 @@ def test_keeping_two_hours_changes_no_event(monkeypatch):
     kept = events(24)
     assert any(evts for evts, _ in kept.values()) and any(ended for _, ended in kept.values())
     assert kept == events(12)
+
+
+def test_late_steps_are_those_after_the_newest_rw_hour():
+    sim = Sim()
+    sim.unfillable |= {at("12:00") + k * STEP for k in range(1, 12)}
+    sim.run("13:00", "14:00", DRY)
+    base = at("14:05")  # measured covers 12:10-14:05, the window 13:10-14:05
+    record_measured(sim.state, base, 0.0)
+
+    assert late_steps_to_fill(sim.state, base, None) == []
+    # RW ends at 12:00: every unknown step of measured before the window.
+    assert late_steps_to_fill(sim.state, base, at("12:00")) == [
+        at("12:55") - k * STEP for k in range(10)
+    ]
+    # RW ends at 12:30: only the steps after it.
+    assert late_steps_to_fill(sim.state, base, at("12:30")) == [
+        at("12:55") - k * STEP for k in range(5)
+    ]
+    # A step without data for the cell is not fetched again.
+    record_late(sim.state, at("12:55"), None)
+    assert at("12:55") not in late_steps_to_fill(sim.state, base, at("12:30"))
+
+
+def test_a_step_filled_late_shows_in_measured_but_not_in_the_events():
+    """Rain the tracker missed during a restart, filled after it left the
+    published hour: `measured` shows it, the events stay as published."""
+    import copy
+
+    truth = steady(1.0, "12:00", "14:30")
+    sim = Sim()
+    sim.run("11:00", "12:25", truth)
+    sim.unfillable |= {at("12:30") + k * STEP for k in range(7)}  # 12:30-13:00
+    down = [(at("12:30") + k * STEP).strftime("%H:%M") for k in range(18)]  # 12:30-13:55
+    sim.run("12:30", "14:00", truth, skip=down)
+    late = copy.deepcopy(sim)
+    for t in late_steps_to_fill(late.state, at("14:05"), at("12:00")):
+        record_late(late.state, t, truth(t))
+
+    plain, filled = sim.release(at("14:05"), truth), late.release(at("14:05"), truth)
+
+    assert filled["measured"] != plain["measured"]
+    assert None not in filled["measured"][:7]  # 12:10-12:40: shown
+    assert plain["events"] and filled["events"] == plain["events"]
+    assert filled["last_ended"] == plain["last_ended"]
+    # The marks survive the store.
+    marks = set(late.state.late)
+    late.restart()
+    assert marks and late.state.late == marks
 
 
 def test_measured_is_a_view_key():

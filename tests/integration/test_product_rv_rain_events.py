@@ -148,6 +148,38 @@ async def test_rv_first_release_fills_the_hour_by_range_reads(rv_tracked) -> Non
     assert len(fills) == 11 and all(h["Range"].startswith("bytes=0-") for h in fills)
 
 
+@pytest.mark.parametrize(
+    ("rw_end", "late"),
+    [
+        (None, []),  # no RW hour held yet: the published hour only
+        ("12:30", ["13:00", "12:55", "12:50", "12:45", "12:40", "12:35"]),
+        ("13:00", []),  # RW covers everything before the window
+    ],
+)
+@pytest.mark.asyncio
+async def test_rv_fills_measured_back_to_the_newest_rw_hour(rv_tracked, rw_end, late) -> None:
+    world = _RVWorld(_rain_between("12:20", "14:10"))
+    coord = rv_tracked()
+    held = None if rw_end is None else DAY_RV.replace(hour=int(rw_end[:2]), minute=int(rw_end[3:]))
+    coord._rain_tracker.attach_rw_hours(lambda: held)
+
+    data, _ = await _rv_release(coord, world, "14:00")
+
+    fills = [ts.strftime("%H:%M") for ts, h in world.requests if h]
+    published = [(DAY_RV.replace(hour=13, minute=55) - timedelta(minutes=5 * k)).strftime("%H:%M") for k in range(11)]
+    # The published hour first, newest first; then the older steps.
+    assert fills == published + late
+    measured = data["rain_events"]["measured"]
+    # 12:05-13:00 are older than the window; only those after the RW end
+    # are filled.
+    assert measured.count(None) == 12 - len(late)
+    # The events never see the late steps: the event starts where the
+    # published hour does, clipped, as without them.
+    event = data["rain_events"]["events"][0]
+    assert event["start"] == "2026-10-12T13:00:00+00:00"
+    assert event["start_clipped"] is True
+
+
 @pytest.mark.asyncio
 async def test_rv_next_release_fills_nothing_and_keeps_the_id(rv_tracked) -> None:
     world = _RVWorld(_rain_between("13:30", "15:00"))

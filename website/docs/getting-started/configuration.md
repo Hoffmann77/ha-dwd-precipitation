@@ -183,6 +183,11 @@ the integration reads anyway are kept, the current one each hour and those
 `Precipitation total` or `Timespan without precipitation` download for
 themselves. See [Missing hours](../entities/hourly-history.md#missing-hours).
 
+With the [`Rain events`](../entities/rain-events.md) sensor on as well, the
+same option also fetches the radar steps of its `measured` attribute that
+were missed since the newest hour, so the two join without a gap. Steps older
+than that hour are not needed and not fetched.
+
 ## Advanced {#advanced-options}
 
 Extra details for templates and charts, and what the sensors show when DWD

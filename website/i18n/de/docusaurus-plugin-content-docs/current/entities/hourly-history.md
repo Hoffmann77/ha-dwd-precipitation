@@ -82,6 +82,21 @@ ohnehin liest: jede Stunde die aktuelle und die, die
 herunterladen. Stunden, die der Verlauf schon enthält, werden für diese
 Sensoren nie erneut heruntergeladen.
 
+## Zusammen mit Regenereignissen {#together-with-rain-events}
+
+Die neueste Stunde endet etwa 30 bis 90 Minuten vor jetzt. Für die Zeit
+danach hat der Sensor [`Regenereignisse`](rain-events.md) die
+5-Minuten-Schritte des Radars der letzten zwei Stunden in seinem Attribut
+`measured`, und seine Vorhersage in `steps`. Ein Blueprint, der den Regen bis
+jetzt oder bis zwei Stunden voraus braucht, fügt diese nach der neuesten
+Stunde an: Die Stunden enden zur vollen Stunde und die Schritte auf
+5-Minuten-Marken, sodass nichts doppelt gezählt wird.
+
+Mit *Fehlende Daten beim DWD abrufen* werden auch Radarschritte abgerufen,
+die nach der neuesten Stunde verpasst wurden (etwa während eines Neustarts).
+Schritte in `measured` vor der neuesten Stunde können `null` bleiben; die
+Stunde deckt sie ab.
+
 ## Beispiel: der Regen der letzten 6 Stunden {#example-the-rain-of-the-last-6-hours}
 
 ```jinja

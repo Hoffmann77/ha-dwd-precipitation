@@ -187,7 +187,7 @@ last_ended: null
 | `steps` | The rain of each 5-minute step, in mm: first the 12 measured ones up to `base`, then the 24 forecast ones. `steps[i]` covers the 5 minutes from `steps_start` + 5 × i minutes. `null` means no data for that step. The forecast part is the same as the `forecast_5min` of [`Precipitation expected`](radvor-rv.md#precipitation-expected). |
 | `history_complete` | `true` when all 12 measured steps have data. |
 | `measured_start` | The start of the first step in `measured`, two hours before `base`. |
-| `measured` | The 24 measured steps of the last two hours, up to `base`, in mm; `null` where a step has no data. The last 12 are the measured part of `steps`. With the [`Hourly precipitation history`](hourly-history.md), a blueprint can join DWD's hours with the radar steps after the newest of them, which ended up to about 85 minutes before `base`. |
+| `measured` | The 24 measured steps of the last two hours, up to `base`, in mm; `null` where a step has no data. The last 12 are the measured part of `steps`. With the [`Hourly precipitation history`](hourly-history.md), a blueprint can join DWD's hours with the radar steps after the newest of them, which ended up to about 85 minutes before `base`. Steps missed before the window are fetched only back to that hour, and only with the history's option [*Fetch missing data from DWD*](../getting-started/configuration.md#hourly-history-fetch); they change no event. |
 | `events` | The upcoming, ongoing and `unseen` events, earliest first. Empty when no rain is in sight. |
 | `last_ended` | The most recent event that has ended, or `null`. See [last_ended](#last_ended). |
 

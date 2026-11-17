@@ -29,6 +29,8 @@ from .radar.rain_events import (
     RainEventsState,
     RainEventsView,
     at_stake,
+    late_steps_to_fill,
+    record_late,
     record_measured,
     record_type,
     steps_to_fill,
@@ -132,6 +134,9 @@ class RainEventsTracker:
         self._fetch_analysis = fetch_analysis
         # Lent by the HymecNG coordinator (attach_types); None without one.
         self._fetch_type: Callable[[datetime], Awaitable[str | None]] | None = None
+        # The end of the newest RW hour the entry holds (attach_rw_hours);
+        # None without an hourly history that may fetch.
+        self._newest_rw_hour: Callable[[], datetime | None] | None = None
         self._publish = publish
         self.store = store if store is not None else rain_events_store(hass, entry.entry_id)
         self.state: RainEventsState | None = None
@@ -160,6 +165,23 @@ class RainEventsTracker:
 
         """
         self._fetch_type = fetch_type
+
+    def attach_rw_hours(self, newest: Callable[[], datetime | None]) -> None:
+        """Fill the steps of ``measured`` back to the newest RW hour, too.
+
+        Called at setup when the entry keeps an hourly history and may fetch.
+        ``newest`` returns the end of the newest RW hour held (None before
+        the first); steps after it that the tracker missed are fetched after
+        the published hour's, so a blueprint can join the two without a gap.
+
+        """
+        self._newest_rw_hour = newest
+
+    def _late_to_fill(self, state: RainEventsState, base: datetime) -> list[datetime]:
+        """Return the steps before the window worth fetching; none without RW hours."""
+        if self._newest_rw_hour is None:
+            return []
+        return late_steps_to_fill(state, base, self._newest_rw_hour())
 
     async def async_record_type(self, release: datetime, label: str | None) -> None:
         """Record the HymecNG type of ``release``, the moment its step ends.
@@ -213,7 +235,12 @@ class RainEventsTracker:
             return None
         milli = self._milli
         running = self.fill_task is not None and not self.fill_task.done()
-        if running or steps_to_fill(state, base) or self._types_to_fill(state, base):
+        if (
+            running
+            or steps_to_fill(state, base)
+            or self._types_to_fill(state, base)
+            or self._late_to_fill(state, base)
+        ):
             self.fill_task = self._entry.async_create_background_task(
                 self._hass,
                 self._async_fill_and_track(
@@ -323,10 +350,12 @@ class RainEventsTracker:
 
         First the analysis of each missed release, then the type of each wet
         measured step without one (only now are the filled steps known to be
-        wet). Both share one RAIN_FILL_BUDGET (30 s) and run sequentially,
-        newest first; the first failure ends that part of the round and the
-        rest wait for the next release, so a failed analysis also postpones
-        the types. Each analysis reads only its member, about 4-7 % of the
+        wet), then, with an hourly history, the analyses of the older steps of
+        ``measured`` back to the newest RW hour (record_late: the events
+        never see them). All share one RAIN_FILL_BUDGET (30 s) and run
+        sequentially, newest first; the first failure ends the round and the
+        rest wait for the next release, so the steps the events need always
+        come first. Each analysis reads only its member, about 4-7 % of the
         archive; each type is one small HymecNG file.
 
         """
@@ -342,7 +371,7 @@ class RainEventsTracker:
             deadline,
         )
         if done and self._fetch_type is not None:
-            await self._async_fill(
+            done = await self._async_fill(
                 self._types_to_fill(state, base),
                 self._fetch_type,
                 lambda step_end, label: record_type(state, step_end, label),
@@ -351,6 +380,16 @@ class RainEventsTracker:
                 lambda err, step_end: _describe_fill_failure(
                     err, step_end, "HymecNG", "step's precipitation type"
                 ),
+                deadline,
+            )
+        if done:
+            await self._async_fill(
+                self._late_to_fill(state, base),
+                self._fetch_analysis,
+                lambda step_end, value: record_late(state, step_end, value),
+                self.fill_latch,
+                "RV analysis",
+                lambda err, step_end: _describe_fill_failure(err, step_end),
                 deadline,
             )
 

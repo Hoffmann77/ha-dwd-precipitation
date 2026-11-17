@@ -330,6 +330,12 @@ class HourlyHistory:
                 out["missing"].append(iso(t))
         return out
 
+    def newest_held(self) -> datetime | None:
+        """Return the end of the newest hour held; None before the first."""
+        if self.state is None or not self.state.hours:
+            return None
+        return max(self.state.hours)
+
     def newest(self, latest: datetime | None) -> datetime | None:
         """Return the end of the newest hour held in the window up to ``latest``."""
         if latest is None or self.state is None:

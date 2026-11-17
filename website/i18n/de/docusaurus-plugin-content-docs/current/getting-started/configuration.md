@@ -197,6 +197,12 @@ gespeichert, jede Stunde die aktuelle und die, die `Niederschlag gesamt` oder
 `Zeitraum ohne Niederschlag` selbst herunterladen. Siehe
 [Fehlende Stunden](../entities/hourly-history.md#missing-hours).
 
+Ist zusätzlich der Sensor [`Regenereignisse`](../entities/rain-events.md)
+an, ruft dieselbe Option auch die Radarschritte seines Attributs `measured`
+ab, die seit der neuesten Stunde verpasst wurden, sodass beide lückenlos
+aneinander anschließen. Ältere Schritte als diese Stunde werden nicht
+gebraucht und nicht abgerufen.
+
 ## Erweitert {#advanced-options}
 
 Zusätzliche Angaben für Templates und Diagramme, und was die Sensoren zeigen,
