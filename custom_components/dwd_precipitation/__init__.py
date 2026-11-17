@@ -23,6 +23,7 @@ from .radar.rain_warning import RainWarning
 from .utils import DownloadCache
 from .const import CONF_DRY_STREAK_SOURCE, LEGACY_DRY_STREAK_SOURCE, PLATFORMS
 from .rain_events_tracker import RainEventsTracker
+from .save_deadline import SaveDeadline
 from .products import (
     RadvorRS,
     RadvorRV,
@@ -105,6 +106,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: DwdConfigEntry) -> bool:
         and rv.rain_tracker is not None
     ):
         hymecng.attach_rain_tracker(rv.rain_tracker)
+    # The entry's stores write idle data together, at one fixed deadline.
+    save_deadline = SaveDeadline()
+    if isinstance(rv, RadvorRV) and rv.rain_tracker is not None:
+        rv.rain_tracker.save_deadline = save_deadline
 
     # Refresh every product concurrently. async_refresh() records a failure on
     # the coordinator instead of raising, so one dead product cannot veto the

@@ -24,6 +24,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
 from .const import DOMAIN
+from .save_deadline import SaveDeadline
 from .radar.rain_events import (
     RainEventsState,
     RainEventsView,
@@ -44,10 +45,9 @@ RAIN_EVENTS_STORE_VERSION = 1
 # One background round of filling missed analyses takes this long, at most.
 RAIN_FILL_BUDGET = timedelta(seconds=30)
 
-# How soon the state is written: promptly while an event or an unknown step is
-# at stake, otherwise not before shutdown (see RainEventsTracker._schedule_save).
+# How soon the state is written while an event or an unknown step is at stake;
+# otherwise at the entry's idle-save deadline (see _schedule_save).
 RAIN_SAVE_DELAY = timedelta(seconds=10)
-RAIN_IDLE_SAVE_DELAY = timedelta(hours=12)
 
 
 def rain_events_store_key(entry_id: str) -> str:
@@ -135,6 +135,9 @@ class RainEventsTracker:
         self._publish = publish
         self.store = store if store is not None else rain_events_store(hass, entry.entry_id)
         self.state: RainEventsState | None = None
+        # When an idle state is written; setup replaces it with the one the
+        # entry's other stores share, so they write together.
+        self.save_deadline = SaveDeadline()
         # RV and HymecNG both reach the state; it is loaded only once.
         self._load_lock = asyncio.Lock()
         self._saved_ended: str | None = None
@@ -395,22 +398,22 @@ class RainEventsTracker:
         return True
 
     def _schedule_save(self, state: RainEventsState) -> None:
-        """Persist the tracker: soon while it matters, else at shutdown.
+        """Persist the tracker: soon while it matters, else at the deadline.
 
-        While something is at stake (an event, an unknown or wet step, a new
-        ended event) the state is written RAIN_SAVE_DELAY after the release. On
-        a dry day nothing is worth an SD-card write every 5 minutes: the long
-        delay is pushed back by each release, and Home Assistant writes pending
-        saves when it stops.
+        While something is at stake (an event, an unknown step, a wet step in
+        the published hour, a new ended event) the state is written
+        RAIN_SAVE_DELAY after the release. On a dry day nothing is worth an
+        SD-card write every 5 minutes: the state waits for the entry's
+        idle-save deadline, which a release does not push back, and Home
+        Assistant writes it when it stops.
 
         """
         ended = (state.last_ended or {}).get("id")
         if at_stake(state) or ended != self._saved_ended:
-            delay = RAIN_SAVE_DELAY
             self._saved_ended = ended
+            self.store.async_delay_save(state.as_dict, RAIN_SAVE_DELAY.total_seconds())
         else:
-            delay = RAIN_IDLE_SAVE_DELAY
-        self.store.async_delay_save(state.as_dict, delay.total_seconds())
+            self.save_deadline.delay_save(self.store, state.as_dict)
 
     async def async_save(self) -> None:
         """Write the state now (entry unload), so a reload reads it back.

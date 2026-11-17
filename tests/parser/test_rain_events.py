@@ -582,6 +582,16 @@ def test_an_unknown_step_is_at_stake():
     assert at_stake(sim.state) is True
 
 
+def test_a_wet_step_before_the_published_hour_is_not_at_stake():
+    sim = Sim()
+    sim.run("12:00", "13:00", DRY)
+    # Kept, but older than the published hour (12:05-13:00): changes no event.
+    record_measured(sim.state, at("11:55"), 1.0)
+    assert at_stake(sim.state) is False
+    record_measured(sim.state, at("12:05"), 1.0)
+    assert at_stake(sim.state) is True
+
+
 def test_nodata_steps_are_not_refetched():
     sim = Sim()
     sim.release(at("12:00"), lambda _t: None)  # no data for the cell at all

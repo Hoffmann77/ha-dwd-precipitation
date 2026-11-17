@@ -55,6 +55,8 @@ utils.py              async_get() HTTP helper (headers, status, separate 206
 rain_events_tracker.py
                       RainEventsTracker: one entry's rain events in HA
                       (store, background fill, save policy).
+save_deadline.py      SaveDeadline: the fixed idle-save time an entry's
+                      stores share (6 h; a release does not move it).
 release_grid.py       ReleaseGrid: a product's release times on its own
                       clock (see "Release timing"). HA-free, no relative
                       imports: the parser and live tiers import it as is.
@@ -813,10 +815,13 @@ type fetch; `RainEventsSensor` in sensor.py is the entity.
   (none right after a restart). Later releases queue behind a running round,
   so the tracker always sees releases in order.
 - **Persistence.** One `Store` per entry (`rain_events_store()`). Written
-  `RAIN_SAVE_DELAY` after a release while something is at stake (an event, a
-  wet or unknown step, a new `last_ended`); otherwise the delayed save is
-  pushed back by every release and happens at shutdown, so a dry day costs no
-  writes. Unload writes it at once (the tracker's own `entry.async_on_unload`;
+  `RAIN_SAVE_DELAY` after a release while something is at stake (an event, an
+  unknown step, a wet step in the published hour, a new `last_ended`);
+  otherwise at the entry's `SaveDeadline` (`save_deadline.py`): a due time
+  `IDLE_SAVE_DELAY` (6 h) ahead that later releases do not move, shared by
+  every store of the entry, so a dry day costs four writes. Not a plain long
+  `async_delay_save`: HA restarts that timer on every call, so a store saved
+  with every release would only ever write at shutdown. Unload writes it at once (the tracker's own `entry.async_on_unload`;
   an options reload must read it back),
   `async_remove_entry` deletes it. A store that cannot be loaded (damaged, or
   another version's) or whose records `RainEventsState.from_dict` rejects

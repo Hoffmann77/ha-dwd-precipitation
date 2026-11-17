@@ -286,19 +286,34 @@ async def test_rv_state_survives_a_restart_through_the_store(rv_tracked, make_en
 
 @pytest.mark.asyncio
 async def test_rv_saves_promptly_only_while_something_is_at_stake(rv_tracked) -> None:
-    from custom_components.dwd_precipitation.rain_events_tracker import (
-        RAIN_IDLE_SAVE_DELAY,
-        RAIN_SAVE_DELAY,
-    )
+    from custom_components.dwd_precipitation.rain_events_tracker import RAIN_SAVE_DELAY
+    from custom_components.dwd_precipitation.save_deadline import IDLE_SAVE_DELAY
 
     coord = rv_tracked()
     store = coord._rain_tracker.store
     with patch.object(store, "async_delay_save", wraps=store.async_delay_save) as save:
         await _rv_release(coord, _RVWorld(lambda _t: 0.0), "14:00")
-        assert save.call_args.args[1] == RAIN_IDLE_SAVE_DELAY.total_seconds()
+        idle = save.call_args.args[1]
+        assert 0 < idle <= IDLE_SAVE_DELAY.total_seconds()
 
-        await _rv_release(coord, _RVWorld(_rain_between("15:00", "15:10")), "14:05")
+        # A dry release does not push the idle save back.
+        await _rv_release(coord, _RVWorld(lambda _t: 0.0), "14:05")
+        assert save.call_args.args[1] <= idle
+
+        await _rv_release(coord, _RVWorld(_rain_between("15:00", "15:10")), "14:10")
         assert save.call_args.args[1] == RAIN_SAVE_DELAY.total_seconds()
+
+
+@pytest.mark.asyncio
+async def test_rv_idle_saves_use_the_entry_deadline(rv_tracked) -> None:
+    from custom_components.dwd_precipitation.save_deadline import SaveDeadline
+
+    coord = rv_tracked()
+    shared = SaveDeadline()
+    coord._rain_tracker.save_deadline = shared
+    with patch.object(shared, "delay_save", wraps=shared.delay_save) as delay_save:
+        await _rv_release(coord, _RVWorld(lambda _t: 0.0), "14:00")
+    delay_save.assert_called_once()
 
 
 @pytest.mark.asyncio

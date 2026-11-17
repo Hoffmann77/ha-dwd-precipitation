@@ -1316,8 +1316,9 @@ def at_stake(state: RainEventsState) -> bool:
 
     True with an event, an unknown step that may still be filled, or a wet step
     in the published hour. False on a dry day with nothing pending: the store
-    can then wait for the next shutdown instead of being written every 5
-    minutes.
+    can then wait for its idle-save deadline instead of being written every 5
+    minutes. A wet step older than the published hour is not at stake on its
+    own: it changes no event, and the tracker keeps more than the hour.
 
     """
     if state.events:
