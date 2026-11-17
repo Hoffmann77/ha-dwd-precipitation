@@ -17,6 +17,7 @@ from custom_components.dwd_precipitation.products import (
 from scripts.check_release_delay import (
     PRODUCTS,
     Measurement,
+    _report_lines,
     measure,
     previous_release,
 )
@@ -255,3 +256,59 @@ def test_measurement_status_error():
     m.error = "boom"
     assert m.status(timedelta(minutes=5)) == "ERROR"
     assert m.overrun is None
+
+
+# ---------------------------------------------------------------------------
+# Outliers and grace
+# ---------------------------------------------------------------------------
+
+def test_outliers_are_listed_with_their_release():
+    """A file later than twice the median is named, so it can be checked by hand."""
+    spec = PRODUCTS["rs"]
+    interval = timedelta(minutes=5)
+    delay = timedelta(minutes=4)
+    offset = timedelta()
+    now = datetime(2025, 6, 1, 13, 37, tzinfo=UTC)
+
+    late = previous_release(now, interval, offset) - 4 * interval  # 13:15, up at 13:34:41
+    lm = _publisher(
+        spec, interval, offset, real_delay=delay, published_before=now,
+        extra={late: timedelta(minutes=19, seconds=41)},
+    )
+    m = measure(spec, _configured(interval, delay, offset), now, last_modified=lm, samples=6)
+
+    assert m.median == delay
+    assert m.outliers() == [(late, timedelta(minutes=19, seconds=41))]
+    text = "\n".join(_report_lines([m], timedelta()))
+    assert f"{late:%Y-%m-%d %H:%M} UTC" in text
+    assert spec.url_for(late) in text
+
+
+def test_no_outliers_on_an_even_spread():
+    spec = PRODUCTS["rw"]
+    interval = timedelta(hours=1)
+    offset = timedelta(minutes=50)
+    now = datetime(2025, 6, 1, 14, 0, tzinfo=UTC)
+    lm = _publisher(spec, interval, offset, timedelta(minutes=26), now)
+    m = measure(spec, _configured(interval, timedelta(minutes=28), offset), now, last_modified=lm, samples=6)
+    assert m.outliers() == []
+    assert "outlier" not in "\n".join(_report_lines([m], timedelta()))
+
+
+def test_grace_is_in_seconds(monkeypatch, capsys):
+    """--grace 30 lets a 20 s overrun pass; --grace=-30 flags a 20 s margin."""
+    import scripts.check_release_delay as check
+
+    def fake_measure(spec, configured, now, **_kwargs):
+        m = Measurement(spec.key, spec.cls.__name__, timedelta(minutes=4), timedelta(minutes=5))
+        m.deltas = [timedelta(minutes=4) + offset_s] * 3
+        m.released = [now] * 3
+        return m
+
+    monkeypatch.setattr(check, "measure", fake_measure)
+    offset_s = timedelta(seconds=20)
+    assert check.main(["--products", "rs", "--grace", "30"]) == 0
+    assert check.main(["--products", "rs", "--grace", "10"]) == 1
+    offset_s = timedelta(seconds=-20)
+    assert check.main(["--products", "rs", "--grace=-30"]) == 1
+    assert check.main(["--products", "rs", "--grace=-10"]) == 0

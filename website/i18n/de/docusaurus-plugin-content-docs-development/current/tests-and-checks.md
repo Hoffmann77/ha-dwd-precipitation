@@ -95,6 +95,11 @@ Produkts pro Ort. Lokal ist dieselbe Eingabe die Umgebungsvariable
 `scripts/check_release_delay.py` mittelt die beobachtete Verzögerung
 aktueller Dateien (ihr `Last-Modified`-Header minus der Termin im Namen) und
 markiert ein Produkt, dessen Mittelwert sein konfiguriertes `RELEASE_DELAY`
-übersteigt. Der Workflow eröffnet oder aktualisiert ein Tracking-Issue nur,
+um mehr als `--grace` Sekunden übersteigt (Standard 0; der geplante Workflow übergibt `-10`, sodass
+ein Produkt markiert wird, sobald sein Mittelwert der Verzögerung auf 10 s
+nahekommt). Dateien, die mehr
+als doppelt so spät wie der Median kommen, stehen mit Zeit und URL in der
+Job-Zusammenfassung, damit du sie von Hand prüfen kannst; am Ergebnis ändern
+sie nichts. Der Workflow eröffnet oder aktualisiert ein Tracking-Issue nur,
 wenn ein Produkt bei zwei aufeinanderfolgenden Läufen markiert wird, sodass
 einmaliges Rauschen niemanden alarmiert.

@@ -56,7 +56,7 @@ version gave another entity, so nothing clashes.
 `Precipitation previous hour` (formerly *Precipitation last 1h*) used to be
 the hour ending at :50. It is now the last full clock hour, such as
 11:00–12:00, which lines up with Home Assistant's hourly statistics. It
-arrives about 28 minutes after the hour.
+arrives about 27 minutes after the hour.
 
 `Precipitation total` moves to clock hours with it. A total carried over
 from an older version moves on its first update and leaves the 10 minutes in

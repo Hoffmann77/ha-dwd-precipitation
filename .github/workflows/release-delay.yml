@@ -43,7 +43,9 @@ jobs:
       - name: Check release delay against DWD OpenData
         id: check
         continue-on-error: true
-        run: uv run python scripts/check_release_delay.py
+        # --grace=-10: flag a product once its mean comes within 10 s of its
+        # RELEASE_DELAY, before the integration actually fetches too early.
+        run: uv run python scripts/check_release_delay.py --grace=-10
 
       - name: Update consecutive-drift streak
         id: streak
