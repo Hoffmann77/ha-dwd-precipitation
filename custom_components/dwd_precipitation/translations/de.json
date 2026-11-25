@@ -63,6 +63,20 @@
               "rain_event_threshold": "Gilt für den Sensor „Regenereignisse“ und für alle Regenwarnungen. 0 zählt jeden Regen, den das Radar sieht. Unabhängig von der gleichnamigen Einstellung unter „Regenvorhersage“."
             }
           },
+          "hourly_precipitation_history": {
+            "name": "Stündlicher Niederschlagsverlauf",
+            "description": "Speichert den angeeichten Regen jeder vergangenen Stunde, für Blueprints, die Regen über mehrere Stunden oder Tage betrachten.",
+            "data": {
+              "hourly_history": "Sensor „Stündlicher Niederschlagsverlauf“ hinzufügen",
+              "hourly_history_hours": "Gespeicherte Stunden",
+              "hourly_history_fetch": "Fehlende Daten beim DWD abrufen"
+            },
+            "data_description": {
+              "hourly_history": "Für Blueprints, die vor lang anhaltendem Regen warnen oder berichten, wie viel gefallen ist. Solange er eingeschaltet ist, speichert die Integration eine kleine Aufzeichnung der vergangenen Stunden. [Mehr zum Sensor]({docs_url}/de/entities/hourly-history)",
+              "hourly_history_hours": "72 deckt den längsten Zeitraum ab, den die Dauerregen-Warnungen des DWD betrachten. Der DWD hält nur die letzten 48 Stunden bereit; ältere Stunden, die verpasst wurden, während Home Assistant aus war, bleiben daher fehlend.",
+              "hourly_history_fetch": "Stunden, die verpasst wurden, während Home Assistant aus war, werden beim DWD abgerufen, je etwa 30 KB, bis zu 48 Stunden zurück. Ausgeschaltet werden nur Stunden gespeichert, die die Integration ohnehin liest. Mit dem Sensor „Regenereignisse“ werden auch seine Radarschritte seit der neuesten Stunde abgerufen. [Mehr]({docs_url}/de/entities/hourly-history#missing-hours)"
+            }
+          },
           "advanced_options": {
             "name": "Erweitert",
             "description": "Zusätzliche Angaben für Templates und Diagramme, und was die Sensoren zeigen, wenn der DWD sich verspätet. Die meisten Installationen ändern hier nichts.",
@@ -184,6 +198,9 @@
       },
       "precipitation_total_daily": {
         "name": "Niederschlag gesamt täglich"
+      },
+      "hourly_precipitation_history": {
+        "name": "Stündlicher Niederschlagsverlauf"
       },
       "precipitation_next_60_min": {
         "name": "Niederschlag nächste 60 min"

@@ -23,3 +23,4 @@ one. Releases are named by their version (`2026.11.0`).
 | [0011](0011-dry-streak-gaps-checked-against-rw.md) | Gaps in the dry-streak source are checked against RW's hours | 2026.11.0 |
 | [0012](0012-rain-event-types-are-measured-only.md) | Rain events have a precipitation type only once it is measured | 2026.11.0 |
 | [0013](0013-rain-warnings-as-subentries.md) | Rain warnings are subentries that filter the rain-events view | 2026.11.0 |
+| [0014](0014-rain-history-is-kept-not-fetched.md) | Rain history is kept from what is read, and filled only from what DWD still serves | 2026.12.0 |

@@ -57,6 +57,9 @@ automatically.
 | | [Measured with](#dry-streak-source) | radar and rain gauges (RW) |
 | [Rain events and rain warnings](#rain-events-and-rain-warnings) | [Add the "Rain events" sensor](#track-rain-events) | off |
 | | [Only count rain heavier than](#rain-event-threshold) | 0.1 mm/h |
+| [Hourly precipitation history](#hourly-precipitation-history) | [Add the "Hourly precipitation history" sensor](#hourly-history) | off |
+| | [Hours to keep](#hourly-history-hours) | 72 h |
+| | [Fetch missing data from DWD](#hourly-history-fetch) | on |
 | [Advanced](#advanced-options) | [Add technical details to the sensors](#technical-details) | off |
 | | [Add the past hour to the hourly rain series](#past-hour-in-the-series) | off |
 | | [Show "unavailable" when the data is out of date](#unavailable-when-out-of-date) | on |
@@ -150,6 +153,40 @@ for the `Rain events` sensor and all rain warnings. `0` counts any rain the
 radar sees; the default is `0.1`. This is separate from the setting of the
 same name under [Rain forecast](#rain-detection-threshold), so the two can
 disagree if you set them differently.
+
+## Hourly precipitation history
+
+Keeps the gauge-adjusted rain of each past hour, for blueprints that look at
+rain over several hours or days. The section is open when the history is on,
+and collapsed otherwise.
+
+### Add the "Hourly precipitation history" sensor {#hourly-history}
+
+Adds the [`Hourly precipitation history`](../entities/hourly-history.md)
+sensor, for blueprints that warn about long-lasting rain or report how much
+fell. Off by default. While it is on, the integration keeps the past hours on
+disk. Turning it off removes the sensor and deletes them, so turning it on
+again starts fresh.
+
+### Hours to keep {#hourly-history-hours}
+
+How many past hours the sensor holds, from 1 to 168 (a week). The default,
+72, covers the longest period DWD's warnings of continuous rain look at. DWD
+keeps only the last 48 hours, so hours older than that which were missed
+while Home Assistant was off stay missing.
+
+### Fetch missing data from DWD {#hourly-history-fetch}
+
+On (the default): hours missed while Home Assistant was off, or while DWD was
+late, are downloaded, about 30 KB each, up to 48 hours back. Off: only hours
+the integration reads anyway are kept, the current one each hour and those
+`Precipitation total` or `Timespan without precipitation` download for
+themselves. See [Missing hours](../entities/hourly-history.md#missing-hours).
+
+With the [`Rain events`](../entities/rain-events.md) sensor on as well, the
+same option also fetches the radar steps of its `measured` attribute that
+were missed since the newest hour, so the two join without a gap. Steps older
+than that hour are not needed and not fetched.
 
 ## Advanced {#advanced-options}
 

@@ -33,6 +33,9 @@ dry_streak.py         Pure "days without rain" logic: the persisted anchor
                       payload + threshold/downtime-correction helpers and the
                       unwatched RW hours of a gap, used by the
                       TimespanWithoutPrecipitationSensor in sensor.py.
+hourly_history.py     HourlyHistory: the entry's RW hours (store, fill,
+                      view) for the "Hourly precipitation history" sensor;
+                      owned by the RW coordinator (see "Hourly history").
 precipitation_total.py
                       Pure running-total logic: the persisted total payload
                       (with its pending backfill), the reading filter, and the
@@ -55,6 +58,8 @@ utils.py              async_get() HTTP helper (headers, status, separate 206
 rain_events_tracker.py
                       RainEventsTracker: one entry's rain events in HA
                       (store, background fill, save policy).
+save_deadline.py      SaveDeadline: the fixed idle-save time an entry's
+                      stores share (6 h; a release does not move it).
 release_grid.py       ReleaseGrid: a product's release times on its own
                       clock (see "Release timing"). HA-free, no relative
                       imports: the parser and live tiers import it as is.
@@ -783,7 +788,19 @@ type fetch; `RainEventsSensor` in sensor.py is the entity.
 
 - **Steps.** The measured step ending at T is the RV analysis (lead 0) of
   release T, and no other release has it, so the integration keeps measured
-  steps itself. The published series is 12 measured + 24 forecast steps. A step
+  steps itself. The published series is 12 measured + 24 forecast steps; the
+  tracker keeps at least `MEASURED_STEPS` (24, two hours), published on their
+  own as `measured_start` + `measured`, so a blueprint can reach back to the
+  newest RW hour. That is retention only (`_prune`): the timeline, the fill
+  and the events still use the published hour and `_keep_from`, and a test
+  asserts the events are the same with 12. With an hourly history that may
+  fetch, setup lends the tracker the newest RW hour held
+  (`attach_rw_hours`), and the fill round also fetches the unknown steps of
+  `measured` after it (`late_steps_to_fill`), after the published hour's
+  analyses and types, within the same budget. They are recorded with
+  `record_late`: shown in `measured`, but in `state.late`, which
+  `_event_step` turns into unknown for every event computation, so a value
+  arriving after the events were judged never moves one. A step
   is wet strictly above `wet_step_milli(rain_event_threshold)` thousandths
   (integer arithmetic; selects exactly the steps above option/12).
 - **Recomputed, not accumulated.** The state keeps every measured step from
@@ -814,10 +831,13 @@ type fetch; `RainEventsSensor` in sensor.py is the entity.
   (none right after a restart). Later releases queue behind a running round,
   so the tracker always sees releases in order.
 - **Persistence.** One `Store` per entry (`rain_events_store()`). Written
-  `RAIN_SAVE_DELAY` after a release while something is at stake (an event, a
-  wet or unknown step, a new `last_ended`); otherwise the delayed save is
-  pushed back by every release and happens at shutdown, so a dry day costs no
-  writes. Unload writes it at once (the tracker's own `entry.async_on_unload`;
+  `RAIN_SAVE_DELAY` after a release while something is at stake (an event, an
+  unknown step, a wet step in the published hour, a new `last_ended`);
+  otherwise at the entry's `SaveDeadline` (`save_deadline.py`): a due time
+  `IDLE_SAVE_DELAY` (6 h) ahead that later releases do not move, shared by
+  every store of the entry, so a dry day costs four writes. Not a plain long
+  `async_delay_save`: HA restarts that timer on every call, so a store saved
+  with every release would only ever write at shutdown. Unload writes it at once (the tracker's own `entry.async_on_unload`;
   an options reload must read it back),
   `async_remove_entry` deletes it. A store that cannot be loaded (damaged, or
   another version's) or whose records `RainEventsState.from_dict` rejects
@@ -843,6 +863,42 @@ type fetch; `RainEventsSensor` in sensor.py is the entity.
 - **Threshold.** `rain_event_threshold` is independent of
   `precipitation_threshold` (no `max()`); changing it drops the events (new
   ids) but keeps the measured steps and `last_ended`.
+
+## Hourly history
+
+`Hourly precipitation history` (`sensor.<device>_hourly_precipitation_history`,
+key `radolan_rw_history`, diagnostic) publishes the RW clock hours the entry
+keeps, for blueprints that sum rain over many hours (ADR 0014):
+
+- **Opt-in, three options** (section `hourly_precipitation_history`; the
+  section name must not be an option key): `hourly_history` (default off),
+  `hourly_history_hours` (1-168, default 72) and `hourly_history_fetch`
+  (default on). Off removes the entity from the registry and setup deletes
+  the store, like Rain events.
+- **Owned by the RW coordinator** (`RadolanRW.history`), never by an entity:
+  the total can be disabled, and the history must not depend on it. Not on
+  `RadolanRW10`, which inherits from `RadolanRW`: its sliding hours are not
+  clock hours.
+- **Kept, not fetched again.** `_async_on_new_release` records the adopted
+  hour; `RadolanRW.async_fetch_release` records every hour another caller
+  downloads (the total's backfill, the dry streak's gap check) and answers an
+  hour already held from the history, with the clock-hour window as metadata.
+  That is the one exception to `async_fetch_release` having no side effects.
+- **Fill.** With the fetch option, every adopted release starts a background
+  round fetching the missing hours OpenData still keeps (`RW_KEPT`, in
+  `const.py`), newest first; the first failure ends it (one INFO per run of
+  failures) and the next release retries. The fill downloads through
+  `_async_fetch_hour`, past the lookup.
+- **View.** The window ends at the newest RW hour *due*
+  (`grid.at_or_before(now - release_delay)`), so a late hour shows in
+  `missing` instead of vanishing. `hours` maps each held hour's end to its mm
+  (`None`: no data for the cell); `missing` lists the rest; `hours_kept`.
+  The state is the newest hour held. Always available: the hours held stay
+  valid while DWD is late. All three attributes are unrecorded.
+- **Persistence.** One `Store` per entry (`hourly_history_store()`), on the
+  entry's `SaveDeadline`, written 10 s after a fill round that added hours,
+  at unload, and deleted in `async_remove_entry`. A store that cannot be read
+  is discarded with a warning; the fill refetches what OpenData keeps.
 
 ## Rain warnings
 
