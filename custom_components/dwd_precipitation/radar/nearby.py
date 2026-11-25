@@ -10,11 +10,16 @@ rain coming towards the location. Grid rows run from north to south and
 columns from west to east, so a cell's offset gives its bearing; grid north
 is within a few degrees of true north, well within an 8-point compass.
 
+Only rain that comes towards the own cell counts: the cells around it are
+read on the side the rain comes from (upstream_max), so rain on the other
+side, or an error of a cell there, never raises a warning.
+
 HymecNG measures the type only where it already rains, so for rain that is
-still on its way the own cell says nothing. The nearest cell around it that
-holds precipitation is the best estimate of what is coming: an estimate, kept
-apart from the measured type of the rain events (ADR 0012) and shown only as
-the rain warning's ``expected_type``.
+still on its way the own cell says nothing. The nearest precipitation on the
+side the rain comes from (nearest_class_by_sector, upstream_nearest) is the
+best estimate of what is coming: an estimate, kept apart from the measured
+type of the rain events (ADR 0012) and shown only as the rain warning's
+``expected_type``.
 
 Pure and HA-free, like everything in radar/.
 
@@ -22,13 +27,18 @@ Pure and HA-free, like everything in radar/.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping, Sequence
 
 import math
+from typing import Any
 
 import numpy as np
 
 COMPASS_8 = ("N", "NE", "E", "SE", "S", "SW", "W", "NW")
+
+# How far either side of the direction the rain comes from a cell may lie and
+# still count (degrees): the facing sector and its two neighbours.
+UPSTREAM_HALF_WIDTH = 67.5
 
 
 def _distances(
@@ -60,6 +70,41 @@ def area_max(
     """
     dist, _, _ = _distances(window, center, cell_m)
     values = window[(dist <= radius_m) & ~np.isnan(window)]
+    if values.size == 0:
+        return None
+    return float(values.max())
+
+
+def _bearings(dy: np.ndarray, dx: np.ndarray) -> np.ndarray:
+    """Return the bearing (degrees, 0 north, 90 east) of (south, east) offsets."""
+    return np.degrees(np.arctan2(dx, -dy)) % 360.0
+
+
+def _angle_between(a: np.ndarray | float, b: float) -> np.ndarray | float:
+    """Return the smallest angle between bearings ``a`` and ``b`` (0..180)."""
+    return np.abs((np.asarray(a) - b + 180.0) % 360.0 - 180.0)
+
+
+def upstream_max(
+    window: np.ndarray,
+    center: tuple[int, int],
+    cell_m: tuple[float, float],
+    radius_m: float,
+    from_bearing: float,
+    half_width: float = UPSTREAM_HALF_WIDTH,
+) -> float | None:
+    """Return the largest value of the own cell and the cells the rain comes from.
+
+    Like area_max, but only the cells within ``radius_m`` whose bearing is
+    within ``half_width`` degrees of ``from_bearing`` (where the rain comes
+    from) count, besides the own cell: within 1.5 km on a 1 km grid the own
+    cell and the three neighbours facing the rain. Rain on the far side, and
+    the errors of the cells there, never count.
+
+    """
+    dist, dy, dx = _distances(window, center, cell_m)
+    facing = (dist == 0) | (_angle_between(_bearings(dy, dx), from_bearing) < half_width)
+    values = window[(dist <= radius_m) & facing & ~np.isnan(window)]
     if values.size == 0:
         return None
     return float(values.max())
@@ -117,6 +162,52 @@ def nearest_class(
     if not hit.any():
         return None
     return int(window.flat[int(np.argmin(np.where(hit, dist, np.inf)))])
+
+
+def nearest_class_by_sector(
+    window: np.ndarray,
+    center: tuple[int, int],
+    cell_m: tuple[float, float],
+    classes: Iterable[int],
+    radius_m: float,
+) -> dict[str, tuple[int, float]]:
+    """Return the nearest cell in ``classes`` of each compass sector, and its distance (m).
+
+    Keyed by COMPASS_8 direction, as seen from the location; the own cell is
+    in none of them (its class is the measured type). A sector without such a
+    cell within ``radius_m`` is left out.
+
+    """
+    dist, dy, dx = _distances(window, center, cell_m)
+    hit = (dist > 0) & (dist <= radius_m) & np.isin(window, list(classes))
+    sector = ((_bearings(dy, dx) + 22.5) // 45.0).astype(int) % 8
+    out: dict[str, tuple[int, float]] = {}
+    for index, name in enumerate(COMPASS_8):
+        mask = hit & (sector == index)
+        if mask.any():
+            i = int(np.argmin(np.where(mask, dist, np.inf)))
+            out[name] = (int(window.flat[i]), float(dist.flat[i]))
+    return out
+
+
+def upstream_nearest(sectors: Mapping[str, Sequence], from_bearing: float) -> Any:
+    """Return the nearest entry of the sectors the rain comes from.
+
+    ``sectors`` maps a COMPASS_8 direction to (value, distance), as
+    nearest_class_by_sector gives them (a stored copy may hold lists, and any
+    value, such as a type label). Only the sector of ``from_bearing`` and its
+    neighbours within UPSTREAM_HALF_WIDTH count, like the cells upstream_max
+    reads. Returns the value of the nearest of them; None when none holds any.
+
+    """
+    found = [
+        sectors[name]
+        for index, name in enumerate(COMPASS_8)
+        if name in sectors and _angle_between(index * 45.0, from_bearing) < UPSTREAM_HALF_WIDTH
+    ]
+    if not found:
+        return None
+    return min(found, key=lambda item: item[1])[0]
 
 
 def _centroid(
@@ -187,3 +278,16 @@ def closest_approach(
         return math.hypot(py, px), 0.0
     t = -(py * vy + px * vx) / speed2
     return math.hypot(py + vy * t, px + vx * t), t
+
+
+def coming_from(velocity: tuple[float, float]) -> int | None:
+    """Return the bearing (whole degrees) the rain comes from, None if it stands still.
+
+    The opposite of the direction it moves in: ``velocity`` (south, east) in
+    m/min as rain_track gives it.
+
+    """
+    vy, vx = velocity
+    if vy == 0 and vx == 0:
+        return None
+    return round(math.degrees(math.atan2(-vx, vy)) % 360.0) % 360

@@ -4,7 +4,18 @@ from __future__ import annotations
 
 import numpy as np
 
-from radar.nearby import area_max, closest_approach, compass, nearest_above, nearest_class, rain_track
+from radar.nearby import (
+    area_max,
+    closest_approach,
+    coming_from,
+    compass,
+    nearest_above,
+    nearest_class,
+    nearest_class_by_sector,
+    rain_track,
+    upstream_max,
+    upstream_nearest,
+)
 
 CELL = (1000.0, 1000.0)
 PRECIP = range(2, 11)
@@ -136,3 +147,41 @@ def test_closest_approach_moving_away_and_standing_still() -> None:
     _, minutes = closest_approach((0.0, 4000.0), (0.0, 200.0))
     assert minutes < 0
     assert closest_approach((0.0, 4000.0), (0.0, 0.0)) == (4000.0, 0.0)
+
+
+def test_upstream_max_reads_only_the_side_the_rain_comes_from() -> None:
+    w = np.zeros((11, 11), dtype=np.float32)
+    w[5, 4] = 0.3  # west neighbour
+    w[5, 6] = 0.9  # east neighbour
+    w[4, 4] = 0.4  # north-west neighbour
+    # Rain from the west: own cell, NW, W and SW count, E does not.
+    assert upstream_max(w, (5, 5), CELL, 1500, 270) == np.float32(0.4)
+    # From the east: only the east neighbour is wet.
+    assert upstream_max(w, (5, 5), CELL, 1500, 90) == np.float32(0.9)
+    # From the south: the own cell and S, SE, SW are dry.
+    assert upstream_max(w, (5, 5), CELL, 1500, 180) == 0.0
+
+
+def test_coming_from_is_opposite_to_the_motion() -> None:
+    assert coming_from((0.0, 100.0)) == 270  # moving east comes from the west
+    assert coming_from((100.0, 0.0)) == 0  # moving south comes from the north
+    assert coming_from((0.0, 0.0)) is None
+
+
+def test_nearest_class_by_sector_and_upstream_nearest() -> None:
+    w = np.zeros((11, 11), dtype=np.int16)
+    w[5, 5] = 4  # own cell: in no sector
+    w[5, 2] = 7  # 3 km west
+    w[5, 9] = 5  # 4 km east
+    w[3, 3] = 8  # NW, about 2.8 km
+    sectors = nearest_class_by_sector(w, (5, 5), CELL, PRECIP, 5000)
+    assert set(sectors) == {"W", "E", "NW"}
+    assert sectors["W"] == (7, 3000.0)
+    # From the west: W and NW (and SW) count; NW is nearer.
+    assert upstream_nearest(sectors, 270) == 8
+    # From the east: only E.
+    assert upstream_nearest(sectors, 90) == 5
+    # From the south: nothing there.
+    assert upstream_nearest(sectors, 180) is None
+    # A stored copy holds lists and labels.
+    assert upstream_nearest({"S": ["snow", 2.0]}, 200) == "snow"

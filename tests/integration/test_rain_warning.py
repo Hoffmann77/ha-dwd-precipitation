@@ -293,27 +293,43 @@ async def test_ongoing_rain_is_rain(make_entry, hass: HomeAssistant) -> None:
 async def test_expected_type_is_the_measured_one_or_the_nearest(
     make_entry, hass: HomeAssistant
 ) -> None:
-    """Upcoming: HymecNG's nearest precipitation; measured: the event's type."""
+    """Upcoming: HymecNG's precipitation on the side the rain comes from."""
     entry = await _set_up(hass, make_entry, [_warning(LAUNDRY, "Laundry")], view=_view(20))
     coordinators = entry.runtime_data.coordinators
     status = "sensor.home_laundry_rain_warning_status"
     assert hass.states.get(status).state == "soon"
     assert hass.states.get(status).attributes["expected_type"] is None
 
-    coordinators["hymecng"].data.data["precipitation_type_nearby"] = "snow"
+    coordinators["hymecng"].data.data["precipitation_type_nearby"] = {
+        "W": ["snow", 3.0],
+        "E": ["rain", 1.0],
+    }
+    rv = coordinators["rv"].data.data
+    rv["approaching"], rv["approach_from_bearing"] = True, 260
     coordinators["rv"].async_update_listeners()
     await hass.async_block_till_done()
     state = hass.states.get(status)
     assert state.state == "soon"
     assert state.attributes["type"] is None
+    # The rain from the west is snow; the nearer rain east of it is behind.
     assert state.attributes["expected_type"] == "snow"
+
+    # Rain that does not come towards the location gives no type.
+    rv["approaching"] = False
+    coordinators["rv"].async_update_listeners()
+    await hass.async_block_till_done()
+    assert hass.states.get(status).attributes["expected_type"] is None
 
 
 async def test_expected_type_prefers_the_measured_type(make_entry, hass: HomeAssistant) -> None:
     entry = await _set_up(
         hass, make_entry, [_warning(LAUNDRY, "Laundry")], view=_view(-10, "ongoing", type_="graupel")
     )
-    entry.runtime_data.coordinators["hymecng"].data.data["precipitation_type_nearby"] = "snow"
+    entry.runtime_data.coordinators["hymecng"].data.data["precipitation_type_nearby"] = {
+        "W": ["snow", 3.0]
+    }
+    rv = entry.runtime_data.coordinators["rv"].data.data
+    rv["approaching"], rv["approach_from_bearing"] = True, 270
     entry.runtime_data.coordinators["rv"].async_update_listeners()
     await hass.async_block_till_done()
 

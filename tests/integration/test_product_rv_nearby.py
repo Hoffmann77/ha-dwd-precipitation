@@ -61,10 +61,10 @@ def series(meta, key: str) -> list:
 
 @pytest.mark.asyncio
 async def test_rain_heading_for_the_location(make_coordinator) -> None:
-    """A shower 5 km west moving east: nearby rain counts for the events."""
+    """A shower 5 km west moving east: the cells west of the location count."""
     data, meta = await fetch(make_coordinator, shower(range(10, 11), 5))
 
-    # Over the own cell at lead 25, within 1.5 km at leads 20 to 30.
+    # Over the own cell at lead 25, in the cell west of it at lead 20.
     assert data["start_in"] == 20
     assert data["area_start_in"] == 15
     assert data["area_start_at"] == TS + timedelta(minutes=15)
@@ -74,9 +74,13 @@ async def test_rain_heading_for_the_location(make_coordinator) -> None:
     assert data["approaching"] is True
     assert data["closest_approach_km"] == 0.0
     assert data["closest_approach_in"] == 25
+    assert data["approach_from_bearing"] == 270
+    assert data["approach_from"] == "W"
 
+    # Once it has passed (lead 30, the cell east of the location) it no
+    # longer counts: only the cells on the side it comes from do.
     area = series(meta, "area_value")
-    assert [lead for lead, v in zip(LEADS, area) if v] == [20, 25, 30]
+    assert [lead for lead, v in zip(LEADS, area) if v] == [20, 25]
     assert series(meta, "event_value") == area
 
 
@@ -87,12 +91,31 @@ async def test_rain_passing_by_counts_only_on_the_own_cell(make_coordinator) -> 
 
     assert data["approaching"] is False
     assert data["closest_approach_km"] == 2.0
-    # The disk sees it (its southern edge is 1 km north) ...
-    assert any(series(meta, "area_value"))
-    assert data["area_start_in"] is not None
-    # ... but the rain events follow the own cell, which stays dry.
+    # Its southern edge is 1 km north, within the disk, but it does not come
+    # towards the own cell: neither the nearby start nor the events see it.
+    assert not any(series(meta, "area_value"))
+    assert data["area_start_in"] is None
     assert series(meta, "event_value") == series(meta, "value")
     assert not any(series(meta, "event_value"))
+
+
+@pytest.mark.asyncio
+async def test_rain_beside_the_track_does_not_count(make_coordinator) -> None:
+    """A wide shower coming from the west: only cells west of the location count."""
+
+    def window(lead: int) -> np.ndarray:
+        # A band 3 cells high coming from the west, plus a speck 1 km east of
+        # the location that stays put (a cell error behind it).
+        w = shower(range(9, 12), 3)(lead)
+        w[CENTER[0], CENTER[1] + 1] = 2.0
+        return w
+
+    data, meta = await fetch(make_coordinator, window)
+
+    assert data["approaching"] is True
+    assert data["approach_from"] == "W"
+    # The speck east of the location (2 mm) never counts, the band does (1 mm).
+    assert max(v for v in series(meta, "area_value") if v is not None) == 1.0
 
 
 @pytest.mark.asyncio

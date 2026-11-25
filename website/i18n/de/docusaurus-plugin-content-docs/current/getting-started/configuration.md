@@ -114,8 +114,10 @@ auch die Zellen rund um den Standort gelesen:
 - [Regenereignisse](../entities/rain-events.md) und
   [Regenwarnungen](../entities/rain-warnings.md) zählen Regen im Umkreis von
   etwa 1,5 km, aber nur, solange die Vorhersage ihn **auf den Standort zu**
-  bewegt. Regen, der vorbeizieht oder sich entfernt, zählt nur dort, wo er
-  für die eigene Zelle vorhergesagt ist; ein Schauer, der die Umgebung nur
+  bewegt, und nur auf der Seite, von der er kommt (die eigene Zelle und die
+  drei Nachbarn, die dem Regen zugewandt sind). Regen, der vorbeizieht oder
+  sich entfernt, und Regen hinter oder neben dem Standort zählt nur dort, wo
+  er für die eigene Zelle vorhergesagt ist; ein Schauer, der die Umgebung nur
   streift, löst also keine Warnung aus.
 
 Ausgeschaltet wird nur die eigene Zelle genutzt, und die beiden Sensoren

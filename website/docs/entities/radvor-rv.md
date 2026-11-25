@@ -126,6 +126,7 @@ rain.
 | `approaching` | `true` while the rain within 10 km moves towards the location |
 | `closest_approach_km` | How close the rain's track comes to the location |
 | `closest_approach_in` | In how many minutes; `0` when it is already moving away |
+| `approaching_from` | Where the rain comes from, as a compass point (the opposite of where it moves); `null` while it stands still |
 
 Where the rain heads is worked out from the first half hour of the forecast:
 the centre of the rain within 10 km is followed from step to step. It is
@@ -134,10 +135,13 @@ approaching when it moves at 3 km/h or more and its track passes within
 moving away is not.
 
 **Precipitation start nearby** is like `Precipitation start`, for rain
-within about 1.5 km (the own cell and its eight neighbours). It follows the
+coming towards the location: while it approaches, the own cell and the
+neighbours within about 1.5 km on the side it comes from (three of the
+eight); otherwise the own cell alone. Rain beside or behind the location,
+and the errors of the cells there, never count. It follows the
 [*Show start and end as*](../getting-started/configuration.md#start-and-end-format)
 setting. With the option on, each step of `forecast_5min` also has
-`area_value` (the wettest cell within 1.5 km, mm) and `event_value` (what the
+`area_value` (that rain, mm) and `event_value` (what the
 [rain events](rain-events.md#what-counts-as-rain) follow).
 
 ## Precipitation expected

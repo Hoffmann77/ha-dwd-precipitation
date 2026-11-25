@@ -95,7 +95,7 @@ Radarvorhersage veraltet ist, wie die anderen Vorhersagesensoren.
 | `peak_1h` | Der Regen in seiner nassesten Stunde, in mm |
 | `peak_10min` | Der Regen in seinen nassesten 10 Minuten, in mm |
 | `type` | Die gemessene Niederschlagsart des Ereignisses, etwa `rain` oder `snow`, wie in [Regenereignisse](rain-events.md); `null`, solange es nur vorhergesagt ist, da der DWD keine Art vorhersagt |
-| `expected_type` | Der gemessene `type`, sobald es ihn gibt; davor eine Schätzung: die Art des nächstgelegenen Niederschlags, den das Radar im Umkreis von 5 km sieht, etwa `snow`, wenn Schnee heranzieht. `null`, wenn dort keiner ist |
+| `expected_type` | Der gemessene `type`, sobald es ihn gibt; davor eine Schätzung: die Art des nächstgelegenen Niederschlags, den das Radar im Umkreis von 5 km auf der Seite sieht, von der der Regen kommt, etwa `snow`, wenn Schnee heranzieht. Nur mit *Umgebung des Standorts auswerten* und solange der Regen heranzieht; sonst `null`, ebenso wenn dort keiner ist |
 
 Alle sind `null`, solange der Status `dry` ist, und keines wird im Verlauf
 aufgezeichnet.
@@ -110,7 +110,7 @@ Option
 im Abschnitt *Regenereignisse und Regenwarnungen* fest, und die Vorhersage reicht zwei Stunden voraus. Mit
 [*Umgebung des Standorts auswerten*](../getting-started/configuration.md#neighbourhood)
 zählt auch Regen im Umkreis von etwa 1,5 km, aber nur, solange er auf den
-Standort zuzieht; ein Schauer, der vorbeizieht oder sich entfernt, warnt nur,
+Standort zuzieht, und nur auf der Seite, von der er kommt; ein Schauer, der vorbeizieht oder sich entfernt, warnt nur,
 wenn er für die eigene Zelle vorhergesagt ist.
 
 - Die Vorlaufzeit zählt ab dem Moment, in dem die Radardaten in Home

@@ -51,7 +51,7 @@ All entities belong to one **DWD Precipitation** device per configured location 
 - **For statistics:** Precipitation total and Precipitation total daily
 - **Timespan without precipitation**, and the optional **Rain events** and **Hourly precipitation history** sensors for blueprints
 - **Rain warning** of the location, built in: a status sensor without minimums and a lead-time slider, ready for the blueprint
-- **Rain warnings** you add yourself, each a device of its own with an on/off and a status entity and a lead-time slider. The status gives the event's start, end and expected precipitation type (estimated from within 5 km before the rain arrives)
+- **Rain warnings** you add yourself, each a device of its own with an on/off and a status entity and a lead-time slider. The status gives the event's start, end and expected precipitation type (estimated from within 5 km on the side the rain comes from, before it arrives)
 
 The [entity overview](https://hoffmann77.github.io/ha-dwd-precipitation/entities/overview) lists every entity with its id, unit and update interval.
 

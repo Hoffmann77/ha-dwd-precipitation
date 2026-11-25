@@ -61,6 +61,7 @@ from .options import rain_warning_subentries
 from .radar.isotime import iso
 from .radar.rain_events import NO_EVENT, ONGOING, UPCOMING, VIEW_KEYS, overall_status
 from .radar import rain_warning
+from .radar.nearby import upstream_nearest
 from .precipitation_total import (
     PrecipitationTotalExtraData,
     counted_on_grid,
@@ -395,6 +396,7 @@ NEAREST_PRECIPITATION_SENSOR = PrecipitationSensorEntityDescription(
         "approaching": d["approaching"],
         "closest_approach_km": d["closest_approach_km"],
         "closest_approach_in": d["closest_approach_in"],
+        "approaching_from": d.get("approach_from"),
     },
 )
 
@@ -758,7 +760,8 @@ class RainWarningStatusSensor(RainWarningEntity, SensorEntity):
         ``peak_10min`` (mm), and its measured ``type`` (None while upcoming).
         ``expected_type`` is the measured type when there is one, otherwise
         HymecNG's estimate: the type of the nearest precipitation within 5 km
-        (None while dry). Empty while there is no view. None of it is
+        on the side the rain comes from, only while RV's neighbourhood
+        evaluation sees it approaching (None while dry, or without that). Empty while there is no view. None of it is
         recorded.
 
         """
@@ -772,17 +775,29 @@ class RainWarningStatusSensor(RainWarningEntity, SensorEntity):
         return attrs
 
     def _nearby_type(self) -> str | None:
-        """Return HymecNG's type of the nearest precipitation, None without one.
+        """Return the type of the precipitation coming towards the location.
 
-        From the entry's HymecNG coordinator, which reads it while the entry
-        tracks rain events, as it does whenever it has a rain warning. None
-        while HymecNG has no recent enough data.
+        HymecNG's nearest precipitation of each sector (read while the entry
+        tracks rain events), taken on the side RV's neighbourhood evaluation
+        says the rain comes from. None unless that rain approaches, so a
+        shower moving away or passing by never sets the type; None too while
+        either coordinator has no recent enough data.
 
         """
-        hymecng = self.coordinator.config_entry.runtime_data.coordinators.get("hymecng")
+        coordinators = self.coordinator.config_entry.runtime_data.coordinators
+        rv = coordinators.get("rv")
+        if rv is None or rv.data is None or not rv.data_is_reportable:
+            return None
+        from_bearing = rv.data.data.get("approach_from_bearing")
+        if not rv.data.data.get("approaching") or from_bearing is None:
+            return None
+        hymecng = coordinators.get("hymecng")
         if hymecng is None or hymecng.data is None or not hymecng.data_is_reportable:
             return None
-        return hymecng.data.data.get(KEY_PRECIPITATION_TYPE_NEARBY)
+        sectors = hymecng.data.data.get(KEY_PRECIPITATION_TYPE_NEARBY)
+        if not isinstance(sectors, dict):
+            return None
+        return upstream_nearest(sectors, from_bearing)
 
 
 class PrecipitationTotalSensor(DwdCoordinatorEntity, RestoreEntity, SensorEntity):

@@ -107,10 +107,11 @@ are read as well:
   nearby*](../entities/radvor-rv.md#rain-nearby).
 - [Rain events](../entities/rain-events.md) and
   [rain warnings](../entities/rain-warnings.md) count rain within about
-  1.5 km, but only while the forecast moves it **towards** the location.
-  Rain that passes by or moves away counts only where it is forecast on the
-  location's own cell, so a shower that only grazes the area raises no
-  warning.
+  1.5 km, but only while the forecast moves it **towards** the location,
+  and only on the side it comes from (the own cell and the three neighbours
+  facing the rain). Rain that passes by or moves away, and rain behind or
+  beside the location, counts only where it is forecast on the location's
+  own cell, so a shower that only grazes the area raises no warning.
 
 Off, only the own cell is used and the two sensors are removed.
 

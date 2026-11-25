@@ -54,7 +54,7 @@ Alle Entitäten gehören zu einem Gerät **DWD Precipitation** pro eingerichtete
 - **Für die Statistik:** Niederschlag gesamt und Niederschlag gesamt täglich
 - **Zeitraum ohne Niederschlag**, und die optionalen Sensoren **Regenereignisse** und **Stündlicher Niederschlagsverlauf** für Blueprints
 - **Regenwarnung** des Orts, eingebaut: ein Status-Sensor ohne Mindestmengen und ein Regler für die Vorwarnzeit, bereit für den Blueprint
-- **Regenwarnungen**, die du selbst hinzufügst, jede ein eigenes Gerät mit einer An/Aus- und einer Status-Entität und einem Regler für die Vorwarnzeit. Der Status nennt Beginn, Ende und die erwartete Niederschlagsart (vor dem Regen geschätzt aus dem Umkreis von 5 km)
+- **Regenwarnungen**, die du selbst hinzufügst, jede ein eigenes Gerät mit einer An/Aus- und einer Status-Entität und einem Regler für die Vorwarnzeit. Der Status nennt Beginn, Ende und die erwartete Niederschlagsart (vor dem Regen geschätzt aus dem Umkreis von 5 km auf der Seite, von der er kommt)
 
 Die [Entitätsübersicht](https://hoffmann77.github.io/ha-dwd-precipitation/de/entities/overview) listet jede Entität mit ihrer ID, Einheit und Aktualisierungsrate.
 

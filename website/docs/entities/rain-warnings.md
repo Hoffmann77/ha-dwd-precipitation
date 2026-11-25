@@ -92,7 +92,7 @@ is out of date, like the other forecast sensors.
 | `peak_1h` | The rain in its wettest hour, in mm |
 | `peak_10min` | The rain in its wettest 10 minutes, in mm |
 | `type` | The measured precipitation type of the event, such as `rain` or `snow`, as in [Rain events](rain-events.md); `null` while it is only forecast, since DWD forecasts no type |
-| `expected_type` | The measured `type` once there is one; before that an estimate: the type of the nearest precipitation the radar sees within 5 km of the location, such as `snow` when snow is approaching. `null` when there is none |
+| `expected_type` | The measured `type` once there is one; before that an estimate: the type of the nearest precipitation the radar sees within 5 km on the side the rain comes from, such as `snow` when snow is approaching. Only with *Evaluate the area around the location* on and while the rain approaches; `null` otherwise, or when there is none |
 
 All of them are `null` while the status is `dry`, and none is recorded in
 history.
@@ -108,7 +108,7 @@ in the *Rain events and rain warnings* section,
 and the forecast reaches two hours ahead. With
 [*Evaluate the area around the location*](../getting-started/configuration.md#neighbourhood)
 on, rain within about 1.5 km counts too, but only while it moves towards the
-location; a shower that passes by or moves away warns only if it is forecast
+location and only on the side it comes from; a shower that passes by or moves away warns only if it is forecast
 on the location's own cell.
 
 - The lead time counts from when the radar data arrives in Home Assistant.

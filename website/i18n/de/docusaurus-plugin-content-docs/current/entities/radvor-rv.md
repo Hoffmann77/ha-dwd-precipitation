@@ -137,6 +137,7 @@ regnet, `unknown` („Unbekannt“), wenn im 5-km-Umkreis keiner ist.
 | `approaching` | `true`, solange der Regen im 10-km-Umkreis auf den Standort zuzieht |
 | `closest_approach_km` | Wie nah die Zugbahn des Regens dem Standort kommt |
 | `closest_approach_in` | In wie vielen Minuten; `0`, wenn er sich schon entfernt |
+| `approaching_from` | Woher der Regen kommt, als Himmelsrichtung (entgegen seiner Zugrichtung); `null`, solange er stehen bleibt |
 
 Wohin der Regen zieht, ergibt sich aus der ersten halben Stunde der
 Vorhersage: Der Schwerpunkt des Regens im 10-km-Umkreis wird von Schritt zu
@@ -145,12 +146,14 @@ und seine Zugbahn höchstens 1 km am Standort vorbeiführt. Regen, der
 stehen bleibt, weiter entfernt vorbeizieht oder sich entfernt, zieht nicht
 heran.
 
-**Niederschlagsbeginn Umkreis** ist wie `Niederschlagsbeginn`, für Regen im
-Umkreis von etwa 1,5 km (die eigene Zelle und ihre acht Nachbarn). Er folgt
-der Einstellung
+**Niederschlagsbeginn Umkreis** ist wie `Niederschlagsbeginn`, für Regen,
+der auf den Standort zukommt: Solange er heranzieht, zählen die eigene Zelle
+und die Nachbarn im Umkreis von etwa 1,5 km auf der Seite, von der er kommt
+(drei der acht); sonst nur die eigene Zelle. Regen neben oder hinter dem
+Standort und die Fehler der Zellen dort zählen nie. Er folgt der Einstellung
 [*Beginn und Ende anzeigen als*](../getting-started/configuration.md#start-and-end-format).
 Mit der Option hat jeder Schritt von `forecast_5min` außerdem `area_value`
-(die nasseste Zelle im 1,5-km-Umkreis, mm) und `event_value` (dem die
+(dieser Regen, mm) und `event_value` (dem die
 [Regenereignisse](rain-events.md#what-counts-as-rain) folgen).
 
 ## Niederschlag erwartet {#precipitation-expected}

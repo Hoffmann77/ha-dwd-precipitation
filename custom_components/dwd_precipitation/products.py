@@ -26,16 +26,17 @@ from .options import DwdOptions, tracks_rain_events
 from .utils import DownloadCache, FailureLatch, async_get
 from .radar.tar_range import fetch_tar_members, member_names, members_from_archive
 from .radar import (
-    area_max,
     closest_approach,
+    coming_from,
     compass,
     nearest_above,
-    nearest_class,
+    nearest_class_by_sector,
     read_odim_classification_at,
     read_odim_classification_near,
     read_odim_composite_at,
     read_odim_composite_near,
     rain_track,
+    upstream_max,
 )
 from .radar.nowcast import (
     FUTURE_HOUR_LEADS,
@@ -184,9 +185,15 @@ def _cells_of(windows: dict[int, _Window | None]) -> dict[int, tuple[float | Non
     return {lead: (w[0], w[4]) if w else None for lead, w in windows.items()}
 
 
-def _area_series(windows: dict[int, _Window | None]) -> list[float | None]:
-    """Return the wettest cell within AREA_NEAR_RADIUS_M at every lead (mm).
+def _area_series(
+    windows: dict[int, _Window | None], from_bearing: int | None
+) -> list[float | None]:
+    """Return the rain coming towards the own cell at every lead (mm).
 
+    While rain approaches (``from_bearing``, where it comes from): the wettest
+    of the own cell and the cells within AREA_NEAR_RADIUS_M on that side
+    (upstream_max). Otherwise (None) the own cell alone, so rain beside or
+    behind the location, and the errors of the cells there, never count.
     Aligned to LEADS and rounded like the own cell's amounts; None for a lead
     without data.
 
@@ -194,7 +201,12 @@ def _area_series(windows: dict[int, _Window | None]) -> list[float | None]:
     out: list[float | None] = []
     for lead in LEADS:
         w = windows[lead]
-        peak = area_max(w[1], w[2], w[3], AREA_NEAR_RADIUS_M) if w else None
+        if not w:
+            peak = None
+        elif from_bearing is None:
+            peak = w[0]
+        else:
+            peak = upstream_max(w[1], w[2], w[3], AREA_NEAR_RADIUS_M, from_bearing)
         out.append(round_mm(peak) if peak is not None else None)
     return out
 
@@ -208,6 +220,9 @@ class _Approach:
     # without a track (no rain, or rain in a single step only).
     closest_km: float | None = None
     closest_in: int | None = None
+    # The bearing (degrees) the rain comes from, the opposite of where it
+    # moves; None without a track or while it stands still.
+    from_bearing: int | None = None
 
 
 def _approach(windows: dict[int, _Window | None], threshold_mmh: float) -> _Approach:
@@ -238,7 +253,12 @@ def _approach(windows: dict[int, _Window | None], threshold_mmh: float) -> _Appr
         and minutes > LEAD_STEP / 2
         and distance <= AREA_APPROACH_RADIUS_M
     )
-    return _Approach(approaching, round(distance / 1000, 1), max(round(minutes), 0))
+    return _Approach(
+        approaching,
+        round(distance / 1000, 1),
+        max(round(minutes), 0),
+        coming_from(velocity),
+    )
 
 
 
@@ -571,8 +591,8 @@ class _RvSeries:
     ends: list[datetime | None]
     base: datetime | None  # T, the end of the analysis window (lead 0)
     radars: tuple[str, ...] | None = None  # the analysis's radar nodes
-    # The wettest cell within AREA_NEAR_RADIUS_M at each lead (mm), with the
-    # neighbourhood evaluation on; None with it off.
+    # The rain coming towards the own cell at each lead (mm, _area_series),
+    # with the neighbourhood evaluation on; None with it off.
     area: list[float | None] | None = None
     # What the rain-events tracker follows with the evaluation on: the area
     # series while rain approaches, else the own cell's (see _approach).
@@ -756,8 +776,9 @@ def _rv_area(
 ) -> _Parts:
     """Return when rain starts nearby, and where the nearest rain is now.
 
-    For the neighbourhood evaluation: the start is detected on the wettest
-    cell within AREA_NEAR_RADIUS_M (series.area) like the own cell's, and the
+    For the neighbourhood evaluation: the start is detected on the rain
+    coming towards the own cell (series.area: the facing cells within
+    AREA_NEAR_RADIUS_M while it approaches, else the own cell), and the
     nearest rain is searched within AREA_SCAN_RADIUS_M of the analysis
     (``analysis``, lead 0's window). Both count rain above ``threshold_mmh``,
     but never below AREA_MIN_INTENSITY. The distance is in km. ``approach``
@@ -788,6 +809,8 @@ def _rv_area(
         "approaching": (approach.approaching, timing),
         "closest_approach_km": (approach.closest_km, timing),
         "closest_approach_in": (approach.closest_in, timing),
+        "approach_from_bearing": (approach.from_bearing, timing),
+        "approach_from": (compass(approach.from_bearing), timing),
     }
 
 
@@ -999,7 +1022,11 @@ class RadvorRV(RadvorProduct):
             )
             approach = _approach(windows, options.precipitation_threshold)
             series = _RvSeries.from_cells(
-                _cells_of(windows), _area_series(windows), approach.approaching
+                _cells_of(windows),
+                _area_series(
+                    windows, approach.from_bearing if approach.approaching else None
+                ),
+                approach.approaching,
             )
         else:
             series = _RvSeries.from_cells(
@@ -1114,13 +1141,14 @@ class HymecNG(WholeFileProduct):
         gives None.
 
         When the entry tracks rain events, the cells within NEARBY_RADIUS_M
-        are read too, and data[``precipitation_type_nearby``] is the type of
-        the nearest precipitation among them (None when there is none): the
-        rain warnings' estimate of what is approaching. Otherwise the key is
-        left out.
+        are read too, and data[``precipitation_type_nearby``] holds the
+        nearest precipitation of each compass sector, as {direction: [type,
+        km]} (sectors without any left out). The rain warnings take the one on
+        the side RV says the rain comes from (upstream_nearest), and only while
+        it approaches. Otherwise the key is left out.
 
         """
-        nearby: dict[str, str | None] = {}
+        nearby: dict[str, dict[str, list]] = {}
         if self._rain_tracker is None:
             value, dataset_what, moment_what = read_odim_classification_at(
                 BytesIO(content), *self.coords
@@ -1131,10 +1159,13 @@ class HymecNG(WholeFileProduct):
                     BytesIO(content), *self.coords, NEARBY_RADIUS_M
                 )
             )
-            nearest = nearest_class(window, center, cell_m, NEARBY_CLASSES, NEARBY_RADIUS_M)
-            nearby[KEY_PRECIPITATION_TYPE_NEARBY] = (
-                None if nearest is None else PRECIP_TYPE_BY_INDEX[nearest]
+            sectors = nearest_class_by_sector(
+                window, center, cell_m, NEARBY_CLASSES, NEARBY_RADIUS_M
             )
+            nearby[KEY_PRECIPITATION_TYPE_NEARBY] = {
+                name: [PRECIP_TYPE_BY_INDEX[cls], round(dist / 1000, 1)]
+                for name, (cls, dist) in sectors.items()
+            }
 
         nodata = int(round(float(moment_what.get("nodata", 255))))
         undetect = int(round(float(moment_what.get("undetect", 254))))

@@ -138,9 +138,9 @@ async def test_hymecng_hands_each_adopted_type_to_the_rain_events_tracker(
 async def test_hymecng_with_rain_events_reads_the_nearest_type(
     make_coordinator, make_entry, kind
 ) -> None:
-    """With a tracker, a real file also gives the nearest precipitation's type."""
+    """With a tracker, a real file also gives the nearest precipitation of each sector."""
     from custom_components.dwd_precipitation.products import RadvorRV
-    from radar.nearby import nearest_class
+    from radar.nearby import nearest_class_by_sector
     from radar.odim import read_odim_classification
 
     content, _ = real_member("hymecng")
@@ -157,15 +157,15 @@ async def test_hymecng_with_rain_events_reads_the_nearest_type(
         data, _meta = await coord._fetch_and_parse(real_release("hymecng"))
 
     whole, _, _ = read_odim_classification(io.BytesIO(content))
-    expected = nearest_class(
+    expected = nearest_class_by_sector(
         whole, (cell["row"], cell["col"]), (1000.0, 1000.0), range(2, 11), 5000
     )
-    assert data["precipitation_type_nearby"] == (
-        None if expected is None else PRECIP_TYPE_BY_INDEX[expected]
-    )
-    if kind == "wet":
-        # Rain on the own cell is the nearest there is.
-        assert data["precipitation_type_nearby"] == PRECIP_TYPE_BY_INDEX[cell["value"]]
+    assert data["precipitation_type_nearby"] == {
+        name: [PRECIP_TYPE_BY_INDEX[cls], round(dist / 1000, 1)]
+        for name, (cls, dist) in expected.items()
+    }
+    # The own cell is in no sector: its type is the measured one.
+    assert all(km > 0 for _type, km in data["precipitation_type_nearby"].values())
 
 
 @pytest.mark.asyncio
