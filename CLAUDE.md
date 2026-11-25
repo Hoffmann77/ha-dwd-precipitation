@@ -36,6 +36,9 @@ dry_streak.py         Pure "days without rain" logic: the persisted anchor
                       payload + threshold/downtime-correction helpers and the
                       unwatched RW hours of a gap, used by the
                       TimespanWithoutPrecipitationSensor in sensor.py.
+hourly_history.py     HourlyHistory: the entry's RW hours (store, fill,
+                      view) for the "Hourly precipitation history" sensor;
+                      owned by the RW coordinator (see "Hourly history").
 precipitation_total.py
                       Pure running-total logic: the persisted total payload
                       (with its pending backfill), the reading filter, and the
@@ -58,6 +61,8 @@ utils.py              async_get() HTTP helper (headers, status, separate 206
 rain_events_tracker.py
                       RainEventsTracker: one entry's rain events in HA
                       (store, background fill, save policy).
+save_deadline.py      SaveDeadline: the fixed idle-save time an entry's
+                      stores share (6 h; a release does not move it).
 release_grid.py       ReleaseGrid: a product's release times on its own
                       clock (see "Release timing"). HA-free, no relative
                       imports: the parser and live tiers import it as is.
@@ -312,7 +317,7 @@ are `TOTAL_INCREASING` and keyed on the release timestamp, never on the value
 changing: two equally wet hours are two releases, and a release seen twice is
 counted once. RW backs `Precipitation total`, the one to use: it is up to date
 within the hour, and HA's statistics see each hour one hour late (11:00-12:00
-is added at ~12:28), so only the last hour of a day spills into the next.
+is added at ~12:27), so only the last hour of a day spills into the next.
 `sf_2350` backs the daily one, whose rain every day lands in the *next* day's
 statistics; it stays (removing it would orphan users' entities), but
 `entity_registry_enabled_default=False`. That only
@@ -398,7 +403,8 @@ scheduled) averages the *observed* availability delay across a rolling window of
 recent files — for each file, its `Last-Modified` header (authoritative GMT)
 minus the nominal timestamp in its name — and flags any product the instant its
 mean lag exceeds its configured `RELEASE_DELAY` — the harmful direction, where
-the coordinator fetches before DWD has published (`--grace` defaults to 0). It
+the coordinator fetches before DWD has published (`--grace`, in seconds, defaults to 0; the workflow passes `-10`, flagging a
+mean within 10 s of `RELEASE_DELAY`). It
 imports the product classes and checks their own constants, so it runs in the
 `ha-test` environment.
 
@@ -494,8 +500,8 @@ Read in their **HDF5 edition** (`raa01-<p>_10000-<yymmddHHMM>-dwd---bin.hdf5`),
 which is ODIM_H5 on DE1200 like RS, with `_parse` reading
 `read_odim_composite_at` (ACRR, gain 0.1, nodata 65535 -> NaN -> `None`). The
 legacy binary edition (.bz2, national 900x900 grid) is not read; ADR 0004 has
-the switch, how the two editions compare, and why SF's `RELEASE_DELAY` is
-31 min.
+the switch, how the two editions compare, and why SF's `RELEASE_DELAY` was
+31 min (30 min 30 s since 2026-11).
 
 ## The radar/ directory
 
@@ -671,7 +677,7 @@ product, and its values are product keys, so `async_setup_entry` binds the
 entity to `coordinators[source]` directly (options reload the entry, so
 binding once at setup is enough):
 
-- `rw` — RW, gauge-adjusted, ~28 min late, counted from its **10-minute
+- `rw` — RW, gauge-adjusted, ~27 min late, counted from its **10-minute
   runs** (`rw_10min`, see "RW 10-minute runs"): the reset shows up to an hour
   sooner than with the hourly run alone, at the same adjustment. The reading
   is `amount`; the reset time is its `source_timestamp`, the end of that
@@ -713,7 +719,7 @@ DWD runs RW every 10 minutes, each run the hour ending at that :x0.
 `RadolanRW` (`rw`) reads the run ending on the hour, so every value is a clock
 hour; `RadolanRW10` (`rw_10min`) is the same file family on a 10-minute grid
 (same URL pattern, same parsing, HDF5 edition). Both have a `RELEASE_DELAY` of
-28 min, since every run minute is published alike (ADR 0002 has the measurement).
+27 min, since every run minute is published alike (ADR 0002 has the measurement).
 
 - **Why :00.** Only a clock hour can be called "previous hour" and line up
   with HA's hourly statistics, and the :00 run is as complete, as timely and
@@ -794,7 +800,19 @@ type fetch; `RainEventsSensor` in sensor.py is the entity.
 
 - **Steps.** The measured step ending at T is the RV analysis (lead 0) of
   release T, and no other release has it, so the integration keeps measured
-  steps itself. The published series is 12 measured + 24 forecast steps. A step
+  steps itself. The published series is 12 measured + 24 forecast steps; the
+  tracker keeps at least `MEASURED_STEPS` (24, two hours), published on their
+  own as `measured_start` + `measured`, so a blueprint can reach back to the
+  newest RW hour. That is retention only (`_prune`): the timeline, the fill
+  and the events still use the published hour and `_keep_from`, and a test
+  asserts the events are the same with 12. With an hourly history that may
+  fetch, setup lends the tracker the newest RW hour held
+  (`attach_rw_hours`), and the fill round also fetches the unknown steps of
+  `measured` after it (`late_steps_to_fill`), after the published hour's
+  analyses and types, within the same budget. They are recorded with
+  `record_late`: shown in `measured`, but in `state.late`, which
+  `_event_step` turns into unknown for every event computation, so a value
+  arriving after the events were judged never moves one. A step
   is wet strictly above `wet_step_milli(rain_event_threshold)` thousandths
   (integer arithmetic; selects exactly the steps above option/12).
 - **Recomputed, not accumulated.** The state keeps every measured step from
@@ -825,10 +843,13 @@ type fetch; `RainEventsSensor` in sensor.py is the entity.
   (none right after a restart). Later releases queue behind a running round,
   so the tracker always sees releases in order.
 - **Persistence.** One `Store` per entry (`rain_events_store()`). Written
-  `RAIN_SAVE_DELAY` after a release while something is at stake (an event, a
-  wet or unknown step, a new `last_ended`); otherwise the delayed save is
-  pushed back by every release and happens at shutdown, so a dry day costs no
-  writes. Unload writes it at once (the tracker's own `entry.async_on_unload`;
+  `RAIN_SAVE_DELAY` after a release while something is at stake (an event, an
+  unknown step, a wet step in the published hour, a new `last_ended`);
+  otherwise at the entry's `SaveDeadline` (`save_deadline.py`): a due time
+  `IDLE_SAVE_DELAY` (6 h) ahead that later releases do not move, shared by
+  every store of the entry, so a dry day costs four writes. Not a plain long
+  `async_delay_save`: HA restarts that timer on every call, so a store saved
+  with every release would only ever write at shutdown. Unload writes it at once (the tracker's own `entry.async_on_unload`;
   an options reload must read it back),
   `async_remove_entry` deletes it. A store that cannot be loaded (damaged, or
   another version's) or whose records `RainEventsState.from_dict` rejects
@@ -854,6 +875,42 @@ type fetch; `RainEventsSensor` in sensor.py is the entity.
 - **Threshold.** `rain_event_threshold` is independent of
   `precipitation_threshold` (no `max()`); changing it drops the events (new
   ids) but keeps the measured steps and `last_ended`.
+
+## Hourly history
+
+`Hourly precipitation history` (`sensor.<device>_hourly_precipitation_history`,
+key `radolan_rw_history`, diagnostic) publishes the RW clock hours the entry
+keeps, for blueprints that sum rain over many hours (ADR 0014):
+
+- **Opt-in, three options** (section `hourly_precipitation_history`; the
+  section name must not be an option key): `hourly_history` (default off),
+  `hourly_history_hours` (1-168, default 72) and `hourly_history_fetch`
+  (default on). Off removes the entity from the registry and setup deletes
+  the store, like Rain events.
+- **Owned by the RW coordinator** (`RadolanRW.history`), never by an entity:
+  the total can be disabled, and the history must not depend on it. Not on
+  `RadolanRW10`, which inherits from `RadolanRW`: its sliding hours are not
+  clock hours.
+- **Kept, not fetched again.** `_async_on_new_release` records the adopted
+  hour; `RadolanRW.async_fetch_release` records every hour another caller
+  downloads (the total's backfill, the dry streak's gap check) and answers an
+  hour already held from the history, with the clock-hour window as metadata.
+  That is the one exception to `async_fetch_release` having no side effects.
+- **Fill.** With the fetch option, every adopted release starts a background
+  round fetching the missing hours OpenData still keeps (`RW_KEPT`, in
+  `const.py`), newest first; the first failure ends it (one INFO per run of
+  failures) and the next release retries. The fill downloads through
+  `_async_fetch_hour`, past the lookup.
+- **View.** The window ends at the newest RW hour *due*
+  (`grid.at_or_before(now - release_delay)`), so a late hour shows in
+  `missing` instead of vanishing. `hours` maps each held hour's end to its mm
+  (`None`: no data for the cell); `missing` lists the rest; `hours_kept`.
+  The state is the newest hour held. Always available: the hours held stay
+  valid while DWD is late. All three attributes are unrecorded.
+- **Persistence.** One `Store` per entry (`hourly_history_store()`), on the
+  entry's `SaveDeadline`, written 10 s after a fill round that added hours,
+  at unload, and deleted in `async_remove_entry`. A store that cannot be read
+  is discarded with a warning; the fill refetches what OpenData keeps.
 
 ## Rain warnings
 

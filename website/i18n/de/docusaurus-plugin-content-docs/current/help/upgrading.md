@@ -8,6 +8,31 @@ Jede Version ist in den
 beschrieben. Diese Seite behandelt die Änderungen, die deine Aufmerksamkeit
 brauchen oder die dich sonst überraschen könnten.
 
+## 2026.12.0 {#2026120}
+
+### Neu: Stündlicher Niederschlagsverlauf {#new-hourly-precipitation-history}
+
+**Stündlicher Niederschlagsverlauf**, einzuschalten mit der Option *Sensor
+„Stündlicher Niederschlagsverlauf“ hinzufügen*: der angeeichte Regen jeder
+vergangenen Stunde, standardmäßig der letzten 72, für Blueprints, die Regen
+über mehrere Stunden oder Tage betrachten. Bittet dich ein Blueprint, für
+seine eigene Aufzeichnung der RW-Stunden *Technische Details zu den Sensoren
+hinzufügen* einzuschalten, kann er stattdessen diesen Sensor lesen. Siehe
+[Stündlicher Niederschlagsverlauf](../entities/hourly-history.md).
+
+### Regenereignisse: zwei Stunden gemessener Schritte {#rain-events-two-hours-of-measured-steps}
+
+Der Sensor `Regenereignisse` hat ein neues Attribut, `measured`: die
+gemessenen Radarschritte der letzten zwei Stunden. Seine anderen Attribute
+sind unverändert und `schema` bleibt `1`, sodass Blueprints weiter
+funktionieren. Siehe [Regenereignisse](../entities/rain-events.md#the-timeline).
+
+### Weniger verlorene Speicherungen nach einem Absturz {#fewer-lost-saves-after-a-crash}
+
+Die Aufzeichnung der Regenereignisse wurde an einem trockenen Tag nur
+geschrieben, wenn Home Assistant beendet wurde. Jetzt wird sie mindestens
+alle 6 Stunden geschrieben, sodass ein Stromausfall weniger davon verliert.
+
 ## 2026.11.0 {#2026110}
 
 ### Umbenannte Entitäten {#renamed-entities}
@@ -64,7 +89,7 @@ eine andere Entität vergeben, es gibt also keine Konflikte.
 `Niederschlag vorige Stunde` (früher *Precipitation last 1h*) war bisher die
 Stunde bis :50. Jetzt ist es die letzte volle Stunde, etwa 11:00–12:00, die zu
 den Stundenstatistiken von Home Assistant passt. Der Wert kommt etwa
-28 Minuten nach der vollen Stunde.
+27 Minuten nach der vollen Stunde.
 
 `Niederschlag gesamt` wechselt mit auf volle Stunden. Eine aus einer älteren
 Version übernommene Summe wechselt bei ihrer ersten Aktualisierung und lässt

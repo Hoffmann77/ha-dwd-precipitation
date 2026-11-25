@@ -25,6 +25,9 @@ from .const import (
     CONF_EXTRA_ATTRIBUTES,
     CONF_FULL_ROLLING_SERIES,
     CONF_NEIGHBOURHOOD,
+    CONF_HOURLY_HISTORY,
+    CONF_HOURLY_HISTORY_FETCH,
+    CONF_HOURLY_HISTORY_HOURS,
     CONF_PRECIPITATION_END_ALGORITHM,
     CONF_PRECIPITATION_RESET_THRESHOLD,
     CONF_PRECIPITATION_THRESHOLD,
@@ -37,6 +40,11 @@ from .const import (
     DEFAULT_EXTRA_ATTRIBUTES,
     DEFAULT_FULL_ROLLING_SERIES,
     DEFAULT_NEIGHBOURHOOD,
+    DEFAULT_HOURLY_HISTORY,
+    DEFAULT_HOURLY_HISTORY_FETCH,
+    DEFAULT_HOURLY_HISTORY_HOURS,
+    HOURLY_HISTORY_HOURS_MAX,
+    HOURLY_HISTORY_HOURS_MIN,
     DEFAULT_PRECIPITATION_END_ALGORITHM,
     DEFAULT_PRECIPITATION_RESET_THRESHOLD,
     DEFAULT_PRECIPITATION_THRESHOLD,
@@ -70,6 +78,9 @@ DEFAULT_OPTIONS: dict[str, Any] = {
     CONF_RAIN_EVENT_THRESHOLD: DEFAULT_RAIN_EVENT_THRESHOLD,
     CONF_PRECIPITATION_RESET_THRESHOLD: DEFAULT_PRECIPITATION_RESET_THRESHOLD,
     CONF_DRY_STREAK_SOURCE: DEFAULT_DRY_STREAK_SOURCE,
+    CONF_HOURLY_HISTORY: DEFAULT_HOURLY_HISTORY,
+    CONF_HOURLY_HISTORY_HOURS: DEFAULT_HOURLY_HISTORY_HOURS,
+    CONF_HOURLY_HISTORY_FETCH: DEFAULT_HOURLY_HISTORY_FETCH,
 }
 
 
@@ -89,6 +100,9 @@ class DwdOptions:
     rain_event_threshold: float
     precipitation_reset_threshold: float
     dry_streak_source: str
+    hourly_history: bool
+    hourly_history_hours: int
+    hourly_history_fetch: bool
     # A stored dry_streak_source no version wrote, replaced by the default;
     # sensor setup warns about it.
     unknown_dry_streak_source: Any = None
@@ -111,6 +125,14 @@ class DwdOptions:
         values["rain_events"] = bool(values["rain_events"])
         values["default_rain_warning"] = bool(values["default_rain_warning"])
         values["neighbourhood_evaluation"] = bool(values["neighbourhood_evaluation"])
+        values["hourly_history"] = bool(values["hourly_history"])
+        values["hourly_history_fetch"] = bool(values["hourly_history_fetch"])
+        # The form's number box gives a float; a stored value out of range
+        # (none the form allows) is clamped rather than refused.
+        values["hourly_history_hours"] = min(
+            max(int(values["hourly_history_hours"]), HOURLY_HISTORY_HOURS_MIN),
+            HOURLY_HISTORY_HOURS_MAX,
+        )
         return cls(**values)
 
     @property

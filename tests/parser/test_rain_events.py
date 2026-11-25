@@ -13,6 +13,8 @@ from radar.rain_events import (
     RainEventsState,
     STEP,
     at_stake,
+    late_steps_to_fill,
+    record_late,
     record_measured,
     record_type,
     steps_to_fill,
@@ -582,10 +584,119 @@ def test_an_unknown_step_is_at_stake():
     assert at_stake(sim.state) is True
 
 
+def test_a_wet_step_before_the_published_hour_is_not_at_stake():
+    sim = Sim()
+    sim.run("12:00", "13:00", DRY)
+    # Kept, but older than the published hour (12:05-13:00): changes no event.
+    record_measured(sim.state, at("11:55"), 1.0)
+    assert at_stake(sim.state) is False
+    record_measured(sim.state, at("12:05"), 1.0)
+    assert at_stake(sim.state) is True
+
+
 def test_nodata_steps_are_not_refetched():
     sim = Sim()
     sim.release(at("12:00"), lambda _t: None)  # no data for the cell at all
     assert steps_to_fill(sim.state, at("12:05")) == []
+
+
+def test_measured_holds_the_two_hours_ending_at_base():
+    sim = Sim()
+    rain = lambda t: round((t - DAY).total_seconds() / 3600 % 1, 3)  # noqa: E731
+    views = sim.run("11:00", "14:00", rain)
+
+    view = views["14:00"]
+    assert view["measured_start"] == iso("12:00")
+    assert len(view["measured"]) == 24
+    assert view["measured"] == [rain(at("12:05") + k * STEP) for k in range(24)]
+    # steps is unchanged: the published hour, then the forecast.
+    assert view["steps"][:12] == view["measured"][12:]
+    assert view["steps_start"] == iso("13:00")
+
+
+def test_measured_shows_unknown_steps_as_null():
+    sim = Sim()
+    # Started at 13:00, and DWD no longer served the hour before it.
+    sim.unfillable |= {at("12:00") + k * STEP for k in range(1, 12)}
+    sim.run("13:00", "14:00", DRY)
+    view = sim.release(at("14:05"), DRY)
+    assert view["measured"] == [None] * 10 + [0.0] * 14  # 12:10-12:55 unknown
+    assert view["history_complete"] is True  # the published hour is complete
+
+
+def test_keeping_two_hours_changes_no_event(monkeypatch):
+    """The longer retention is for `measured` only: every event comes out the
+    same as with the published hour alone."""
+    import radar.rain_events as rain_events
+
+    truth = combine(steady(1.0, "12:10", "12:40"), steady(0.5, "13:20", "15:00"))
+    forecast = combine(truth, steady(1.0, "15:30", "15:50"))
+
+    def events(steps: int) -> dict:
+        monkeypatch.setattr(rain_events, "MEASURED_STEPS", steps)
+        sim = Sim()
+        sim.unfillable.add(at("13:35"))
+        views = sim.run("11:30", "16:30", truth, forecast, skip=["13:35"])
+        return {t: (v["events"], v["last_ended"]) for t, v in views.items()}
+
+    kept = events(24)
+    assert any(evts for evts, _ in kept.values()) and any(ended for _, ended in kept.values())
+    assert kept == events(12)
+
+
+def test_late_steps_are_those_after_the_newest_rw_hour():
+    sim = Sim()
+    sim.unfillable |= {at("12:00") + k * STEP for k in range(1, 12)}
+    sim.run("13:00", "14:00", DRY)
+    base = at("14:05")  # measured covers 12:10-14:05, the window 13:10-14:05
+    record_measured(sim.state, base, 0.0)
+
+    assert late_steps_to_fill(sim.state, base, None) == []
+    # RW ends at 12:00: every unknown step of measured before the window.
+    assert late_steps_to_fill(sim.state, base, at("12:00")) == [
+        at("12:55") - k * STEP for k in range(10)
+    ]
+    # RW ends at 12:30: only the steps after it.
+    assert late_steps_to_fill(sim.state, base, at("12:30")) == [
+        at("12:55") - k * STEP for k in range(5)
+    ]
+    # A step without data for the cell is not fetched again.
+    record_late(sim.state, at("12:55"), None)
+    assert at("12:55") not in late_steps_to_fill(sim.state, base, at("12:30"))
+
+
+def test_a_step_filled_late_shows_in_measured_but_not_in_the_events():
+    """Rain the tracker missed during a restart, filled after it left the
+    published hour: `measured` shows it, the events stay as published."""
+    import copy
+
+    truth = steady(1.0, "12:00", "14:30")
+    sim = Sim()
+    sim.run("11:00", "12:25", truth)
+    sim.unfillable |= {at("12:30") + k * STEP for k in range(7)}  # 12:30-13:00
+    down = [(at("12:30") + k * STEP).strftime("%H:%M") for k in range(18)]  # 12:30-13:55
+    sim.run("12:30", "14:00", truth, skip=down)
+    late = copy.deepcopy(sim)
+    for t in late_steps_to_fill(late.state, at("14:05"), at("12:00")):
+        record_late(late.state, t, truth(t))
+
+    plain, filled = sim.release(at("14:05"), truth), late.release(at("14:05"), truth)
+
+    assert filled["measured"] != plain["measured"]
+    assert None not in filled["measured"][:7]  # 12:10-12:40: shown
+    assert plain["events"] and filled["events"] == plain["events"]
+    assert filled["last_ended"] == plain["last_ended"]
+    # The marks survive the store.
+    marks = set(late.state.late)
+    late.restart()
+    assert marks and late.state.late == marks
+
+
+def test_measured_is_a_view_key():
+    """The Rain events sensor leaves every view key out of the recorder."""
+    from radar.rain_events import VIEW_KEYS
+
+    assert {"measured_start", "measured"} <= set(VIEW_KEYS)
 
 
 def test_overall_status_prefers_ongoing_and_ignores_unseen():

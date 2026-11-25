@@ -15,7 +15,7 @@ gauge on the ground measures. The integration reads two RADOLAN products:
 
 | Sensor | Unit | Window | Arrives |
 |--------|------|--------|---------|
-| **Precipitation previous hour** | mm | the last full clock hour, e.g. 11:00–12:00 | about 30 minutes after the hour ends (12:28) |
+| **Precipitation previous hour** | mm | the last full clock hour, e.g. 11:00–12:00 | about 30 minutes after the hour ends (12:27) |
 | **Precipitation last 24h** | mm | the 24 hours ending at the last :50 | about 30 minutes after :50 |
 | **Precipitation yesterday** | mm | the previous calendar day, German local time | once a day, around 00:20 |
 

@@ -23,6 +23,7 @@ const sidebars = {
         'entities/radolan',
         'entities/totals',
         'entities/dry-streak',
+        'entities/hourly-history',
         'entities/rain-events',
         'entities/rain-warnings',
         'entities/attributes',

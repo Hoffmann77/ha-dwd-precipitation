@@ -139,6 +139,32 @@ CONF_COMBINE = "combine"
 # Created only when the dry streak counts RW.
 RW_SLIDING_KEY = "rw_10min"
 
+# How many RW releases before the current one OpenData keeps: 48 h of runs,
+# ten minutes apart, so the current :00 run and the 47 before it. How far back
+# the total, the dry streak and the hourly history can fetch a missed hour.
+RW_KEPT = 47
+
+CONF_HOURLY_HISTORY = "hourly_history"
+
+# Whether the entry keeps the "Hourly precipitation history" sensor and its
+# store. Off by default: its hours are for blueprints, like the Rain events.
+DEFAULT_HOURLY_HISTORY = False
+
+CONF_HOURLY_HISTORY_HOURS = "hourly_history_hours"
+
+# How many RW hours the history holds, ending at the newest one due. 72 is the
+# longest window DWD's continuous-rain warnings use; at most a week.
+DEFAULT_HOURLY_HISTORY_HOURS = 72
+HOURLY_HISTORY_HOURS_MIN, HOURLY_HISTORY_HOURS_MAX = 1, 168
+
+CONF_HOURLY_HISTORY_FETCH = "hourly_history_fetch"
+
+# Whether the history fetches the hours it missed from DWD (at most RW_KEPT
+# back, ~30 KB each), and the radar steps since the newest one for the Rain
+# events sensor. Hours the total or the dry streak fetch anyway are kept
+# either way.
+DEFAULT_HOURLY_HISTORY_FETCH = True
+
 CONF_PRECIPITATION_RESET_THRESHOLD = "precipitation_reset_threshold"
 
 # mm; a past-hour total from the dry-streak source at/above this value resets
@@ -149,7 +175,7 @@ CONF_DRY_STREAK_SOURCE = "dry_streak_source"
 
 # Which product's past-hour total resets the dry streak. Both are 60-minute
 # totals in mm, so the reset threshold means the same thing either way.
-# "rw" = RW, gauge-adjusted: its 10-minute runs (RW_SLIDING_KEY), ~28 min late.
+# "rw" = RW, gauge-adjusted: its 10-minute runs (RW_SLIDING_KEY), ~27 min late.
 # "rs" = RS _000, radar only, a rolling hour refreshed every 5 minutes.
 DRY_STREAK_SOURCE_RW = "rw"
 DRY_STREAK_SOURCE_RS = "rs"

@@ -76,34 +76,34 @@ async def test_overlapping_refreshes_fetch_once(make_coordinator, hass) -> None:
 
 
 async def test_rs_track_time_change_args(make_coordinator):
-    """RS: 5-min cadence, +4m10s availability → all hours, minutes {4,9,…,59}, sec 10."""
+    """RS: 5-min cadence, +4m15s availability → all hours, minutes {4,9,…,59}, sec 15."""
     coord = make_coordinator(RadvorRS)
     args = coord.track_time_change_args
     assert len(args) == 1
     entry = args[0]
-    assert entry["second"] == 10
+    assert entry["second"] == 15
     assert entry["hour"] == list(range(24))
     assert entry["minute"] == [4, 9, 14, 19, 24, 29, 34, 39, 44, 49, 54, 59]
 
 
 async def test_rw_track_time_change_args(make_coordinator):
-    """RW: hourly at :00 + 28m delay → all hours at minute 28, second 0."""
+    """RW: hourly at :00 + 27m delay → all hours at minute 27, second 0."""
     coord = make_coordinator(RadolanRW)
     args = coord.track_time_change_args
     assert len(args) == 1
     entry = args[0]
     assert entry["second"] == 0
-    assert entry["minute"] == [28]
+    assert entry["minute"] == [27]
     assert entry["hour"] == list(range(24))
 
 
 async def test_rw_get_latest_release(make_coordinator):
-    """13:00 − 28m delay = 12:32 → previous :00 release is 12:00."""
+    """13:00 − 27m delay = 12:33 → previous :00 release is 12:00."""
     coord = make_coordinator(RadolanRW)
     now = datetime(2025, 6, 1, 13, 0, tzinfo=UTC)
     assert coord._get_latest_release(now) == datetime(2025, 6, 1, 12, 0, tzinfo=UTC)
-    # 12:27 − 28m = 11:59 → still 11:00.
-    now = datetime(2025, 6, 1, 12, 27, tzinfo=UTC)
+    # 12:26 − 27m = 11:59 → still 11:00.
+    now = datetime(2025, 6, 1, 12, 26, tzinfo=UTC)
     assert coord._get_latest_release(now) == datetime(2025, 6, 1, 11, 0, tzinfo=UTC)
 
 
@@ -125,12 +125,12 @@ async def test_stale_deadline_runs_from_the_overdue_release(make_coordinator):
     assert coord._stale_deadline() is None
     assert coord._data_is_stale(datetime(2025, 6, 1, 13, 0, tzinfo=UTC)) is True
 
-    # cached 11:00; the 12:00 release is due at 12:28, and we give it 6 more min
+    # cached 11:00; the 12:00 release is due at 12:27, and we give it 6 more min
     coord.curr_release = datetime(2025, 6, 1, 11, 0, tzinfo=UTC)
-    assert coord._stale_deadline() == datetime(2025, 6, 1, 12, 34, tzinfo=UTC)
-    assert coord._data_is_stale(datetime(2025, 6, 1, 12, 28, tzinfo=UTC)) is False
-    assert coord._data_is_stale(datetime(2025, 6, 1, 12, 34, tzinfo=UTC)) is False
-    assert coord._data_is_stale(datetime(2025, 6, 1, 12, 35, tzinfo=UTC)) is True
+    assert coord._stale_deadline() == datetime(2025, 6, 1, 12, 33, tzinfo=UTC)
+    assert coord._data_is_stale(datetime(2025, 6, 1, 12, 27, tzinfo=UTC)) is False
+    assert coord._data_is_stale(datetime(2025, 6, 1, 12, 33, tzinfo=UTC)) is False
+    assert coord._data_is_stale(datetime(2025, 6, 1, 12, 34, tzinfo=UTC)) is True
 
 
 async def test_rs_rides_out_one_late_release(make_coordinator):
@@ -138,14 +138,14 @@ async def test_rs_rides_out_one_late_release(make_coordinator):
     coord = make_coordinator(RadvorRS)
     coord.curr_release = datetime(2026, 9, 17, 6, 35, tzinfo=UTC)
 
-    # 06:40 is due at 06:44:10; RS keeps trying for it until 06:50:10.
-    assert coord._stale_deadline() == datetime(2026, 9, 17, 6, 50, 10, tzinfo=UTC)
+    # 06:40 is due at 06:44:15; RS keeps trying for it until 06:50:15.
+    assert coord._stale_deadline() == datetime(2026, 9, 17, 6, 50, 15, tzinfo=UTC)
 
-    for moment in ("06:44:10", "06:45:10", "06:46:20", "06:49:10"):
+    for moment in ("06:44:15", "06:45:15", "06:46:20", "06:49:15"):
         now = datetime.strptime(f"2026-09-17 {moment}", "%Y-%m-%d %H:%M:%S")
         assert coord._data_is_stale(now.replace(tzinfo=UTC)) is False, moment
 
-    assert coord._data_is_stale(datetime(2026, 9, 17, 6, 54, 10, tzinfo=UTC)) is True
+    assert coord._data_is_stale(datetime(2026, 9, 17, 6, 54, 15, tzinfo=UTC)) is True
 
 
 @pytest.mark.parametrize("cls", PRODUCT_CLASSES)
@@ -192,7 +192,7 @@ async def test_stale_check_is_armed_on_success(make_coordinator):
     with patch.object(coordinator_mod, "async_track_point_in_time", _fake_track):
         coord._schedule_stale_check()
 
-    assert fired_at == [datetime(2025, 6, 1, 12, 34, tzinfo=UTC)]
+    assert fired_at == [datetime(2025, 6, 1, 12, 33, tzinfo=UTC)]
 
     unsub = coord._stale_unsub
     coord._cancel_stale_check()
@@ -403,7 +403,7 @@ async def test_fast_poll_survives_the_transition_to_stale(make_coordinator):
     )
     coord._fetch_and_parse = AsyncMock(side_effect=OSError("boom"))
 
-    # Stale threshold is 11:50 + 28m delay + 3h tolerance = 15:18.
+    # Stale threshold is 11:50 + 27m delay + 3h tolerance = 15:17.
     fresh = [
         datetime(2025, 6, 1, 13, 20, tzinfo=UTC),  # 12:50 release due, still fresh
         datetime(2025, 6, 1, 13, 22, tzinfo=UTC),
@@ -565,8 +565,8 @@ async def test_daily_deadline_follows_the_local_release_grid(make_coordinator):
         deadline = coord._stale_deadline()
 
     next_release = datetime(2025, 10, 26, 23, 50, tzinfo=berlin).astimezone(UTC)
-    # RELEASE_DELAY (31 min, the HDF5 edition) + OVERDUE_GRACE (30 min).
-    assert deadline == next_release + timedelta(minutes=31) + timedelta(minutes=30)
+    # RELEASE_DELAY (30 min 30 s, the HDF5 edition) + OVERDUE_GRACE (30 min).
+    assert deadline == next_release + timedelta(minutes=30, seconds=30) + timedelta(minutes=30)
     # 25 h later in absolute terms, not 24.
     assert next_release - coord.curr_release == timedelta(hours=25)
 
@@ -694,7 +694,7 @@ async def test_fetch_jitter_keeps_the_schedule_on_whole_seconds(make_coordinator
         args = coord.track_time_change_args
 
         assert len(args) == 1
-        assert args[0]["second"] == 10 + seconds
+        assert args[0]["second"] == 15 + seconds
 
 
 def test_retry_jitter_stays_within_bounds():

@@ -1,6 +1,12 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:recommended", "schedule:weekly"],
+  "osvVulnerabilityAlerts": true,
+  "vulnerabilityAlerts": {
+    "labels": ["security"],
+    "groupName": null,
+    "schedule": []
+  },
   "customManagers": [
     {
       "description": "The h5py floor users install, kept equal to the tested pin",

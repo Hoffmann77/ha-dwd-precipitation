@@ -51,6 +51,12 @@ NEW_SINCE_2026_10_0 = {
     "radvor_rv_area_precipitation_start": "precipitation_start_nearby",
 }
 
+# Added since 2026.10.0, behind an option that is off by default, so a new
+# install does not get them unless it turns them on. No released id is theirs.
+OPT_IN_SINCE_2026_10_0 = {
+    "radolan_rw_history": "hourly_precipitation_history",
+}
+
 # Added since 2026.10.0: one pair per rain-warning subentry, on the warning's
 # own device ("<location> <warning>"), so the object id after ``<device>_`` is
 # the warning's slug plus this, by domain. No released id ends like these.

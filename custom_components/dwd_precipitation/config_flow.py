@@ -31,6 +31,11 @@ from .const import (
     DRY_STREAK_SOURCES,
     CONF_FULL_ROLLING_SERIES,
     CONF_NEIGHBOURHOOD,
+    CONF_HOURLY_HISTORY,
+    CONF_HOURLY_HISTORY_FETCH,
+    CONF_HOURLY_HISTORY_HOURS,
+    HOURLY_HISTORY_HOURS_MAX,
+    HOURLY_HISTORY_HOURS_MIN,
     CONF_RAIN_EVENTS,
     CONF_DEFAULT_RAIN_WARNING,
     CONF_RAIN_EVENT_THRESHOLD,
@@ -67,6 +72,7 @@ COVERAGE_LON = (1.4, 18.8)
 SECTION_RAIN_FORECAST = "rain_forecast"
 SECTION_DRY_STREAK = "dry_streak"
 SECTION_RAIN_EVENTS = "rain_event_tracking"
+SECTION_HOURLY_HISTORY = "hourly_precipitation_history"
 SECTION_ADVANCED = "advanced_options"
 OPTION_SECTIONS: dict[str, tuple[str, ...]] = {
     SECTION_RAIN_FORECAST: (
@@ -77,6 +83,11 @@ OPTION_SECTIONS: dict[str, tuple[str, ...]] = {
     ),
     SECTION_DRY_STREAK: (CONF_PRECIPITATION_RESET_THRESHOLD, CONF_DRY_STREAK_SOURCE),
     SECTION_RAIN_EVENTS: (CONF_DEFAULT_RAIN_WARNING, CONF_RAIN_EVENTS, CONF_RAIN_EVENT_THRESHOLD),
+    SECTION_HOURLY_HISTORY: (
+        CONF_HOURLY_HISTORY,
+        CONF_HOURLY_HISTORY_HOURS,
+        CONF_HOURLY_HISTORY_FETCH,
+    ),
     SECTION_ADVANCED: (
         CONF_EXTRA_ATTRIBUTES,
         CONF_FULL_ROLLING_SERIES,
@@ -150,7 +161,8 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
         The "Rain events" section opens expanded only when the entry tracks
         rain events (the sensor or a rain warning), since its threshold does
-        nothing otherwise; "Advanced" is always collapsed. The help texts link
+        nothing otherwise, and "Hourly history" only when it is on;
+        "Advanced" is always collapsed. The help texts link
         to the documentation through the ``docs_url`` placeholder.
 
         """
@@ -195,6 +207,17 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             CONF_DEFAULT_RAIN_WARNING: selector.BooleanSelector(),
             CONF_RAIN_EVENTS: selector.BooleanSelector(),
             CONF_RAIN_EVENT_THRESHOLD: _number("mm/h"),
+            CONF_HOURLY_HISTORY: selector.BooleanSelector(),
+            CONF_HOURLY_HISTORY_HOURS: selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=HOURLY_HISTORY_HOURS_MIN,
+                    max=HOURLY_HISTORY_HOURS_MAX,
+                    step=1,
+                    unit_of_measurement="h",
+                    mode=selector.NumberSelectorMode.BOX,
+                )
+            ),
+            CONF_HOURLY_HISTORY_FETCH: selector.BooleanSelector(),
             CONF_EXTRA_ATTRIBUTES: selector.BooleanSelector(),
             CONF_FULL_ROLLING_SERIES: selector.BooleanSelector(),
             CONF_UNAVAILABLE_WHEN_STALE: selector.BooleanSelector(),
@@ -203,6 +226,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             SECTION_RAIN_FORECAST: False,
             SECTION_DRY_STREAK: False,
             SECTION_RAIN_EVENTS: not tracks_rain_events(entry, options),
+            SECTION_HOURLY_HISTORY: not options.hourly_history,
             SECTION_ADVANCED: True,
         }
         schema = vol.Schema(

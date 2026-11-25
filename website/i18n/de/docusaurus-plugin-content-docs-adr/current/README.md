@@ -24,3 +24,4 @@ Versionsnummer bezeichnet (`2026.11.0`).
 | [0011](0011-dry-streak-gaps-checked-against-rw.md) | Lücken in der Quelle des Trockenzählers werden an den Stunden von RW geprüft | 2026.11.0 |
 | [0012](0012-rain-event-types-are-measured-only.md) | Regenereignisse haben eine Niederschlagsart erst, wenn sie gemessen ist | 2026.11.0 |
 | [0013](0013-rain-warnings-as-subentries.md) | Regenwarnungen sind Untereinträge, die die Sicht der Regenereignisse filtern | 2026.11.0 |
+| [0014](0014-rain-history-is-kept-not-fetched.md) | Der Regenverlauf wird aus Gelesenem behalten und nur aus dem aufgefüllt, was der DWD noch bereithält | 2026.12.0 |

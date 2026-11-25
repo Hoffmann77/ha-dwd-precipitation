@@ -62,6 +62,9 @@ Download wird automatisch wiederholt.
 | [Regenereignisse und Regenwarnungen](#rain-events-and-rain-warnings) | [Regenwarnung für diesen Ort hinzufügen](#location-warning) | an |
 | | [Sensor „Regenereignisse“ hinzufügen](#track-rain-events) | aus |
 | | [Nur Regen zählen, der stärker ist als](#rain-event-threshold) | 0,1 mm/h |
+| [Stündlicher Niederschlagsverlauf](#hourly-precipitation-history) | [Sensor „Stündlicher Niederschlagsverlauf“ hinzufügen](#hourly-history) | aus |
+| | [Gespeicherte Stunden](#hourly-history-hours) | 72 h |
+| | [Fehlende Daten beim DWD abrufen](#hourly-history-fetch) | an |
 | [Erweitert](#advanced-options) | [Technische Details zu den Sensoren hinzufügen](#technical-details) | aus |
 | | [Vergangene Stunde in die stündliche Regenreihe aufnehmen](#past-hour-in-the-series) | aus |
 | | [„Nicht verfügbar“ anzeigen, wenn die Daten veraltet sind](#unavailable-when-out-of-date) | an |
@@ -187,6 +190,45 @@ den das Radar sieht; der Standard ist `0,1`. Die Einstellung ist unabhängig
 von der gleichnamigen unter [Regenvorhersage](#rain-detection-threshold),
 daher können die beiden voneinander abweichen, wenn du sie unterschiedlich
 einstellst.
+
+## Stündlicher Niederschlagsverlauf {#hourly-precipitation-history}
+
+Speichert den angeeichten Regen jeder vergangenen Stunde,
+für Blueprints, die Regen über mehrere Stunden oder Tage betrachten. Der
+Abschnitt ist aufgeklappt, wenn der Verlauf eingeschaltet ist, und sonst
+zugeklappt.
+
+### Sensor „Stündlicher Niederschlagsverlauf“ hinzufügen {#hourly-history}
+
+Fügt den Sensor
+[`Stündlicher Niederschlagsverlauf`](../entities/hourly-history.md) hinzu,
+für Blueprints, die vor lang anhaltendem Regen warnen oder berichten, wie viel
+gefallen ist. Standardmäßig aus. Solange er an ist, speichert die Integration
+die vergangenen Stunden auf der Festplatte. Ausschalten entfernt den Sensor
+und löscht sie, sodass ein erneutes Einschalten frisch beginnt.
+
+### Gespeicherte Stunden {#hourly-history-hours}
+
+Wie viele vergangene Stunden der Sensor enthält, von 1 bis 168 (eine Woche).
+Der Standard, 72, deckt den längsten Zeitraum ab, den die Dauerregen-Warnungen
+des DWD betrachten. Der DWD hält nur die letzten 48 Stunden bereit; ältere
+Stunden, die verpasst wurden, während Home Assistant aus war, bleiben daher
+fehlend.
+
+### Fehlende Daten beim DWD abrufen {#hourly-history-fetch}
+
+An (Standard): Stunden, die verpasst wurden, während Home Assistant aus war
+oder der DWD sich verspätet hat, werden heruntergeladen, je etwa 30 KB, bis zu
+48 Stunden zurück. Aus: nur Stunden, die die Integration ohnehin liest, werden
+gespeichert, jede Stunde die aktuelle und die, die `Niederschlag gesamt` oder
+`Zeitraum ohne Niederschlag` selbst herunterladen. Siehe
+[Fehlende Stunden](../entities/hourly-history.md#missing-hours).
+
+Ist zusätzlich der Sensor [`Regenereignisse`](../entities/rain-events.md)
+an, ruft dieselbe Option auch die Radarschritte seines Attributs `measured`
+ab, die seit der neuesten Stunde verpasst wurden, sodass beide lückenlos
+aneinander anschließen. Ältere Schritte als diese Stunde werden nicht
+gebraucht und nicht abgerufen.
 
 ## Erweitert {#advanced-options}
 

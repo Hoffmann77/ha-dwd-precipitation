@@ -37,10 +37,17 @@ worth of files (12h) so a slow drift is still visible within one run; RW/SF
 now takes two consecutive daily runs (48h) instead of two runs 12h apart.
 
 A product is flagged the instant the mean observed delay exceeds the configured
-``RELEASE_DELAY`` (``--grace`` defaults to 0): that is the harmful direction —
+``RELEASE_DELAY`` by more than ``--grace`` seconds (default 0; a negative grace
+demands that much margin below it): that is the harmful direction —
 DWD publishing later than the coordinator waits, so it fetches too early and
 404s until the file appears. DWD being *faster* than configured is only a small
 latency cost and is not flagged.
+
+Files whose delay exceeds ``OUTLIER_FACTOR`` (2) times the product's median
+delay are listed under the product with their nominal time, delay and URL, so
+a late file that pulls the mean up can be checked by hand. The median, not the
+mean, sets the bar, since the outliers themselves pull the mean up. They are
+reported only; the status still comes from the mean.
 
 Exit status: ``0`` all products within tolerance, ``1`` at least one drifted,
 ``2`` a product could not be measured (too few files / network error).
@@ -77,6 +84,12 @@ RELEASE_KEYS = ("RELEASE_INTERVAL", "RELEASE_DELAY", "RELEASE_OFFSET")
 # either we are above the frontier (newest not published yet) with a wildly
 # wrong delay, or we fell off the folder's retention window.
 _MISS_CAP = 8
+
+
+# A file is an outlier when its delay is more than this many times the median.
+OUTLIER_FACTOR = 2
+# At most this many outliers are listed per product (the latest ones).
+MAX_OUTLIERS_LISTED = 10
 
 
 # ---------------------------------------------------------------------------
@@ -195,6 +208,8 @@ class Measurement:
     configured: timedelta
     interval: timedelta
     deltas: list[timedelta] = field(default_factory=list)
+    # Nominal release time of each entry in ``deltas``, in the same order.
+    released: list[datetime] = field(default_factory=list)
     error: str | None = None
 
     @property
@@ -215,6 +230,19 @@ class Measurement:
         if len(self.deltas) < 2:
             return timedelta()
         return timedelta(seconds=statistics.stdev(d.total_seconds() for d in self.deltas))
+
+    @property
+    def median(self) -> timedelta | None:
+        if not self.deltas:
+            return None
+        return timedelta(seconds=statistics.median(d.total_seconds() for d in self.deltas))
+
+    def outliers(self) -> list[tuple[datetime, timedelta]]:
+        """Files later than ``OUTLIER_FACTOR`` times the median, newest first."""
+        if self.median is None:
+            return []
+        bar = self.median * OUTLIER_FACTOR
+        return [(ts, d) for ts, d in zip(self.released, self.deltas) if d > bar]
 
     @property
     def overrun(self) -> timedelta | None:
@@ -269,6 +297,7 @@ def measure(
             else:
                 consecutive_misses = 0
                 m.deltas.append(published - ts)
+                m.released.append(ts)
             ts -= interval
 
         if len(m.deltas) < min_samples:
@@ -312,6 +341,21 @@ def _report_lines(measurements: list[Measurement], grace: timedelta) -> list[str
                 f"min {_fmt(m.spread[0])}, max {_fmt(m.spread[1])}, "
                 f"σ {_fmt(m.stdev)}"
             )
+            outliers = m.outliers()
+            if outliers:
+                lines.append(
+                    f"           {len(outliers)} outlier(s) > {OUTLIER_FACTOR}x "
+                    f"median {_fmt(m.median)}:"
+                )
+                for ts, delta in outliers[:MAX_OUTLIERS_LISTED]:
+                    lines.append(
+                        f"             {ts:%Y-%m-%d %H:%M} UTC  {_fmt(delta):>7}  "
+                        f"{PRODUCTS[m.key].url_for(ts)}"
+                    )
+                if len(outliers) > MAX_OUTLIERS_LISTED:
+                    lines.append(
+                        f"             ... and {len(outliers) - MAX_OUTLIERS_LISTED} older"
+                    )
     return lines
 
 
@@ -335,8 +379,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--grace", type=float, default=0.0,
-        help="minutes the mean delay may exceed the configured RELEASE_DELAY "
-             "before flagging (default: 0 — flag the instant it is exceeded)",
+        help="seconds the mean delay may exceed the configured RELEASE_DELAY "
+             "before flagging (default: 0 — flag the instant it is exceeded; "
+             "negative: require that much margin below it)",
     )
     parser.add_argument(
         "--samples", type=int, default=None,
@@ -349,7 +394,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    grace = timedelta(minutes=args.grace)
+    grace = timedelta(seconds=args.grace)
     now = datetime.now(UTC)
 
     measurements: list[Measurement] = []

@@ -20,6 +20,7 @@ from homeassistant.const import (
     UnitOfTime,
     UnitOfVolumetricFlux,
 )
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
@@ -34,6 +35,7 @@ from .const import (
     KEY_NEXT_120,
     KEY_PRECIPITATION_TYPE,
     KEY_PRECIPITATION_TYPE_NEARBY,
+    RW_KEPT,
     RW_SLIDING_KEY,
     START_END_MODE_DURATION,
     PRECIP_TYPE_OPTIONS,
@@ -54,6 +56,7 @@ from .entity import (
     RainWarningEntity,
     unique_id_for,
 )
+from .hourly_history import HourlyHistory
 from .options import rain_warning_subentries
 from .radar.isotime import iso
 from .radar.rain_events import NO_EVENT, ONGOING, UPCOMING, VIEW_KEYS, overall_status
@@ -131,11 +134,6 @@ class PrecipitationTotalEntityDescription(SensorEntityDescription):
     max_backfill: int
 
 
-# How many RW releases before the current one OpenData keeps: 48 h of runs,
-# ten minutes apart, so the current :00 run and the 47 before it.
-RW_KEPT = 47
-
-
 # Two totals over the same rain: RW counts each hour as soon as it is analysed,
 # sf_2350 counts each day once, the morning after. They are separate entities
 # rather than one with a source option so that switching never makes a
@@ -161,6 +159,17 @@ TOTAL_SENSORS = (
         # current one and the one before it.
         max_backfill=1,
     ),
+)
+
+
+# The RW hours the entry keeps, for blueprints (see hourly_history.py). Its
+# attributes are a few KB, so none is recorded; the state changes hourly.
+HOURLY_HISTORY_SENSOR = SensorEntityDescription(
+    key="radolan_rw_history",
+    translation_key="hourly_precipitation_history",
+    icon="mdi:chart-bar",
+    device_class=SensorDeviceClass.TIMESTAMP,
+    entity_category=EntityCategory.DIAGNOSTIC,
 )
 
 
@@ -433,8 +442,8 @@ async def async_setup_entry(
 
     Home Assistant calls this once per entry after the integration's setup.
     Most sensors are descriptions on one product's coordinator. The totals, the
-    rain events (only with that option; otherwise the entity is removed from
-    the registry), the dry streak (bound to the product its option picks) and
+    rain events and the hourly history (each only with its option; otherwise
+    the entity is removed from the registry), the dry streak (bound to the product its option picks) and
     the status of every rain warning (added to its subentry) have their own
     classes.
 
@@ -483,6 +492,18 @@ async def async_setup_entry(
     if not options.neighbourhood_evaluation:
         for key in AREA_SENSOR_KEYS:
             _remove_sensor(hass, entry, key)
+
+    # The hourly history is opt-in too, and goes with its option likewise.
+    rw = coordinators.get("rw")
+    history = getattr(rw, "history", None)
+    if rw is not None and isinstance(history, HourlyHistory):
+        entities.append(HourlyHistorySensor(rw, history))
+    else:
+        registry = er.async_get(hass)
+        if entity_id := registry.async_get_entity_id(
+            "sensor", DOMAIN, unique_id_for(entry.entry_id, HOURLY_HISTORY_SENSOR.key)
+        ):
+            registry.async_remove(entity_id)
 
     # Changing the source reloads the entry, so binding once at setup is enough.
     # The unique id does not depend on it, so the entity and its persisted
@@ -640,6 +661,75 @@ class RainEventsSensor(DwdCoordinatorEntity, SensorEntity):
 
         """
         return dict(self._view() or {})
+
+
+class HourlyHistorySensor(DwdCoordinatorEntity, SensorEntity):
+    """The entry's RW hours: the newest as state, every hour as attributes.
+
+    For blueprints that sum rain over several hours. The state is the end of
+    the newest hour held; ``hours`` maps the end of each hour obtained to its
+    mm (None: DWD had no data for the cell), ``missing`` lists the hours of
+    the window not obtained, and ``hours_kept`` is the window length. The
+    window ends at the newest RW hour due, so hours DWD has not published
+    yet show as missing. None of the attributes is recorded.
+
+    """
+
+    _unrecorded_attributes = frozenset({"hours", "missing", "hours_kept"})
+
+    def __init__(
+        self, coordinator: BaseProductUpdateCoordinator, history: HourlyHistory
+    ) -> None:
+        """Bind the sensor to RW, whose updates it follows, and to its history."""
+        super().__init__(coordinator, HOURLY_HISTORY_SENSOR)
+        self._history = history
+
+    @property
+    def available(self) -> bool:
+        """Return True: the hours held stay valid while RW is late.
+
+        A DWD outage is exactly when a blueprint still needs them; the hours
+        DWD has not published show in ``missing``.
+
+        """
+        return True
+
+    def _latest(self) -> datetime:
+        """Return the end of the newest RW hour that is due now."""
+        rw = self.coordinator
+        return rw.grid.at_or_before(dt_util.utcnow() - rw.release_delay)
+
+    @property
+    def native_value(self) -> datetime | None:
+        """Return the end of the newest hour held; unknown before the first."""
+        return self._history.newest(self._latest())
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return the hours of the window, the missing ones and its length."""
+        return self._history.view(self._latest())
+
+    @callback
+    def async_entity_id_changed(self, old_entity_id: str) -> None:
+        """Opt in to HA renaming the entity id in place (2026.11+).
+
+        Nothing here is keyed on the entity id, so there is nothing to update.
+        Without this, HA removes and re-adds an entity that overrides
+        async_added_to_hass; that fallback goes in 2027.11.
+
+        """
+        super().async_entity_id_changed(old_entity_id)
+
+    async def async_added_to_hass(self) -> None:
+        """Load the history, and show hours that join between RW updates.
+
+        Hours fetched in the background (the history's own fill, another
+        sensor's backfill) arrive without an RW update.
+
+        """
+        await super().async_added_to_hass()
+        await self._history.async_state()
+        self.async_on_remove(self._history.async_add_listener(self.async_write_ha_state))
 
 
 class RainWarningStatusSensor(RainWarningEntity, SensorEntity):

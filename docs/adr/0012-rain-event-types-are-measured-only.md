@@ -26,7 +26,7 @@ What DWD offers for it:
 - Every measured step gets the HymecNG type of the moment it ends, that is of
   the HymecNG release at the same time as the RV release whose analysis it is.
   The HymecNG coordinator hands each release it adopts to the tracker, usually
-  before RV adopts the same release (HymecNG is fetched at 3 min, RV at
+  before RV adopts the same release (HymecNG is fetched at 3 min 30 s, RV at
   4 min 10 s, each plus at most 30 s of jitter). The tracker keeps the types
   by step time, so the order in which the two arrive does not matter, and a
   type that arrives after RV shows from the next release on, as the events are

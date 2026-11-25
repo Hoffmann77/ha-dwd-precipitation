@@ -30,3 +30,7 @@ value changes at the switch; nothing else changes.
 Timing: RW's HDF5 file appears ~25.7 min after its window ends, like the binary
 one; SF's ~29.3 min, ~2.5 min later than its binary one, hence SF's
 `RELEASE_DELAY` of 31 min.
+
+Update (2026-11): `scripts/check_release_delay.py` measured SF at a mean of
+26 min 41 s (latest 28 min 02 s, 24 files), so SF's `RELEASE_DELAY` is now
+30 min 30 s, and RW's 27 min (mean 26 min 12 s, latest 27 min 11 s).

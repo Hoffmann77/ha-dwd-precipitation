@@ -8,6 +8,30 @@ Every release is described in the
 This page covers the changes that need your attention, or that you might
 otherwise notice as a surprise.
 
+## 2026.12.0
+
+### New: Hourly precipitation history
+
+**Hourly precipitation history**, opt-in with the option *Add the "Hourly
+precipitation history" sensor*: the gauge-adjusted rain of each past hour,
+by default the last 72, for blueprints that look at rain over several hours
+or days. If a blueprint asks you to turn on *Add technical details to the
+sensors* for its own record of RW hours, it can read this sensor instead.
+See [Hourly precipitation history](../entities/hourly-history.md).
+
+### Rain events: two hours of measured steps
+
+The `Rain events` sensor has a new attribute, `measured`: the measured radar
+steps of the last two hours. Its other attributes are unchanged and `schema`
+stays `1`, so blueprints keep working. See
+[Rain events](../entities/rain-events.md#the-timeline).
+
+### Fewer lost saves after a crash
+
+The rain events' record used to be written only when Home Assistant stopped,
+on a dry day. It is now written at least every 6 hours, so a power cut
+loses less of it.
+
 ## 2026.11.0
 
 ### Renamed entities
@@ -56,7 +80,7 @@ version gave another entity, so nothing clashes.
 `Precipitation previous hour` (formerly *Precipitation last 1h*) used to be
 the hour ending at :50. It is now the last full clock hour, such as
 11:00–12:00, which lines up with Home Assistant's hourly statistics. It
-arrives about 28 minutes after the hour.
+arrives about 27 minutes after the hour.
 
 `Precipitation total` moves to clock hours with it. A total carried over
 from an older version moves on its first update and leaves the 10 minutes in

@@ -7,7 +7,7 @@ Status: angenommen (2026.11.0)
 2026.10.0 lieferte zwei `TOTAL_INCREASING`-Sensoren aus, `Precipitation total
 (hourly)` aus RW und `Precipitation total (daily)` aus `sf_2350`. Die
 Statistiken von HA sehen jede Stunde eine Stunde zu spät (11:00–12:00 wird um
-~12:28 addiert). Bei der Summe aus RW rutscht deshalb nur die letzte Stunde
+~12:27 addiert). Bei der Summe aus RW rutscht deshalb nur die letzte Stunde
 eines Tages in den nächsten, während bei der täglichen Summe der Regen jedes
 Tages in den Statistiken des *nächsten* Tages landet.
 

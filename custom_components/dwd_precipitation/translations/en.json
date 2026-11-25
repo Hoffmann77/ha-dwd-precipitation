@@ -67,6 +67,20 @@
               "rain_event_threshold": "Applies to the “Rain events” sensor and to all rain warnings. 0 counts any rain the radar sees. Separate from the setting of the same name under “Rain forecast”."
             }
           },
+          "hourly_precipitation_history": {
+            "name": "Hourly precipitation history",
+            "description": "Keeps the gauge-adjusted rain of each past hour, for blueprints that look at rain over several hours or days.",
+            "data": {
+              "hourly_history": "Add the “Hourly precipitation history” sensor",
+              "hourly_history_hours": "Hours to keep",
+              "hourly_history_fetch": "Fetch missing data from DWD"
+            },
+            "data_description": {
+              "hourly_history": "For blueprints that warn about long-lasting rain or report how much fell. While it is on, the integration keeps a small record of the past hours. [About the sensor]({docs_url}/entities/hourly-history)",
+              "hourly_history_hours": "72 covers the longest period DWD's warnings of continuous rain look at. DWD keeps only the last 48 hours, so older hours missed while Home Assistant was off stay missing.",
+              "hourly_history_fetch": "Hours missed while Home Assistant was off are fetched from DWD, about 30 KB each, up to 48 hours back. When off, only hours the integration reads anyway are kept. With the “Rain events” sensor, its radar steps since the newest hour are fetched too. [More]({docs_url}/entities/hourly-history#missing-hours)"
+            }
+          },
           "advanced_options": {
             "name": "Advanced",
             "description": "Extra details for templates and charts, and what the sensors show when DWD is late. Most installations never change these.",
@@ -188,6 +202,9 @@
       },
       "precipitation_total_daily": {
         "name": "Precipitation total daily"
+      },
+      "hourly_precipitation_history": {
+        "name": "Hourly precipitation history"
       },
       "precipitation_next_60_min": {
         "name": "Precipitation next 60 min"

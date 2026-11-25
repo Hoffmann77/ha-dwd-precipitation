@@ -28,7 +28,7 @@ Was der DWD dafür anbietet:
   endet, also der HymecNG-Veröffentlichung zur selben Zeit wie die
   RV-Veröffentlichung, deren Analyse er ist. Der HymecNG-Koordinator gibt jede
   Veröffentlichung, die er übernimmt, an die Ereignisverfolgung, meist bevor RV
-  dieselbe übernimmt (HymecNG wird nach 3 min abgerufen, RV nach 4 min 10 s,
+  dieselbe übernimmt (HymecNG wird nach 3 min 30 s abgerufen, RV nach 4 min 10 s,
   jeweils plus höchstens 30 s Jitter). Die Ereignisverfolgung hält die Arten
   nach dem Zeitpunkt des Schritts fest; die Reihenfolge, in der beide
   ankommen, spielt daher keine Rolle, und eine Art, die nach RV ankommt,

@@ -49,7 +49,7 @@ All entities belong to one **DWD Precipitation** device per configured location 
 - **Radar nowcast, every 5 minutes:** Precipitation last 60 min, next 60 min, next 60–120 min and next 120 min; Precipitation intensity now; Peak intensity next 60 min, next 60–120 min and next 120 min; Peak hourly precipitation next 120 min; Precipitation start and end; Nearest precipitation (distance, direction and whether it is heading your way) and Precipitation start nearby; Precipitation expected; Precipitation type now
 - **Gauge-adjusted analyses, hourly and daily:** Precipitation previous hour, last 24h and yesterday
 - **For statistics:** Precipitation total and Precipitation total daily
-- **Timespan without precipitation**, and the optional **Rain events** sensor for blueprints
+- **Timespan without precipitation**, and the optional **Rain events** and **Hourly precipitation history** sensors for blueprints
 - **Rain warning** of the location, built in: a status sensor without minimums and a lead-time slider, ready for the blueprint
 - **Rain warnings** you add yourself, each a device of its own with an on/off and a status entity and a lead-time slider. The status gives the event's start, end and expected precipitation type (estimated from within 5 km before the rain arrives)
 

@@ -26,7 +26,7 @@ it also suits "how much rain since this morning" automations. This is the one
 to use.
 
 Home Assistant's statistics see each hour about half an hour after it ends
-(11:00–12:00 is added at about 12:28), so only the last hour of a day spills
+(11:00–12:00 is added at about 12:27), so only the last hour of a day spills
 into the next one.
 
 ## Precipitation total daily

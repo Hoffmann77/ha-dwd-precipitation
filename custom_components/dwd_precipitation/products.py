@@ -15,9 +15,11 @@ import numpy as np
 from .coordinator import (
     DEFAULT_OVERDUE_GRACE,
     BaseProductUpdateCoordinator,
+    CoordinatorData,
     Payload,
     ProductMetadata,
 )
+from .hourly_history import HourlyHistory
 from .radar.isotime import iso
 from .radar.urls import radvor_prefix
 from .options import DwdOptions, tracks_rain_events
@@ -513,7 +515,7 @@ class RadvorRS(RadvorProduct):
 
     RELEASE_INTERVAL = timedelta(minutes=5)
 
-    RELEASE_DELAY = timedelta(minutes=4, seconds=10)
+    RELEASE_DELAY = timedelta(minutes=4, seconds=15)
 
     RELEASE_OFFSET = timedelta()
 
@@ -1048,10 +1050,10 @@ class HymecNG(WholeFileProduct):
 
     RELEASE_INTERVAL = timedelta(minutes=5)
 
-    # DWD publishes each file ~2 min after its nominal time; wait a little longer
-    # so the coordinator does not fetch before it appears (checked by
-    # scripts/check_release_delay.py).
-    RELEASE_DELAY = timedelta(minutes=3)
+    # DWD publishes each file ~3.5 min after its nominal time (mean 3m27s, none
+    # under 3m04s, measured 2026-11); the coordinator must not fetch before it
+    # appears (checked by scripts/check_release_delay.py).
+    RELEASE_DELAY = timedelta(minutes=3, seconds=30)
 
     RELEASE_OFFSET = timedelta()
 
@@ -1206,7 +1208,8 @@ class RadolanRW(RadolanProduct):
 
     RELEASE_INTERVAL = timedelta(hours=1)
 
-    RELEASE_DELAY = timedelta(minutes=28)
+    # Mean 26m12s, latest 27m11s (24 files, 2026-11).
+    RELEASE_DELAY = timedelta(minutes=27)
 
     RELEASE_OFFSET = timedelta()
 
@@ -1214,6 +1217,68 @@ class RadolanRW(RadolanProduct):
     # old, so give the missing file only the default few minutes.
     OVERDUE_GRACE = DEFAULT_OVERDUE_GRACE
 
+    # The entry's hourly history; None when the option is off, and always on
+    # the 10-minute runs (RadolanRW10), whose hours overlap.
+    history: HourlyHistory | None = None
+
+    def __init__(self, hass, entry, async_client, lat, lon) -> None:
+        """Set up the coordinator and, with the hourly_history option, its history.
+
+        The history keeps every clock hour this coordinator reads. Only the
+        hourly product has one: RadolanRW10 inherits this, but its sliding
+        hours are not clock hours.
+
+        """
+        super().__init__(hass, entry, async_client, lat, lon)
+        options = self.options
+        if self.PRODUCT_KEY == RadolanRW.PRODUCT_KEY and options.hourly_history:
+            self.history = HourlyHistory(
+                hass,
+                entry,
+                self.grid,
+                options.hourly_history_hours,
+                self._async_fetch_hour if options.hourly_history_fetch else None,
+            )
+
+    async def _async_on_new_release(
+        self, release: datetime, data: dict, metadata: dict
+    ) -> None:
+        """Keep the adopted hour in the history, which then fills its gaps."""
+        if self.history is not None:
+            await self.history.async_on_release(release, data.get(KEY_AMOUNT))
+
+    async def async_fetch_release(self, release: datetime) -> CoordinatorData:
+        """Return a past RW hour: from the history if held, else downloaded.
+
+        The total's backfill and the dry streak's gap check fetch through this,
+        so an hour the history holds is not downloaded again, and one they
+        download is kept. A held hour comes back with the window every :00 run
+        covers, the clock hour ending ``release``.
+
+        """
+        if self.history is None:
+            return await super().async_fetch_release(release)
+        held, mm = await self.history.async_lookup(release)
+        if held:
+            return CoordinatorData(
+                {KEY_AMOUNT: mm},
+                {
+                    KEY_AMOUNT: ProductMetadata(
+                        source_product="RW",
+                        source_timestamp=release,
+                        data_start=release - self.RELEASE_INTERVAL,
+                        data_end=release,
+                    )
+                },
+            )
+        fetched = await super().async_fetch_release(release)
+        await self.history.async_record(release, fetched.data.get(KEY_AMOUNT))
+        return fetched
+
+    async def _async_fetch_hour(self, release: datetime) -> float | None:
+        """Download one past hour's amount for the history's own fill."""
+        fetched = await super().async_fetch_release(release)
+        return fetched.data.get(KEY_AMOUNT)
 
 
 class RadolanRW10(RadolanRW):
@@ -1233,8 +1298,8 @@ class RadolanRW10(RadolanRW):
     RELEASE_INTERVAL = timedelta(minutes=10)
 
     # Observed ~25.7 min after each run's end, every run minute alike (288
-    # runs, 2026-10-13), like the hourly runs it includes.
-    RELEASE_DELAY = timedelta(minutes=28)
+    # runs, 2026-10-13), like the hourly runs it includes, so it keeps RW's delay.
+    RELEASE_DELAY = timedelta(minutes=27)
 
     RELEASE_OFFSET = timedelta()
 
@@ -1260,9 +1325,9 @@ class RadolanSF(RadolanProduct):
     RELEASE_INTERVAL = timedelta(hours=1)
 
     # The HDF5 edition appears ~29.3 min after the window ends (48 files,
-    # 2026-10-10..12), ~2.5 min after the legacy binary one; 31 keeps the
-    # same ~2 min margin RW has.
-    RELEASE_DELAY = timedelta(minutes=31)
+    # 2026-10-10..12), ~2.5 min after the legacy binary one. Remeasured
+    # 2026-11: mean 26m41s, latest 28m02s (24 files).
+    RELEASE_DELAY = timedelta(minutes=30, seconds=30)
 
     RELEASE_OFFSET = timedelta(minutes=50)
 
@@ -1279,7 +1344,7 @@ class RadolanSFLastYesterday(RadolanSF):
 
     RELEASE_INTERVAL = timedelta(hours=24)
 
-    RELEASE_DELAY = timedelta(minutes=31)
+    RELEASE_DELAY = timedelta(minutes=30, seconds=30)
 
     RELEASE_OFFSET = timedelta(hours=23, minutes=50)
 
