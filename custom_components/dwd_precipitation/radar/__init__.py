@@ -6,11 +6,40 @@ Exports what the integration uses. The whole-grid readers and read_odim_grid
 """
 
 from .grid import OutsideGrid, UnsupportedGrid
-from .odim import read_odim_classification_at, read_odim_composite_at
+from .nearby import (
+    area_max,
+    closest_approach,
+    coming_from,
+    compass,
+    nearest_above,
+    nearest_class,
+    nearest_class_by_sector,
+    rain_track,
+    upstream_nearest,
+    upstream_max,
+)
+from .odim import (
+    read_odim_classification_at,
+    read_odim_classification_near,
+    read_odim_composite_at,
+    read_odim_composite_near,
+)
 
 __all__ = [
     "OutsideGrid",
     "UnsupportedGrid",
+    "area_max",
+    "closest_approach",
+    "coming_from",
+    "compass",
+    "nearest_above",
+    "nearest_class",
+    "nearest_class_by_sector",
+    "rain_track",
+    "upstream_nearest",
+    "upstream_max",
     "read_odim_classification_at",
+    "read_odim_classification_near",
     "read_odim_composite_at",
+    "read_odim_composite_near",
 ]

@@ -1,0 +1,242 @@
+type: custom:mushroom-template-card
+# Kachel "DWD Regenwarnung" für die Integration DWD Precipitation.
+# Benötigt: Mushroom (custom:mushroom-template-card) und card-mod, beide über HACS.
+# Für DWD Precipitation ab Version 2026.11.
+# Einzige Anpassung: hier den Sensor "Regenwarnung" des Orts eintragen
+# (z. B. sensor.home_rain_warning) oder den Status-Sensor einer selbst
+# angelegten Regenwarnung (z. B. sensor.home_waesche_rain_warning_status).
+# Die Vorhersagekurve holt sich die Kachel selbst vom Binärsensor
+# "Precipitation expected" desselben Standorts.
+entity: sensor.DEIN_STANDORT_rain_warning
+icon: |-
+  {% set st = state_attr(entity, 'start') %}
+  {% set en = state_attr(entity, 'end') %}
+  {% set starts_in = [((as_datetime(st) - now()).total_seconds() / 60) | round(0) | int, 0] | max if st else none %}
+  {% if states(entity) == 'rain' %}
+    mdi:weather-pouring
+  {% elif states(entity) == 'soon' and starts_in is number and starts_in <= 5 %}
+    mdi:weather-rainy
+  {% else %}
+    mdi:weather-cloudy
+  {% endif %}
+primary: >-
+  {%- macro dauer(min) -%}
+    {%- set m = min | int(0) -%}
+    {%- if m >= 60 -%}{{ m // 60 }} Std.{{ ' ' ~ (m % 60) ~ ' Min.' if m % 60 else '' }}
+    {%- else -%}{{ m }} Minuten{%- endif -%}
+  {%- endmacro %}
+  {% set fc = namespace(e='') %}
+  {% for e in integration_entities('dwd_precipitation') if e.startswith('binary_sensor.')
+     and config_entry_id(e) == config_entry_id(entity) and state_attr(e, 'forecast_5min') is not none %}
+    {% set fc.e = e %}
+  {% endfor %}
+  {% set st = state_attr(entity, 'start') %}
+  {% set en = state_attr(entity, 'end') %}
+  {% set starts_in = [((as_datetime(st) - now()).total_seconds() / 60) | round(0) | int, 0] | max if st else none %}
+  {% set raining_now = states(entity) == 'rain' %}
+  {% set open_end = state_attr(entity, 'beyond_horizon') | bool(false) %}
+  {% set current_remaining = [((as_datetime(en) - now()).total_seconds() / 60) | round(0) | int, 0] | max if en else 0 %}
+  {% set has_next = starts_in is number %}
+  {% set rain_soon = states(entity) == 'soon' and has_next and starts_in <= 5 %}
+  {% set next_length = ((as_datetime(en) - as_datetime(st)).total_seconds() / 60) | round(0) | int if st and en else 0 %}
+  {#- Ohne Warnung: nächster Regen laut 5-Minuten-Vorhersage -#}
+  {% set ns = namespace(later=none) %}
+  {% for w in state_attr(fc.e, 'forecast_5min') or [] %}
+    {% if ns.later is none and w.end and as_datetime(w.end) > now() and w.intensity | float(0) > 0 %}
+      {% set ns.later = [((as_datetime(w.start) - now()).total_seconds() / 60) | round(0) | int, 0] | max %}
+    {% endif %}
+  {% endfor %}
+
+  {% if states(entity) in ['unavailable', 'unknown'] %}
+    Keine Nowcast-Daten verfügbar.
+
+  {% elif raining_now %}
+    {% if open_end %}
+      Es regnet noch mindestens {{ current_remaining }} Minuten.
+    {% else %}
+      Es regnet noch {{ current_remaining }} Minuten.
+    {% endif %}
+
+  {% elif rain_soon %}
+    {% if open_end %}
+      In {{ starts_in }} Minuten beginnt Regen, voraussichtlich mindestens {{ next_length }} Minuten.
+    {% elif next_length > 0 %}
+      In {{ starts_in }} Minuten beginnt Regen für {{ next_length }} Minuten.
+    {% else %}
+      In {{ starts_in }} Minuten beginnt Regen.
+    {% endif %}
+
+  {% elif has_next %}
+    {% if open_end %}
+      In {{ dauer(starts_in) }} beginnt Regen, voraussichtlich mindestens {{ next_length }} Minuten.
+    {% elif next_length > 0 %}
+      In {{ dauer(starts_in) }} beginnt Regen für {{ next_length }} Minuten.
+    {% else %}
+      Nächster Regen in {{ dauer(starts_in) }}{{ '' if (dauer(starts_in) | string).endswith('.') else '.' }}
+    {% endif %}
+
+  {% elif ns.later is not none %}
+    Nächster Regen in {{ dauer(ns.later) }}{{ '' if (dauer(ns.later) | string).endswith('.') else '.' }}
+
+  {% else %}
+    Kein Regen in den nächsten zwei Stunden.
+  {% endif %}
+secondary: >-
+  {% set fc = namespace(e='') %}
+  {% for e in integration_entities('dwd_precipitation') if e.startswith('binary_sensor.')
+     and config_entry_id(e) == config_entry_id(entity) and state_attr(e, 'forecast_5min') is not none %}
+    {% set fc.e = e %}
+  {% endfor %}
+  {% set ns = namespace(cur=none, max=0.0) %}
+  {% for w in state_attr(fc.e, 'forecast_5min') or [] %}
+    {% if w.end and as_datetime(w.end) > now() %}
+      {% set i = w.intensity | float(0) %}
+      {% if ns.cur is none %}{% set ns.cur = i %}{% endif %}
+      {% set ns.max = [ns.max, i] | max %}
+    {% endif %}
+  {% endfor %}
+  {% set raining_now = states(entity) == 'rain' %}
+  {% set st = state_attr(entity, 'start') %}
+  {% set en = state_attr(entity, 'end') %}
+  {% set starts_in = [((as_datetime(st) - now()).total_seconds() / 60) | round(0) | int, 0] | max if st else none %}
+  {% set rain_soon = states(entity) == 'soon' and starts_in is number and starts_in <= 5 %}
+  {% set current_p = ns.cur | float(0) %}
+  {% set max_p = ns.max | round(1) %}
+  {% set nomen = {'rain': 'Regen', 'drizzle': 'Nieselregen', 'freezing_drizzle': 'gefrierender Nieselregen',
+    'freezing_rain': 'gefrierender Regen', 'sleet': 'Schneeregen', 'snow': 'Schneefall', 'graupel': 'Graupel',
+    'hail': 'Hagel', 'large_hail': 'Hagel mit großen Körnern', 'thunderstorm': 'Gewitterregen'} %}
+  {% set art = state_attr(entity, 'expected_type') or '' %}
+  {% set peak = [(state_attr(entity, 'peak_10min') | float(0)) * 6, state_attr(entity, 'peak_1h') | float(0)] | max %}
+  {% set stufe = 'leicht' if peak < 2.5 else 'mäßig' if peak < 10 else 'stark' if peak < 50 else 'sehr stark' %}
+  {% set wort = nomen.get(art, 'Niederschlag') %}
+  {% set intensity_text = wort if art in ['hail', 'large_hail'] else stufe ~ 'er ' ~ wort %}
+
+  {% if states(entity) in ['unavailable', 'unknown'] %}
+    DWD Nowcast nicht erreichbar
+  {% elif raining_now %}
+    Jetzt: {{ intensity_text }} · {{ current_p }} mm/h · max. {{ max_p }} mm/h
+  {% elif rain_soon %}
+    Bald: {{ intensity_text }} · Start in {{ starts_in }} Min. · max. {{ max_p }} mm/h
+  {% else %}
+    Aktuell trocken · Maximal im Fenster: {{ max_p }} mm/h
+  {% endif %}
+multiline_secondary: true
+color: >-
+  {% set fc = namespace(e='') %}
+  {% for e in integration_entities('dwd_precipitation') if e.startswith('binary_sensor.')
+     and config_entry_id(e) == config_entry_id(entity) and state_attr(e, 'forecast_5min') is not none %}
+    {% set fc.e = e %}
+  {% endfor %}
+  {% set ns = namespace(cur=none, max=0.0) %}
+  {% for w in state_attr(fc.e, 'forecast_5min') or [] %}
+    {% if w.end and as_datetime(w.end) > now() %}
+      {% set i = w.intensity | float(0) %}
+      {% if ns.cur is none %}{% set ns.cur = i %}{% endif %}
+      {% set ns.max = [ns.max, i] | max %}
+    {% endif %}
+  {% endfor %}
+  {% set max_p = ns.max %}
+  {#- Farbschema wie der Hintergrund: Art vor Intensität (DWD-Schwellen in mm/h) -#}
+  {% set art = state_attr(entity, 'expected_type') or '' %}
+  {% if max_p <= 0 %}grey
+  {% elif art in ['freezing_drizzle', 'freezing_rain'] %}red
+  {% elif art == 'snow' %}white
+  {% elif art in ['hail', 'large_hail', 'thunderstorm'] or max_p >= 25 %}red
+  {% elif max_p >= 10 %}purple
+  {% elif max_p >= 1.0 %}blue
+  {% else %}grey
+  {% endif %}
+badge_icon: >-
+  {% set fc = namespace(e='') %}
+  {% for e in integration_entities('dwd_precipitation') if e.startswith('binary_sensor.')
+     and config_entry_id(e) == config_entry_id(entity) and state_attr(e, 'forecast_5min') is not none %}
+    {% set fc.e = e %}
+  {% endfor %}
+  {% set ns = namespace(cur=none, max=0.0) %}
+  {% for w in state_attr(fc.e, 'forecast_5min') or [] %}
+    {% if w.end and as_datetime(w.end) > now() %}
+      {% set i = w.intensity | float(0) %}
+      {% if ns.cur is none %}{% set ns.cur = i %}{% endif %}
+      {% set ns.max = [ns.max, i] | max %}
+    {% endif %}
+  {% endfor %}
+  {% set max_p = ns.max %}
+  {% set st = state_attr(entity, 'start') %}
+  {% set en = state_attr(entity, 'end') %}
+  {% set starts_in = [((as_datetime(st) - now()).total_seconds() / 60) | round(0) | int, 0] | max if st else none %}
+  {% if max_p >= 6 %}mdi:alert
+  {% elif states(entity) == 'soon' and starts_in is number and starts_in <= 5 %}mdi:umbrella
+  {% endif %}
+badge_color: >-
+  {% set fc = namespace(e='') %}
+  {% for e in integration_entities('dwd_precipitation') if e.startswith('binary_sensor.')
+     and config_entry_id(e) == config_entry_id(entity) and state_attr(e, 'forecast_5min') is not none %}
+    {% set fc.e = e %}
+  {% endfor %}
+  {% set ns = namespace(cur=none, max=0.0) %}
+  {% for w in state_attr(fc.e, 'forecast_5min') or [] %}
+    {% if w.end and as_datetime(w.end) > now() %}
+      {% set i = w.intensity | float(0) %}
+      {% if ns.cur is none %}{% set ns.cur = i %}{% endif %}
+      {% set ns.max = [ns.max, i] | max %}
+    {% endif %}
+  {% endfor %}
+  {% set max_p = ns.max %}
+  {% set st = state_attr(entity, 'start') %}
+  {% set en = state_attr(entity, 'end') %}
+  {% set starts_in = [((as_datetime(st) - now()).total_seconds() / 60) | round(0) | int, 0] | max if st else none %}
+  {% if max_p >= 6 %}red
+  {% elif states(entity) == 'soon' and starts_in is number and starts_in <= 5 %}blue
+  {% endif %}
+fill_container: true
+layout: horizontal
+tap_action:
+  action: more-info
+hold_action:
+  action: more-info
+card_mod:
+  style: |
+    {% set fc = namespace(e='') %}
+    {% for e in integration_entities('dwd_precipitation') if e.startswith('binary_sensor.')
+       and config_entry_id(e) == config_entry_id(config.entity) and state_attr(e, 'forecast_5min') is not none %}
+      {% set fc.e = e %}
+    {% endfor %}
+    {% set forecast = state_attr(fc.e, 'forecast_5min') %}
+    ha-card {
+      {% if forecast is not none and forecast | count > 1 %}
+      background-image:
+        linear-gradient(
+          90deg
+          {% set duration = as_timestamp(forecast[-1].end) - now() | as_timestamp %}
+          {% if duration <= 0 %}{% set duration = 1 %}{% endif %}
+          {#- Farbschema: trocken transparent, Niesel schwach blassblau, Regen blau,
+                starker Regen violett, Unwetter rot, Schnee weiß, Eisregen rot.
+                Die Art gilt für das ganze Ereignis (expected_type der Warnung). -#}
+          {% set art = state_attr(config.entity, 'expected_type') or '' %}
+          {% for item in forecast %}
+            {% set ts = as_timestamp(item.start) %}
+            {% set pos = (((ts - (now() | as_timestamp)) / duration) * 100) | round %}
+            {% set y = item.intensity | float(0) %}
+            {% if y <= 0 %}{% set farbe = 'hsla(0, 0%, 100%, 0)' %}
+            {% elif art in ['freezing_drizzle', 'freezing_rain'] %}{% set farbe = 'hsla(0, 100%, 50%, 0.5)' %}
+            {% elif art == 'snow' %}{% set farbe = 'hsla(0, 0%, 100%, 0.85)' %}
+            {% elif art in ['hail', 'large_hail', 'thunderstorm'] or y >= 25 %}{% set farbe = 'hsla(0, 100%, 50%, 0.5)' %}
+            {% elif y >= 10 %}{% set farbe = 'hsla(280, 100%, 50%, 0.5)' %}
+            {% elif y >= 1.0 %}{% set farbe = 'hsla(210, 100%, 50%, 0.45)' %}
+            {% else %}{% set farbe = 'hsla(200, 80%, 75%, 0.25)' %}
+            {% endif %}
+            {% if pos >= -4 %}
+              , {{ farbe }} {{ [pos, 0] | max }}%
+            {% endif %}
+          {% endfor %}
+        );
+      {% endif %}
+    }
+    mushroom-state-info {
+      padding-right: 8px;
+    }
+    .primary, .secondary {
+      text-shadow: 0 1px 2px rgba(0,0,0,0.15);
+    }
+grid_options:
+  columns: full

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
@@ -130,6 +131,41 @@ async def test_hymecng_hands_each_adopted_type_to_the_rain_events_tracker(
     state = rv.rain_tracker.state
     assert state.types == {ts: "snow"}
     assert state.type_nodata == {later}  # no type for the cell: not refetched
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["wet", "undetect", "nodata"])
+async def test_hymecng_with_rain_events_reads_the_nearest_type(
+    make_coordinator, make_entry, kind
+) -> None:
+    """With a tracker, a real file also gives the nearest precipitation of each sector."""
+    from custom_components.dwd_precipitation.products import RadvorRV
+    from radar.nearby import nearest_class_by_sector
+    from radar.odim import read_odim_classification
+
+    content, _ = real_member("hymecng")
+    cell = real_cells("hymecng")[kind]
+    entry = make_entry({"rain_events": True})
+    rv = make_coordinator(RadvorRV, entry=entry)
+    coord = make_coordinator(HymecNG, entry=entry)
+    coord.attach_rain_tracker(rv.rain_tracker)
+    coord.coords = (cell["lat"], cell["lon"])
+
+    with patch.object(
+        products, "async_get", new=AsyncMock(return_value=AsyncResponse(content=content))
+    ):
+        data, _meta = await coord._fetch_and_parse(real_release("hymecng"))
+
+    whole, _, _ = read_odim_classification(io.BytesIO(content))
+    expected = nearest_class_by_sector(
+        whole, (cell["row"], cell["col"]), (1000.0, 1000.0), range(2, 11), 5000
+    )
+    assert data["precipitation_type_nearby"] == {
+        name: [PRECIP_TYPE_BY_INDEX[cls], round(dist / 1000, 1)]
+        for name, (cls, dist) in expected.items()
+    }
+    # The own cell is in no sector: its type is the measured one.
+    assert all(km > 0 for _type, km in data["precipitation_type_nearby"].values())
 
 
 @pytest.mark.asyncio

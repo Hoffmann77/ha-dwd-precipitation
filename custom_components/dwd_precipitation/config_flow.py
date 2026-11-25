@@ -30,14 +30,19 @@ from .const import (
     DEFAULT_DRY_STREAK_SOURCE,
     DRY_STREAK_SOURCES,
     CONF_FULL_ROLLING_SERIES,
+    CONF_NEIGHBOURHOOD,
     CONF_HOURLY_HISTORY,
     CONF_HOURLY_HISTORY_FETCH,
     CONF_HOURLY_HISTORY_HOURS,
     HOURLY_HISTORY_HOURS_MAX,
     HOURLY_HISTORY_HOURS_MIN,
     CONF_RAIN_EVENTS,
+    CONF_DEFAULT_RAIN_WARNING,
     CONF_RAIN_EVENT_THRESHOLD,
     CONF_LEAD_TIME,
+    LEAD_TIME_MAX,
+    LEAD_TIME_MIN,
+    LEAD_TIME_STEP,
     CONF_MIN_MM,
     CONF_MIN_PEAK_1H,
     CONF_MIN_PEAK_10MIN,
@@ -74,9 +79,10 @@ OPTION_SECTIONS: dict[str, tuple[str, ...]] = {
         CONF_PRECIPITATION_THRESHOLD,
         CONF_START_END_MODE,
         CONF_PRECIPITATION_END_ALGORITHM,
+        CONF_NEIGHBOURHOOD,
     ),
     SECTION_DRY_STREAK: (CONF_PRECIPITATION_RESET_THRESHOLD, CONF_DRY_STREAK_SOURCE),
-    SECTION_RAIN_EVENTS: (CONF_RAIN_EVENTS, CONF_RAIN_EVENT_THRESHOLD),
+    SECTION_RAIN_EVENTS: (CONF_DEFAULT_RAIN_WARNING, CONF_RAIN_EVENTS, CONF_RAIN_EVENT_THRESHOLD),
     SECTION_HOURLY_HISTORY: (
         CONF_HOURLY_HISTORY,
         CONF_HOURLY_HISTORY_HOURS,
@@ -91,7 +97,6 @@ OPTION_SECTIONS: dict[str, tuple[str, ...]] = {
 
 # A rain warning's lead time: how many minutes before the rain it starts, in
 # the 5-minute steps of the forecast, up to its 2-hour horizon.
-LEAD_TIME_MIN, LEAD_TIME_MAX, LEAD_TIME_STEP = 5, 120, 5
 
 # A rain warning's optional minimums, all in mm.
 RAIN_WARNING_MINIMUMS = (CONF_MIN_MM, CONF_MIN_PEAK_1H, CONF_MIN_PEAK_10MIN)
@@ -198,6 +203,8 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             CONF_DRY_STREAK_SOURCE: _choice(
                 list(DRY_STREAK_SOURCES), CONF_DRY_STREAK_SOURCE
             ),
+            CONF_NEIGHBOURHOOD: selector.BooleanSelector(),
+            CONF_DEFAULT_RAIN_WARNING: selector.BooleanSelector(),
             CONF_RAIN_EVENTS: selector.BooleanSelector(),
             CONF_RAIN_EVENT_THRESHOLD: _number("mm/h"),
             CONF_HOURLY_HISTORY: selector.BooleanSelector(),

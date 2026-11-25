@@ -677,3 +677,17 @@ async def test_peak_hour_sensor_dry_forecast_has_null_window(make_sensor):
     attrs = _peak_sensor(make_sensor, meta).extra_state_attributes
     assert attrs["window_start"] is None
     assert attrs["window_end"] is None
+
+
+def test_area_sensors_follow_the_start_end_mode():
+    from custom_components.dwd_precipitation.sensor import _area_sensors
+
+    for mode, device_class, sub_key in (
+        (START_END_MODE_TIMESTAMP, SensorDeviceClass.TIMESTAMP, "area_start_at"),
+        (START_END_MODE_DURATION, SensorDeviceClass.DURATION, "area_start_in"),
+    ):
+        nearest, start = _area_sensors(mode)
+        assert nearest.key == "radvor_rv_nearest_precipitation"
+        assert nearest.device_class is SensorDeviceClass.DISTANCE
+        assert start.key == "radvor_rv_area_precipitation_start"
+        assert (start.device_class, start.sub_key) == (device_class, sub_key)
